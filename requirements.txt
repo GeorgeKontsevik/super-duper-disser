@@ -1,0 +1,5 @@
+# Все зависимости arctic_access (полный список)
+-r arctic_access/requirements.txt
+
+# Дополнительные зависимости solver_flp (не покрытые arctic_access)
+pyarrow

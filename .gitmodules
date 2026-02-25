@@ -1,0 +1,6 @@
+[submodule "arctic_access"]
+	path = arctic_access
+	url = https://github.com/GeorgeKontsevik/season_framed_multilayer_arctic_network_model
+[submodule "solver_flp"]
+	path = solver_flp
+	url = https://github.com/GeorgeKontsevik/solver_FLP
