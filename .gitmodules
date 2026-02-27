@@ -7,3 +7,6 @@
 [submodule "connectpt"]
 	path = connectpt
 	url = https://github.com/alexandermorozzov/connectpt.git
+[submodule "sm_imputation"]
+	path = sm_imputation
+	url = https://github.com/vasilstar97/sm-imputation.git
