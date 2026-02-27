@@ -1,48 +1,39 @@
 """
-Pipeline configuration — параметры запуска объединённого пайплайна.
+Конфигурация пайплайна. Меняй только этот файл перед запуском.
 """
-
-from dataclasses import dataclass, field
-from typing import List, Optional
 from pathlib import Path
 
-ROOT_DIR = Path(__file__).parent.parent
-ARCTIC_ACCESS_DIR = ROOT_DIR / "arctic_access"
-SOLVER_FLP_DIR = ROOT_DIR / "solver_flp"
-DATA_DIR = ROOT_DIR / "data"
-OUTPUTS_DIR = ROOT_DIR / "outputs"
+# ─── Пути ────────────────────────────────────────────────────────────────────
+ROOT = Path(__file__).parent.parent
+ARCTIC_PATH = ROOT / "arctic_access"
+DATA_PATH = ARCTIC_PATH / "data"
+SOLVER_PATH = ROOT / "solver_flp" / "src"
 
+# ─── Сценарий ─────────────────────────────────────────────────────────────────
+SETTL_NAMES = ["yanao_kras"]   # yakut_chuk | yanao_kras | mezen | nao
+SERVICE_NAME = "health"         # health | post | culture | port | airport | marina
+RANGE_MONTHS = range(12)        # диапазон месяцев для расчёта
 
-@dataclass
-class PipelineConfig:
-    # --- Stage 1: сеть и доступность ---
-    settlement: str = "yanao_kras"          # yanao_kras | mezen | yakut_chuk | nao
-    service: str = "health"                 # health | airport | port | culture | post | marina
-    year: int = 2024
-    month: Optional[int] = None            # None = среднегодовой, 1-12 = конкретный месяц
+# ─── Модель провижена ─────────────────────────────────────────────────────────
+# "lp_distance"  — LP минимизация суммарного расстояния (текущая arctic модель)
+# "lp_coverage"  — LP покрытие спроса по бинарной матрице доступности (солверная логика)
+PROVISION_METHOD = "lp_coverage"
 
-    # --- Stage 2: оптимизация FLP ---
-    service_radius: int = 90               # порог доступности в минутах
-    population_size: int = 50              # размер популяции генетического алгоритма
-    generations: int = 20                  # число поколений
-    mutation_rate: float = 0.7             # вероятность мутации
-    provision_threshold: float = 0.55     # порог провижна (ниже — блок неудовлетворён)
+# ─── Улучшение связности ──────────────────────────────────────────────────────
+# Модальность для новых рёбер: "Aviation" | "Winter road" | "Regular road" | "Water transport"
+CONNECTIVITY_MODE = "Aviation"
 
-    # --- Вывод ---
-    output_dir: Path = field(default_factory=lambda: OUTPUTS_DIR)
-    save_plots: bool = True
-    verbose: bool = True
+# ─── Солвер FLP ───────────────────────────────────────────────────────────────
+FLP_MONTH = 0          # снапшот какого месяца подаём в солвер
 
-    # Сервисные радиусы по умолчанию для регионов (минуты)
-    SERVICE_RADIUS_BY_REGION = {
-        "yakut_chuk": 180,
-        "yanao_kras": 90,
-        "mezen": 60,
-        "nao": 180,
-    }
+POPULATION_SIZE = 50
+NUM_GENERATIONS = 20
+NUM_PARENTS = 10
+MUTATION_RATE = 0.7
 
-    def resolve_service_radius(self) -> int:
-        """Вернуть радиус сервиса: явно заданный или дефолтный для региона."""
-        if self.service_radius is not None:
-            return self.service_radius
-        return self.SERVICE_RADIUS_BY_REGION.get(self.settlement, 90)
+# ─── Визуализация ─────────────────────────────────────────────────────────────
+MULTILAYER_MONTH = 0
+SANKEY_MONTH_START = 0
+SANKEY_MONTH_END = 10
+CIRCULAR_MONTH = 0
+COVERAGE_MONTH_RANGE = range(4, 8, 3)
