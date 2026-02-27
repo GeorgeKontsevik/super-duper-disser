@@ -4,3 +4,6 @@
 [submodule "solver_flp"]
 	path = solver_flp
 	url = https://github.com/GeorgeKontsevik/solver_FLP
+[submodule "connectpt"]
+	path = connectpt
+	url = https://github.com/alexandermorozzov/connectpt.git
