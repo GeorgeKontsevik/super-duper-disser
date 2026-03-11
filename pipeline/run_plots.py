@@ -43,7 +43,7 @@ def circular(all_results, settl_name, service_name=None, month=None):
         fig = plot_circular_network_sankey_style(
             g, service_name=service_name, month_name=month_order[month + i]
         )
-        fig.show()
+        fig.show(renderer="notebook")
         figs.append(fig)
     return figs
 

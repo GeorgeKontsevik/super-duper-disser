@@ -3,3 +3,7 @@
 
 # Дополнительные зависимости solver_flp (не покрытые arctic_access)
 pyarrow
+
+# Дополнительные зависимости arctic_access (не в requirements submodule)
+transliterate
+plotly

@@ -26,6 +26,11 @@ CONNECTIVITY_MODE = "Aviation"
 # ─── Солвер FLP ───────────────────────────────────────────────────────────────
 FLP_MONTH = 0          # снапшот какого месяца подаём в солвер
 
+# Множитель для кандидатов рёбер: пара (i,j) попадает в выбор, если
+# sim_matrix[i,j] * EDGE_IMPROVEMENT_FACTOR <= service_radius
+# (0.6 = "если уменьшить время на 40%, попадаем в радиус")
+EDGE_IMPROVEMENT_FACTOR = 0.9
+
 POPULATION_SIZE = 50
 NUM_GENERATIONS = 20
 NUM_PARENTS = 10
