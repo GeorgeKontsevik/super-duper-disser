@@ -4,35 +4,37 @@
 
 Кварталы как узлы, drive + transit, выход в минутах.
 
-## Использование
+## Arctic-совместимость (по умолчанию)
+
+При `arctic_compatible=True` (по умолчанию) bridge выдаёт `transport_df` с колонками Arctic:
+`Aviation`, `Regular road`, `Winter road`, `Water transport`. Drive-граф маппится в `Regular road`, остальные режимы = 0. Готово для `make_g` и provision.
 
 ```python
-from bridge import graph_to_arctic_format, settl_from_blocks, ensure_graph_has_time_min
-from iduedu import get_drive_graph
-import geopandas as gpd
+from bridge import graph_to_arctic_format, settl_from_blocks
+from scripts.preprocesser.gcreator import make_g
+from scripts.preprocesser.constants import transport_modes
 
-# Блоки (кварталы) — из blocksnet, sm_imputation или своего источника
-blocks_gdf = ...  # GeoDataFrame с geometry, population, capacity_{service}
+transport_df, G_arctic = graph_to_arctic_format(
+    blocks_gdf, G_drive,
+    service_name="hospital",
+    arctic_compatible=True,  # по умолчанию
+)
 
-# Граф из iduedu
-G_drive = get_drive_graph(polygon=boundary)
-# Если граф из OSMnx (только length):
-# from bridge import ensure_graph_has_time_min
-# G_drive = ensure_graph_has_time_min(ox.graph_from_polygon(...))
+settl = settl_from_blocks(blocks_gdf)
+G_undirected = make_g(transport_df, transport_modes, blocks_gdf, settl)
+```
 
-# Опционально: transit-граф из connectpt preprocess
-G_transit = ...  # или None
+## Классический режим (drive + transit)
 
+При `arctic_compatible=False` — колонки `drive`, `transit`, можно задать `modalities` и `mode_mapping`:
+
+```python
 transport_df, G_arctic = graph_to_arctic_format(
     blocks_gdf, G_drive, G_transit=G_transit,
     service_name="hospital",
+    arctic_compatible=False,
     modalities=["drive", "transit"],
 )
-
-# Для arctic make_g
-from arctic_access.scripts.preprocesser.gcreator import make_g
-settl = settl_from_blocks(blocks_gdf)
-G_undirected = make_g(transport_df, ["drive", "transit"], blocks_gdf, settl)
 ```
 
 ## Зависимости

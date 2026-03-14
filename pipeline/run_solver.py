@@ -151,6 +151,22 @@ def run(all_results, settl_name=None, service_name=None, flp_month=None):
         ]
     print(f"Рёбер в графе кандидатов: {len(edges)}")
 
+    if not edges:
+        print("Нет рёбер-кандидатов — солвер нечего оптимизировать, пропускаем.")
+        return {
+            "best_candidate": [],
+            "fitness_history": [],
+            "capacities": [],
+            "res_id": [],
+            "df_with_demand": df_with_demand,
+            "acc_matrix": acc_matrix,
+            "uncovered": uncovered,
+            "uncovered_ids": uncovered_ids,
+            "SERVICE_RADIUS": SERVICE_RADIUS,
+            "settl_name": settl_name,
+            "service_name": service_name,
+        }
+
     num_offspring = POPULATION_SIZE - NUM_PARENTS
     best_candidate, fitness_history = genetic_algorithm_main(
         matrix=acc_matrix,

@@ -14,6 +14,16 @@ SETTL_NAMES = ["yanao_kras"]   # yakut_chuk | yanao_kras | mezen | nao
 SERVICE_NAME = "health"         # health | post | culture | port | airport | marina
 RANGE_MONTHS = range(12)        # диапазон месяцев для расчёта
 
+# ─── Источник графа (для основного ноутбука) ───────────────────────────────────
+# False — Arctic (df_time из processed)
+# True  — OSM/iduedu с direct_edges_only (для notebook_osm)
+USE_OSM_GRAPH = True
+
+# ─── OSM-граф (run_base_osm) ─────────────────────────────────────────────────
+# "osmnx"  — OSMnx graph_from_polygon
+# "iduedu" — IduEdu get_drive_graph (pip install iduedu)
+GRAPH_SOURCE = "iduedu"
+
 # ─── Модель провижена ─────────────────────────────────────────────────────────
 # "lp_distance"  — LP минимизация суммарного расстояния (текущая arctic модель)
 # "lp_coverage"  — LP покрытие спроса по бинарной матрице доступности (солверная логика)
@@ -21,7 +31,7 @@ PROVISION_METHOD = "lp_coverage"
 
 # ─── Улучшение связности ──────────────────────────────────────────────────────
 # Модальность для новых рёбер: "Aviation" | "Winter road" | "Regular road" | "Water transport"
-CONNECTIVITY_MODE = "Aviation"
+CONNECTIVITY_MODE = "Regular road"
 
 # ─── Солвер FLP ───────────────────────────────────────────────────────────────
 FLP_MONTH = 0          # снапшот какого месяца подаём в солвер
