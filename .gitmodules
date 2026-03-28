@@ -13,3 +13,6 @@
 [submodule "corr_transport_street_pattern"]
 	path = corr_transport_street_pattern
 	url = https://github.com/moryacho/corr_transport_street_pattern.git
+[submodule "street-pattern-classifier"]
+	path = street-pattern-classifier
+	url = https://github.com/moryacho/street-pattern-classifier.git
