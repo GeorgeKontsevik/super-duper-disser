@@ -1,18 +1,18 @@
 [submodule "arctic_access"]
 	path = arctic_access
-	url = https://github.com/GeorgeKontsevik/season_framed_multilayer_arctic_network_model
+	url = https://github.com/GeorgeKontsevik/season_framed_multilayer_arctic_network_model_disser.git
 [submodule "solver_flp"]
 	path = solver_flp
 	url = https://github.com/GeorgeKontsevik/solver_FLP
 [submodule "connectpt"]
 	path = connectpt
-	url = https://github.com/alexandermorozzov/connectpt.git
+	url = https://github.com/GeorgeKontsevik/connectpt.git
 [submodule "sm_imputation"]
 	path = sm_imputation
-	url = https://github.com/vasilstar97/sm-imputation.git
+	url = https://github.com/GeorgeKontsevik/sm-imputation.git
 [submodule "corr_transport_street_pattern"]
 	path = corr_transport_street_pattern
-	url = https://github.com/moryacho/corr_transport_street_pattern.git
+	url = https://github.com/GeorgeKontsevik/corr_transport_street_pattern.git
 [submodule "street-pattern-classifier"]
 	path = street-pattern-classifier
-	url = https://github.com/moryacho/street-pattern-classifier.git
+	url = https://github.com/GeorgeKontsevik/street-pattern-classifier.git
