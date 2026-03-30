@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -14,6 +15,7 @@ import osmnx as ox
 import osmapi as osm
 from rtree import index
 from shapely.geometry import LineString, Point, Polygon
+from shapely.ops import unary_union
 from tqdm.auto import tqdm
 
 
@@ -27,6 +29,79 @@ if str(CLASSIFIER_DIR) not in sys.path:
 from block_dataset import BlockDataset
 from classification import classify_blocks
 from model import class_names
+from run_street_pattern_canada_centres import (
+    prepare_city_roads,
+    resolve_model_path,
+    split_roads_by_grid_for_polygon,
+)
+
+
+CLASS_COLOR_PALETTE = [
+    "#72d6c9",
+    "#9fbce8",
+    "#c9ef8f",
+    "#f6ab8c",
+    "#f7e0a6",
+    "#a79aac",
+]
+COMPARISON_COLOR_PALETTE = [
+    "#1b9e77",
+    "#d95f02",
+    "#7570b3",
+    "#e7298a",
+    "#66a61e",
+    "#e6ab02",
+    "#a6761d",
+    "#666666",
+    "#1f78b4",
+    "#b2df8a",
+]
+COUNTRY_ROADS_PATHS = {
+    "canada": REPO_ROOT / "data_all_cities" / "hotosm_can_roads_lines_gpkg" / "hotosm_can_roads_lines_gpkg.gpkg",
+    "usa": REPO_ROOT / "data_all_cities" / "hotosm_usa_roads_lines_gpkg" / "hotosm_usa_roads_lines_gpkg.gpkg",
+    "us": REPO_ROOT / "data_all_cities" / "hotosm_usa_roads_lines_gpkg" / "hotosm_usa_roads_lines_gpkg.gpkg",
+    "united states": REPO_ROOT / "data_all_cities" / "hotosm_usa_roads_lines_gpkg" / "hotosm_usa_roads_lines_gpkg.gpkg",
+    "united states of america": REPO_ROOT / "data_all_cities" / "hotosm_usa_roads_lines_gpkg" / "hotosm_usa_roads_lines_gpkg.gpkg",
+}
+
+
+def _round_probabilities(values, digits: int = 3) -> list[float]:
+    return [round(float(value), digits) for value in values]
+
+
+def _slugify(value: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "_", value.strip().lower()).strip("_")
+    return slug or "city"
+
+
+def _infer_country_from_place(place: str) -> str | None:
+    parts = [part.strip().lower() for part in place.split(",") if part.strip()]
+    if not parts:
+        return None
+    return parts[-1]
+
+
+def resolve_roads_source(place: str, road_source: str, roads: str | None) -> tuple[str, Path | None]:
+    if roads:
+        return "local", Path(roads).resolve()
+
+    if road_source == "osm":
+        return "osm", None
+
+    country = _infer_country_from_place(place)
+    if country is not None:
+        candidate = COUNTRY_ROADS_PATHS.get(country)
+        if candidate is not None and candidate.exists():
+            return "local", candidate.resolve()
+
+    if road_source == "local":
+        raise FileNotFoundError(
+            f"Could not resolve a local roads file for {place!r}. "
+            "Pass --roads explicitly or use --road-source osm."
+        )
+
+    return "osm", None
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -41,6 +116,38 @@ def parse_args() -> argparse.Namespace:
         "--network-type",
         default="drive",
         help='OSMnx network type, for example "drive" or "all".',
+    )
+    parser.add_argument(
+        "--road-source",
+        choices=("auto", "osm", "local"),
+        default="auto",
+        help=(
+            'Where to get roads from. "auto" uses a local country roads file when a known one exists, '
+            'otherwise downloads from OSM.'
+        ),
+    )
+    parser.add_argument(
+        "--roads",
+        help=(
+            "Optional path to a local roads GeoPackage/GeoJSON. "
+            'When provided, this path is used for --road-source local or auto.'
+        ),
+    )
+    parser.add_argument(
+        "--year",
+        type=int,
+        help=(
+            "Historical OSM snapshot year. If omitted, uses the current live OSM road graph. "
+            "For historical runs the graph is requested as of January 1 of that year."
+        ),
+    )
+    parser.add_argument(
+        "--compare-year",
+        type=int,
+        help=(
+            "Optional second year for block-by-block comparison against --year. "
+            "When provided, comparison outputs are saved inside the city output folder."
+        ),
     )
     parser.add_argument(
         "--grid-step",
@@ -60,6 +167,11 @@ def parse_args() -> argparse.Namespace:
         help='Inference device. Use "cpu" by default.',
     )
     parser.add_argument(
+        "--model-path",
+        default=str(EXPERIMENTS_DIR / "models" / "best_model.pth"),
+        help="Local path to the classifier weights. Download is used only if this file is missing.",
+    )
+    parser.add_argument(
         "--output",
         default=str(EXPERIMENTS_DIR / "outputs" / "montreal_predictions.json"),
         help="Where to save the prediction summary JSON.",
@@ -68,15 +180,15 @@ def parse_args() -> argparse.Namespace:
 
 
 def _relation_get(api: osm.OsmApi, relation_id: int) -> dict:
-    if hasattr(api, "RelationGet"):
-        return api.RelationGet(relation_id)
-    return api.relation_get(relation_id)
+    if hasattr(api, "relation_get"):
+        return api.relation_get(relation_id)
+    return api.RelationGet(relation_id)
 
 
 def _node_get(api: osm.OsmApi, node_id: int) -> dict:
-    if hasattr(api, "NodeGet"):
-        return api.NodeGet(node_id)
-    return api.node_get(node_id)
+    if hasattr(api, "node_get"):
+        return api.node_get(node_id)
+    return api.NodeGet(node_id)
 
 
 def resolve_city_centre_node(place: str) -> tuple[dict, dict]:
@@ -125,6 +237,30 @@ def build_buffer_polygon(node: dict, buffer_m: float):
     point_gdf = gpd.GeoDataFrame({"geometry": [point]}, crs=4326)
     buffered = point_gdf.to_crs(3857).buffer(buffer_m)
     return gpd.GeoSeries(buffered, crs=3857).to_crs(4326).iloc[0]
+
+
+def download_street_graph(polygon, network_type: str, year: int | None) -> nx.MultiDiGraph:
+    old_overpass_url = getattr(ox.settings, "overpass_url", None)
+    old_overpass_settings = ox.settings.overpass_settings
+
+    try:
+        if year is not None:
+            date = f"{year}-01-01T00:00:00Z"
+            if old_overpass_url is not None:
+                ox.settings.overpass_url = "https://overpass-api.de/api"
+            ox.settings.overpass_settings = (
+                '[out:json][timeout:{timeout}][date:"' + date + '"]{maxsize}'
+            )
+
+        return ox.graph_from_polygon(
+            polygon,
+            network_type=network_type,
+            simplify=True,
+        )
+    finally:
+        if old_overpass_url is not None:
+            ox.settings.overpass_url = old_overpass_url
+        ox.settings.overpass_settings = old_overpass_settings
 
 
 def split_graph_by_grid_for_polygon(
@@ -289,75 +425,323 @@ def split_graph_by_grid_for_polygon(
     return result
 
 
-def main() -> None:
-    args = parse_args()
+def build_city_prediction_gdf(
+    place: str,
+    relation: dict,
+    centre_node: dict,
+    subgraphs: dict,
+    predictions: dict,
+    probabilities: dict,
+) -> gpd.GeoDataFrame:
+    rows = []
+    for cell_id, class_id in predictions.items():
+        cell_data = subgraphs.get(cell_id)
+        if cell_data is None:
+            continue
 
-    output_path = Path(args.output).resolve()
+        probability_values = _round_probabilities(probabilities[cell_id])
+        row = {
+            "place": place,
+            "relation_id": relation.get("id"),
+            "centre_node_id": centre_node.get("id"),
+            "centre_lon": float(centre_node["lon"]),
+            "centre_lat": float(centre_node["lat"]),
+            "cell_id": str(cell_id),
+            "cell_i": int(cell_id[0]) if isinstance(cell_id, tuple) else None,
+            "cell_j": int(cell_id[1]) if isinstance(cell_id, tuple) else None,
+            "class_id": int(class_id),
+            "class_name": class_names[class_id],
+            "top_probability": float(max(probability_values)),
+            "geometry": cell_data["polygon"],
+        }
+        for probability_index, probability_value in enumerate(probability_values):
+            row[f"prob_{probability_index}"] = float(probability_value)
+        rows.append(row)
+
+    crs = None
+    if subgraphs:
+        first_cell = next(iter(subgraphs.values()))
+        if "graph" in first_cell:
+            crs = first_cell["graph"].graph.get("crs")
+        else:
+            crs = first_cell["roads"].crs
+    if not rows:
+        return gpd.GeoDataFrame(
+            columns=["place", "cell_id", "class_id", "class_name", "top_probability", "geometry"],
+            geometry="geometry",
+            crs=crs,
+        )
+
+    prediction_gdf = gpd.GeoDataFrame(rows, geometry="geometry", crs=crs)
+    if crs is not None:
+        prediction_gdf = prediction_gdf.to_crs(4326)
+    return prediction_gdf
+
+
+def build_buffer_gdf(place: str, relation: dict, centre_node: dict, buffer_polygon_wgs84) -> gpd.GeoDataFrame:
+    return gpd.GeoDataFrame(
+        [
+            {
+                "place": place,
+                "relation_id": relation.get("id"),
+                "centre_node_id": centre_node.get("id"),
+                "centre_lon": float(centre_node["lon"]),
+                "centre_lat": float(centre_node["lat"]),
+                "geometry": buffer_polygon_wgs84,
+            }
+        ],
+        geometry="geometry",
+        crs=4326,
+    )
+
+
+def build_centre_gdf(place: str, relation: dict, centre_node: dict) -> gpd.GeoDataFrame:
+    return gpd.GeoDataFrame(
+        [
+            {
+                "place": place,
+                "relation_id": relation.get("id"),
+                "centre_node_id": centre_node.get("id"),
+                "lon": float(centre_node["lon"]),
+                "lat": float(centre_node["lat"]),
+                "geometry": Point(float(centre_node["lon"]), float(centre_node["lat"])),
+            }
+        ],
+        geometry="geometry",
+        crs=4326,
+    )
+
+
+def _class_color_lookup() -> dict[str, str]:
+    return {
+        class_name: CLASS_COLOR_PALETTE[index % len(CLASS_COLOR_PALETTE)]
+        for index, class_name in enumerate(class_names)
+    }
+
+
+def _category_color_lookup(values: list[str]) -> dict[str, str]:
+    unique_values = sorted({value for value in values if value is not None})
+    return {
+        value: COMPARISON_COLOR_PALETTE[index % len(COMPARISON_COLOR_PALETTE)]
+        for index, value in enumerate(unique_values)
+    }
+
+
+def _graph_edge_length(edge_data: dict, graph: nx.MultiDiGraph, u, v) -> float:
+    geometry = edge_data.get("geometry")
+    if geometry is not None:
+        return float(geometry.length)
+    start = graph.nodes[u]
+    end = graph.nodes[v]
+    return float(LineString([(start["x"], start["y"]), (end["x"], end["y"])]).length)
+
+
+def summarize_subgraph_metrics(subgraphs: dict) -> dict:
+    metrics = {}
+    for cell_id, cell_data in subgraphs.items():
+        if "graph" in cell_data:
+            graph = cell_data["graph"]
+            total_length_m = 0.0
+            for u, v, edge_data in graph.edges(data=True):
+                total_length_m += _graph_edge_length(edge_data, graph, u, v)
+            metrics[cell_id] = {
+                "road_segment_count": int(graph.number_of_edges()),
+                "road_length_m": round(total_length_m, 3),
+            }
+        else:
+            roads = cell_data["roads"]
+            metrics[cell_id] = {
+                "road_segment_count": int(len(roads)),
+                "road_length_m": round(float(roads.geometry.length.sum()), 3),
+            }
+    return metrics
+
+
+def _year_label(year: int | None) -> str:
+    return "current" if year is None else str(year)
+
+
+def render_city_map(
+    roads_wgs84: gpd.GeoDataFrame,
+    buffer_gdf: gpd.GeoDataFrame,
+    centre_gdf: gpd.GeoDataFrame,
+    prediction_gdf: gpd.GeoDataFrame,
+    title: str,
+    output_path: Path,
+) -> None:
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig, ax = plt.subplots(figsize=(10, 10))
+    color_lookup = _class_color_lookup()
 
-    models_dir = EXPERIMENTS_DIR / "models"
+    if not roads_wgs84.empty:
+        roads_wgs84.plot(ax=ax, color="#7f8c8d", linewidth=0.4, alpha=0.7)
+    if not prediction_gdf.empty:
+        prediction_plot_gdf = prediction_gdf.copy()
+        prediction_plot_gdf["plot_color"] = (
+            prediction_plot_gdf["class_name"].map(color_lookup).fillna("#34495e")
+        )
+        prediction_plot_gdf.plot(
+            ax=ax,
+            color=prediction_plot_gdf["plot_color"],
+            alpha=0.45,
+            edgecolor="#1f1f1f",
+            linewidth=0.35,
+        )
+    buffer_gdf.boundary.plot(ax=ax, color="#111111", linewidth=1.0)
+    centre_gdf.plot(ax=ax, color="#c0392b", markersize=20, zorder=5)
 
-    stage_bar = tqdm(total=8, desc="Street-pattern pipeline", unit="stage")
-
-    stage_bar.set_postfix_str("download model")
-    model_path = hf_hub_download(
-        repo_id="nochka/street-pattern-classifier",
-        filename="best_model.pth",
-        local_dir=str(models_dir),
+    legend_handles = [
+        Patch(facecolor=color_lookup[class_name], edgecolor="#1f1f1f", label=class_name, linewidth=0.35)
+        for class_name in class_names
+    ]
+    ax.legend(
+        handles=legend_handles,
+        title="Street pattern class",
+        loc="upper left",
+        bbox_to_anchor=(1.02, 1.0),
+        borderaxespad=0.0,
+        frameon=True,
+        fontsize=8,
+        title_fontsize=9,
     )
-    stage_bar.update(1)
 
-    stage_bar.set_postfix_str("resolve city relation and centre node")
-    relation, centre_node = resolve_city_centre_node(args.place)
-    stage_bar.update(1)
+    ax.set_title(title)
+    ax.set_axis_off()
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
 
-    stage_bar.set_postfix_str("build 20km buffer")
-    polygon = build_buffer_polygon(centre_node, args.buffer_m)
-    stage_bar.update(1)
 
-    stage_bar.set_postfix_str("download street graph")
-    graph = ox.graph_from_polygon(
-        polygon,
-        network_type=args.network_type,
-        simplify=True,
+def render_comparison_map(
+    roads_wgs84: gpd.GeoDataFrame,
+    buffer_gdf: gpd.GeoDataFrame,
+    centre_gdf: gpd.GeoDataFrame,
+    comparison_gdf: gpd.GeoDataFrame,
+    column: str,
+    title: str,
+    output_path: Path,
+) -> None:
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig, ax = plt.subplots(figsize=(10, 10))
+
+    if not roads_wgs84.empty:
+        roads_wgs84.plot(ax=ax, color="#7f8c8d", linewidth=0.35, alpha=0.6)
+
+    if not comparison_gdf.empty:
+        values = comparison_gdf[column].fillna("missing").astype(str).tolist()
+        color_lookup = _category_color_lookup(values)
+        plot_gdf = comparison_gdf.copy()
+        plot_gdf["plot_color"] = plot_gdf[column].fillna("missing").astype(str).map(color_lookup)
+        plot_gdf.plot(
+            ax=ax,
+            color=plot_gdf["plot_color"],
+            alpha=0.55,
+            edgecolor="#1f1f1f",
+            linewidth=0.3,
+        )
+        legend_handles = [
+            Patch(facecolor=color, edgecolor="#1f1f1f", label=label, linewidth=0.35)
+            for label, color in color_lookup.items()
+        ]
+        ax.legend(
+            handles=legend_handles,
+            title=column,
+            loc="upper left",
+            bbox_to_anchor=(1.02, 1.0),
+            borderaxespad=0.0,
+            frameon=True,
+            fontsize=8,
+            title_fontsize=9,
+        )
+
+    buffer_gdf.boundary.plot(ax=ax, color="#111111", linewidth=1.0)
+    centre_gdf.plot(ax=ax, color="#c0392b", markersize=20, zorder=5)
+    ax.set_title(title)
+    ax.set_axis_off()
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+
+
+def save_city_outputs(
+    city_dir: Path,
+    maps_dir: Path | None,
+    place: str,
+    relation: dict,
+    centre_node: dict,
+    summary: dict,
+    roads_wgs84: gpd.GeoDataFrame,
+    buffer_polygon_wgs84,
+    prediction_gdf: gpd.GeoDataFrame,
+) -> None:
+    city_dir.mkdir(parents=True, exist_ok=True)
+    buffer_gdf = build_buffer_gdf(
+        place=place,
+        relation=relation,
+        centre_node=centre_node,
+        buffer_polygon_wgs84=buffer_polygon_wgs84,
     )
-    graph = ox.project_graph(graph)
-    stage_bar.update(1)
+    centre_gdf = build_centre_gdf(place=place, relation=relation, centre_node=centre_node)
 
-    stage_bar.set_postfix_str("project buffer polygon")
-    polygon_projected = (
-        gpd.GeoSeries([polygon], crs=4326).to_crs(graph.graph["crs"]).iloc[0]
+    (city_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2))
+    roads_wgs84.to_file(city_dir / "roads.geojson", driver="GeoJSON")
+    buffer_gdf.to_file(city_dir / "buffer.geojson", driver="GeoJSON")
+    centre_gdf.to_file(city_dir / "centre.geojson", driver="GeoJSON")
+    if not prediction_gdf.empty:
+        prediction_gdf.to_file(city_dir / "predicted_cells.geojson", driver="GeoJSON")
+        prediction_gdf.drop(columns="geometry").to_csv(city_dir / "predicted_cells.csv", index=False)
+
+    render_city_map(
+        roads_wgs84=roads_wgs84,
+        buffer_gdf=buffer_gdf,
+        centre_gdf=centre_gdf,
+        prediction_gdf=prediction_gdf,
+        title=f"{place} street-pattern predictions",
+        output_path=city_dir / "map.png",
     )
-    stage_bar.update(1)
 
-    stage_bar.set_postfix_str("split graph to subgraphs")
-    subgraphs = split_graph_by_grid_for_polygon(
-        graph,
-        polygon_projected,
-        grid_step=args.grid_step,
+    if maps_dir is None:
+        return
+
+    render_city_map(
+        roads_wgs84=roads_wgs84,
+        buffer_gdf=buffer_gdf,
+        centre_gdf=centre_gdf,
+        prediction_gdf=prediction_gdf,
+        title=f"{place} street-pattern predictions",
+        output_path=maps_dir / f"{_slugify(place)}.png",
     )
-    stage_bar.update(1)
 
-    stage_bar.set_postfix_str("build dataset")
-    dataset = BlockDataset(subgraphs)
-    stage_bar.update(1)
 
-    stage_bar.set_postfix_str("run inference")
-    predictions, probabilities = classify_blocks(
-        dataset,
-        model_path=model_path,
-        device=args.device,
-    )
-    stage_bar.update(1)
-    stage_bar.close()
-
+def _snapshot_summary(
+    place: str,
+    year: int | None,
+    network_type: str,
+    grid_step: float,
+    buffer_m: float,
+    device: str,
+    road_source: str,
+    relation: dict,
+    centre_node: dict,
+    subgraphs: dict,
+    predictions: dict,
+    probabilities: dict,
+) -> dict:
     counts = Counter(predictions.values())
-    summary = {
-        "place": args.place,
-        "network_type": args.network_type,
-        "grid_step": args.grid_step,
-        "buffer_m": args.buffer_m,
-        "device": args.device,
+    return {
+        "place": place,
+        "year": year,
+        "network_type": network_type,
+        "grid_step": grid_step,
+        "buffer_m": buffer_m,
+        "device": device,
+        "road_source": road_source,
         "relation_id": relation.get("id"),
         "centre_node_id": centre_node.get("id"),
         "centre_node_lon": float(centre_node["lon"]),
@@ -373,22 +757,497 @@ def main() -> None:
             str(cell_id): {
                 "class_id": class_id,
                 "class_name": class_names[class_id],
-                "probabilities": probabilities[cell_id].tolist(),
+                "probabilities": _round_probabilities(probabilities[cell_id]),
             }
             for cell_id, class_id in predictions.items()
         },
     }
 
+
+def classify_snapshot(
+    *,
+    place: str,
+    year: int | None,
+    network_type: str,
+    relation: dict,
+    centre_node: dict,
+    polygon_wgs84,
+    polygon_projected,
+    local_crs,
+    model_path: Path | str,
+    grid_step: float,
+    buffer_m: float,
+    device: str,
+    roads_path: Path | None = None,
+    road_source_label: str = "osm",
+):
+    graph_wgs84 = None
+    if roads_path is None:
+        graph_wgs84 = download_street_graph(polygon_wgs84, network_type=network_type, year=year)
+        _, roads_wgs84 = ox.graph_to_gdfs(graph_wgs84)
+        roads_wgs84 = roads_wgs84.reset_index()
+        graph_projected = ox.project_graph(graph_wgs84, to_crs=local_crs)
+        subgraphs = split_graph_by_grid_for_polygon(
+            graph_projected,
+            polygon_projected,
+            grid_step=grid_step,
+        )
+    else:
+        roads_projected, roads_wgs84, _, _ = prepare_city_roads(
+            roads_path=roads_path,
+            centre_node=centre_node,
+            buffer_m=buffer_m,
+        )
+        subgraphs = split_roads_by_grid_for_polygon(
+            roads_projected,
+            polygon_projected,
+            grid_step=grid_step,
+            min_road_count=0,
+            min_total_road_length=0.0,
+        )
+
+    dataset = BlockDataset(subgraphs)
+    predictions, probabilities = classify_blocks(
+        dataset,
+        model_path=model_path,
+        device=device,
+    )
+    summary = _snapshot_summary(
+        place=place,
+        year=year,
+        network_type=network_type,
+        grid_step=grid_step,
+        buffer_m=buffer_m,
+        device=device,
+        road_source=road_source_label,
+        relation=relation,
+        centre_node=centre_node,
+        subgraphs=subgraphs,
+        predictions=predictions,
+        probabilities=probabilities,
+    )
+    prediction_gdf = build_city_prediction_gdf(
+        place=place,
+        relation=relation,
+        centre_node=centre_node,
+        subgraphs=subgraphs,
+        predictions=predictions,
+        probabilities=probabilities,
+    )
+    subgraph_metrics = summarize_subgraph_metrics(subgraphs)
+    return {
+        "year": year,
+        "road_source": road_source_label,
+        "graph_wgs84": graph_wgs84,
+        "roads_wgs84": roads_wgs84.to_crs(4326) if roads_wgs84.crs != "EPSG:4326" else roads_wgs84,
+        "subgraphs": subgraphs,
+        "predictions": predictions,
+        "probabilities": probabilities,
+        "prediction_gdf": prediction_gdf,
+        "summary": summary,
+        "subgraph_metrics": subgraph_metrics,
+    }
+
+
+def _primary_reason(
+    class_changed: bool,
+    length_delta_m: float,
+    road_count_delta: int,
+    top_probability_delta: float,
+    available_a: bool,
+    available_b: bool,
+) -> str:
+    if available_a and not available_b:
+        return "missing_in_compare_year"
+    if available_b and not available_a:
+        return "new_in_compare_year"
+
+    max_count_delta_major = 2
+    max_length_delta_major = 250.0
+    max_prob_delta_major = 0.15
+    major_network_change = abs(length_delta_m) >= max_length_delta_major or abs(road_count_delta) >= max_count_delta_major
+
+    if class_changed and major_network_change:
+        return "class_changed_with_network_change"
+    if class_changed:
+        return "class_changed_without_large_network_change"
+    if major_network_change:
+        return "same_class_network_changed"
+    if abs(top_probability_delta) >= max_prob_delta_major:
+        return "same_class_confidence_shift"
+    return "unchanged"
+
+
+def build_comparison_gdf(
+    *,
+    place: str,
+    year_a: int,
+    year_b: int,
+    snapshot_a: dict,
+    snapshot_b: dict,
+) -> gpd.GeoDataFrame:
+    rows = []
+    keys = sorted(set(snapshot_a["subgraphs"]) | set(snapshot_b["subgraphs"]), key=str)
+
+    for cell_id in keys:
+        cell_a = snapshot_a["subgraphs"].get(cell_id)
+        cell_b = snapshot_b["subgraphs"].get(cell_id)
+        pred_a = snapshot_a["predictions"].get(cell_id)
+        pred_b = snapshot_b["predictions"].get(cell_id)
+        probs_a = snapshot_a["probabilities"].get(cell_id)
+        probs_b = snapshot_b["probabilities"].get(cell_id)
+        metrics_a = snapshot_a["subgraph_metrics"].get(cell_id, {})
+        metrics_b = snapshot_b["subgraph_metrics"].get(cell_id, {})
+
+        geometry = None
+        if cell_b is not None:
+            geometry = cell_b["polygon"]
+        elif cell_a is not None:
+            geometry = cell_a["polygon"]
+        if geometry is None:
+            continue
+
+        available_a = pred_a is not None
+        available_b = pred_b is not None
+        class_changed = available_a and available_b and pred_a != pred_b
+        class_name_a = class_names[pred_a] if available_a else None
+        class_name_b = class_names[pred_b] if available_b else None
+        top_prob_a = float(max(_round_probabilities(probs_a))) if available_a else None
+        top_prob_b = float(max(_round_probabilities(probs_b))) if available_b else None
+        road_length_a = float(metrics_a.get("road_length_m", 0.0))
+        road_length_b = float(metrics_b.get("road_length_m", 0.0))
+        road_count_a = int(metrics_a.get("road_segment_count", 0))
+        road_count_b = int(metrics_b.get("road_segment_count", 0))
+        top_probability_delta = round((top_prob_b or 0.0) - (top_prob_a or 0.0), 3)
+        road_length_delta = round(road_length_b - road_length_a, 3)
+        road_count_delta = road_count_b - road_count_a
+        change_reason = _primary_reason(
+            class_changed=class_changed,
+            length_delta_m=road_length_delta,
+            road_count_delta=road_count_delta,
+            top_probability_delta=top_probability_delta,
+            available_a=available_a,
+            available_b=available_b,
+        )
+
+        rows.append(
+            {
+                "place": place,
+                "cell_id": str(cell_id),
+                "class_changed": bool(class_changed),
+                f"class_{year_a}": class_name_a,
+                f"class_{year_b}": class_name_b,
+                f"class_id_{year_a}": int(pred_a) if available_a else None,
+                f"class_id_{year_b}": int(pred_b) if available_b else None,
+                f"top_probability_{year_a}": top_prob_a,
+                f"top_probability_{year_b}": top_prob_b,
+                f"road_length_m_{year_a}": road_length_a,
+                f"road_length_m_{year_b}": road_length_b,
+                f"road_segment_count_{year_a}": road_count_a,
+                f"road_segment_count_{year_b}": road_count_b,
+                "top_probability_delta": top_probability_delta,
+                "road_length_delta_m": road_length_delta,
+                "road_segment_delta": road_count_delta,
+                "change_reason": change_reason,
+                "classes_before_after": f"{class_name_a} -> {class_name_b}",
+                "why": (
+                    f"{year_a}: class={class_name_a}, top_prob={top_prob_a}, roads={road_count_a}, length_m={road_length_a}; "
+                    f"{year_b}: class={class_name_b}, top_prob={top_prob_b}, roads={road_count_b}, length_m={road_length_b}; "
+                    f"delta_prob={top_probability_delta}, delta_length_m={road_length_delta}, delta_roads={road_count_delta}"
+                ),
+                "geometry": geometry,
+            }
+        )
+
+    crs = next(iter(snapshot_b["subgraphs"].values()))["graph"].graph.get("crs") if snapshot_b["subgraphs"] else None
+    comparison_gdf = gpd.GeoDataFrame(rows, geometry="geometry", crs=crs)
+    if crs is not None:
+        comparison_gdf = comparison_gdf.to_crs(4326)
+    return comparison_gdf
+
+
+def _difference_gdf(roads_a: gpd.GeoDataFrame, roads_b: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    if roads_a.empty or roads_b.empty:
+        return gpd.GeoDataFrame({"geometry": []}, geometry="geometry", crs=4326)
+
+    union_a = unary_union(roads_a.geometry)
+    difference = unary_union(roads_b.geometry).difference(union_a)
+    if difference.is_empty:
+        return gpd.GeoDataFrame({"geometry": []}, geometry="geometry", crs=4326)
+
+    diff_gdf = gpd.GeoDataFrame({"geometry": [difference]}, geometry="geometry", crs=4326)
+    diff_gdf = diff_gdf.explode(index_parts=False, ignore_index=True)
+    diff_gdf = diff_gdf[diff_gdf.geometry.notna() & ~diff_gdf.geometry.is_empty].copy()
+    return diff_gdf
+
+
+def save_comparison_outputs(
+    *,
+    comparison_dir: Path,
+    place: str,
+    relation: dict,
+    centre_node: dict,
+    buffer_polygon_wgs84,
+    year_a: int,
+    year_b: int,
+    comparison_summary: dict,
+    comparison_gdf: gpd.GeoDataFrame,
+    roads_a_wgs84: gpd.GeoDataFrame,
+    roads_b_wgs84: gpd.GeoDataFrame,
+) -> None:
+    comparison_dir.mkdir(parents=True, exist_ok=True)
+    buffer_gdf = build_buffer_gdf(place=place, relation=relation, centre_node=centre_node, buffer_polygon_wgs84=buffer_polygon_wgs84)
+    centre_gdf = build_centre_gdf(place=place, relation=relation, centre_node=centre_node)
+
+    (comparison_dir / "summary.json").write_text(json.dumps(comparison_summary, ensure_ascii=False, indent=2))
+    comparison_gdf.to_file(comparison_dir / "comparison_cells.geojson", driver="GeoJSON")
+    comparison_gdf.drop(columns="geometry").to_csv(comparison_dir / "comparison_cells.csv", index=False)
+    roads_a_wgs84.to_file(comparison_dir / f"roads_{year_a}.geojson", driver="GeoJSON")
+    roads_b_wgs84.to_file(comparison_dir / f"roads_{year_b}.geojson", driver="GeoJSON")
+
+    gpkg_path = comparison_dir / f"{_slugify(place)}_{year_a}_vs_{year_b}.gpkg"
+    comparison_gdf[["geometry", "class_changed", "change_reason", "classes_before_after", "why"]].to_file(
+        gpkg_path,
+        layer="class_changed",
+        driver="GPKG",
+    )
+    comparison_gdf[["geometry", f"class_{year_a}", f"class_id_{year_a}", f"top_probability_{year_a}"]].to_file(
+        gpkg_path,
+        layer=f"class_{year_a}",
+        driver="GPKG",
+    )
+    comparison_gdf[["geometry", f"class_{year_b}", f"class_id_{year_b}", f"top_probability_{year_b}"]].to_file(
+        gpkg_path,
+        layer=f"class_{year_b}",
+        driver="GPKG",
+    )
+    roads_a_wgs84.to_file(gpkg_path, layer=f"graph_{year_a}", driver="GPKG")
+    roads_b_wgs84.to_file(gpkg_path, layer=f"graph_{year_b}", driver="GPKG")
+
+    roads_added_gdf = _difference_gdf(roads_a_wgs84, roads_b_wgs84)
+    roads_removed_gdf = _difference_gdf(roads_b_wgs84, roads_a_wgs84)
+    if not roads_added_gdf.empty:
+        roads_added_gdf.to_file(comparison_dir / f"roads_added_{year_b}_vs_{year_a}.geojson", driver="GeoJSON")
+        roads_added_gdf.to_file(gpkg_path, layer=f"roads_added_{year_b}_vs_{year_a}", driver="GPKG")
+    if not roads_removed_gdf.empty:
+        roads_removed_gdf.to_file(comparison_dir / f"roads_removed_{year_b}_vs_{year_a}.geojson", driver="GeoJSON")
+        roads_removed_gdf.to_file(gpkg_path, layer=f"roads_removed_{year_b}_vs_{year_a}", driver="GPKG")
+
+    render_comparison_map(
+        roads_wgs84=roads_b_wgs84,
+        buffer_gdf=buffer_gdf,
+        centre_gdf=centre_gdf,
+        comparison_gdf=comparison_gdf,
+        column="class_changed",
+        title=f"{place}: changed cells {year_a} vs {year_b}",
+        output_path=comparison_dir / "map_changed.png",
+    )
+    render_comparison_map(
+        roads_wgs84=roads_b_wgs84,
+        buffer_gdf=buffer_gdf,
+        centre_gdf=centre_gdf,
+        comparison_gdf=comparison_gdf,
+        column="change_reason",
+        title=f"{place}: why cells changed {year_a} vs {year_b}",
+        output_path=comparison_dir / "map_change_reason.png",
+    )
+
+
+def main() -> None:
+    args = parse_args()
+    resolved_road_source, resolved_roads_path = resolve_roads_source(
+        place=args.place,
+        road_source=args.road_source,
+        roads=args.roads,
+    )
+    if args.compare_year is not None and args.year is None:
+        raise ValueError("Provide --year when using --compare-year.")
+    if args.compare_year is not None and args.compare_year == args.year:
+        raise ValueError("--compare-year must be different from --year.")
+    if resolved_road_source == "local" and (args.year is not None or args.compare_year is not None):
+        raise ValueError(
+            "Historical --year/--compare-year runs currently require OSM roads. "
+            "Use --road-source osm for those runs."
+        )
+
+    output_path = Path(args.output).resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    models_dir = EXPERIMENTS_DIR / "models"
+    model_path = resolve_model_path(model_path=Path(args.model_path).resolve(), models_dir=models_dir)
+    city_slug = _slugify(args.place)
+    city_root_dir = output_path.parent / city_slug
+    city_root_dir.mkdir(parents=True, exist_ok=True)
+
+    buffer_gdf = None
+
+    total_stages = 4 if args.compare_year is None else 6
+    stage_bar = tqdm(total=total_stages, desc="Street-pattern pipeline", unit="stage")
+
+    stage_bar.set_postfix_str("resolve model")
+    stage_bar.update(1)
+
+    stage_bar.set_postfix_str("resolve city relation and centre node")
+    relation, centre_node = resolve_city_centre_node(args.place)
+    stage_bar.update(1)
+
+    stage_bar.set_postfix_str("build 20km buffer")
+    polygon = build_buffer_polygon(centre_node, args.buffer_m)
+    buffer_gdf = gpd.GeoDataFrame({"geometry": [polygon]}, crs=4326)
+    local_crs = buffer_gdf.estimate_utm_crs() or "EPSG:3857"
+    polygon_projected = buffer_gdf.to_crs(local_crs).iloc[0].geometry
+    stage_bar.update(1)
+
+    stage_bar.set_postfix_str(f"classify {_year_label(args.year)}")
+    primary_snapshot = classify_snapshot(
+        place=args.place,
+        year=args.year,
+        network_type=args.network_type,
+        relation=relation,
+        centre_node=centre_node,
+        polygon_wgs84=polygon,
+        polygon_projected=polygon_projected,
+        local_crs=local_crs,
+        model_path=model_path,
+        grid_step=args.grid_step,
+        buffer_m=args.buffer_m,
+        device=args.device,
+        roads_path=resolved_roads_path,
+        road_source_label=resolved_road_source,
+    )
+    stage_bar.update(1)
+
+    primary_dir = city_root_dir
+    if args.year is not None or args.compare_year is not None:
+        primary_dir = city_root_dir / f"year_{_year_label(args.year)}"
+    save_city_outputs(
+        city_dir=primary_dir,
+        maps_dir=output_path.parent / "maps",
+        place=args.place,
+        relation=relation,
+        centre_node=centre_node,
+        summary=primary_snapshot["summary"],
+        roads_wgs84=primary_snapshot["roads_wgs84"],
+        buffer_polygon_wgs84=polygon,
+        prediction_gdf=primary_snapshot["prediction_gdf"],
+    )
+
+    summary = primary_snapshot["summary"]
+    if args.compare_year is not None:
+        stage_bar.set_postfix_str(f"classify {args.compare_year}")
+        comparison_snapshot = classify_snapshot(
+            place=args.place,
+            year=args.compare_year,
+            network_type=args.network_type,
+            relation=relation,
+            centre_node=centre_node,
+            polygon_wgs84=polygon,
+            polygon_projected=polygon_projected,
+            local_crs=local_crs,
+            model_path=model_path,
+            grid_step=args.grid_step,
+            buffer_m=args.buffer_m,
+            device=args.device,
+            roads_path=resolved_roads_path,
+            road_source_label=resolved_road_source,
+        )
+        stage_bar.update(1)
+
+        comparison_year_dir = city_root_dir / f"year_{args.compare_year}"
+        save_city_outputs(
+            city_dir=comparison_year_dir,
+            maps_dir=output_path.parent / "maps",
+            place=args.place,
+            relation=relation,
+            centre_node=centre_node,
+            summary=comparison_snapshot["summary"],
+            roads_wgs84=comparison_snapshot["roads_wgs84"],
+            buffer_polygon_wgs84=polygon,
+            prediction_gdf=comparison_snapshot["prediction_gdf"],
+        )
+
+        stage_bar.set_postfix_str("build comparison outputs")
+        comparison_gdf = build_comparison_gdf(
+            place=args.place,
+            year_a=args.year,
+            year_b=args.compare_year,
+            snapshot_a=primary_snapshot,
+            snapshot_b=comparison_snapshot,
+        )
+        changed_count = int(comparison_gdf["class_changed"].sum()) if not comparison_gdf.empty else 0
+        unchanged_count = int((~comparison_gdf["class_changed"]).sum()) if not comparison_gdf.empty else 0
+        reason_counts = (
+            comparison_gdf["change_reason"].value_counts(dropna=False).to_dict()
+            if not comparison_gdf.empty
+            else {}
+        )
+        transition_counts = (
+            comparison_gdf.loc[comparison_gdf["class_changed"], "classes_before_after"].value_counts().to_dict()
+            if not comparison_gdf.empty
+            else {}
+        )
+        comparison_summary = {
+            "place": args.place,
+            "network_type": args.network_type,
+            "grid_step": args.grid_step,
+            "buffer_m": args.buffer_m,
+            "device": args.device,
+            "road_source": resolved_road_source,
+            "roads_path": str(resolved_roads_path) if resolved_roads_path is not None else None,
+            "relation_id": relation.get("id"),
+            "centre_node_id": centre_node.get("id"),
+            "centre_node_lon": float(centre_node["lon"]),
+            "centre_node_lat": float(centre_node["lat"]),
+            "year_a": args.year,
+            "year_b": args.compare_year,
+            "cells_compared": int(len(comparison_gdf)),
+            "cells_changed": changed_count,
+            "cells_unchanged": unchanged_count,
+            "change_reason_counts": reason_counts,
+            "changed_transitions": transition_counts,
+            "year_a_summary": primary_snapshot["summary"],
+            "year_b_summary": comparison_snapshot["summary"],
+        }
+        comparison_dir = city_root_dir / f"comparison_{args.year}_vs_{args.compare_year}"
+        save_comparison_outputs(
+            comparison_dir=comparison_dir,
+            place=args.place,
+            relation=relation,
+            centre_node=centre_node,
+            buffer_polygon_wgs84=polygon,
+            year_a=args.year,
+            year_b=args.compare_year,
+            comparison_summary=comparison_summary,
+            comparison_gdf=comparison_gdf,
+            roads_a_wgs84=primary_snapshot["roads_wgs84"],
+            roads_b_wgs84=comparison_snapshot["roads_wgs84"],
+        )
+        summary = comparison_summary
+        stage_bar.update(1)
+
+    stage_bar.close()
     output_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2))
 
     print("Classification complete.")
     print(f"Saved summary to {output_path}")
+    print(f"Saved city artifacts to {primary_dir}")
+    print(f"Saved map to {primary_dir / 'map.png'}")
+    print(f"Road source: {resolved_road_source}")
+    if resolved_roads_path is not None:
+        print(f"Roads file: {resolved_roads_path}")
+    if args.compare_year is not None:
+        print(f"Saved comparison artifacts to {city_root_dir / f'comparison_{args.year}_vs_{args.compare_year}'}")
     print(
-        f"Used relation {summary['relation_id']} and centre node {summary['centre_node_id']}"
+        f"Used relation {relation.get('id')} and centre node {centre_node.get('id')}"
     )
-    print("Class counts:")
-    for class_name, count in summary["class_counts"].items():
-        print(f"  {class_name}: {count}")
+    if args.compare_year is None:
+        print("Class counts:")
+        for class_name, count in summary["class_counts"].items():
+            print(f"  {class_name}: {count}")
+    else:
+        print(
+            f"Changed cells: {summary['cells_changed']} / {summary['cells_compared']}"
+        )
 
 
 if __name__ == "__main__":
