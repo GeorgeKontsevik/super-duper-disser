@@ -16,3 +16,9 @@
 [submodule "street-pattern-classifier"]
 	path = street-pattern-classifier
 	url = https://github.com/GeorgeKontsevik/street-pattern-classifier.git
+[submodule "blocksnet"]
+	path = blocksnet
+	url = https://github.com/GeorgeKontsevik/blocksnet.git
+[submodule "floor-predictor"]
+	path = floor-predictor
+	url = https://github.com/GeorgeKontsevik/floor-predictor.git
