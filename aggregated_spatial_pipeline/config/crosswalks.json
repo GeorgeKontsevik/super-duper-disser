@@ -1,0 +1,40 @@
+{
+  "crosswalks": [
+    {
+      "crosswalk_id": "street_grid_to_quarters",
+      "source_layer": "street_grid",
+      "target_layer": "quarters",
+      "join_type": "spatial_overlay",
+      "required_weights": [
+        "intersection_area",
+        "source_share",
+        "target_share"
+      ],
+      "description": "Transfers street morphology from grid cells to quarters."
+    },
+    {
+      "crosswalk_id": "climate_grid_to_quarters",
+      "source_layer": "climate_grid",
+      "target_layer": "quarters",
+      "join_type": "spatial_overlay",
+      "required_weights": [
+        "intersection_area",
+        "source_share",
+        "target_share"
+      ],
+      "description": "Transfers climate and hazard fields from environmental grid to quarters."
+    },
+    {
+      "crosswalk_id": "quarters_to_cities",
+      "source_layer": "quarters",
+      "target_layer": "cities",
+      "join_type": "spatial_overlay",
+      "required_weights": [
+        "intersection_area",
+        "source_share",
+        "target_share"
+      ],
+      "description": "Aggregates quarter-level indicators to city-level nodes."
+    }
+  ]
+}

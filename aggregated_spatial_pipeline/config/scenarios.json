@@ -1,0 +1,91 @@
+{
+  "scenarios": [
+    {
+      "scenario_id": "baseline",
+      "description": "Current observed state after all source layers are harmonized to quarters.",
+      "operations": [
+        {
+          "kind": "attribute_transfer",
+          "rule_id": "street_pattern_probs_grid_to_quarter"
+        },
+        {
+          "kind": "attribute_transfer",
+          "rule_id": "street_pattern_class_grid_to_quarter"
+        },
+        {
+          "kind": "attribute_transfer",
+          "rule_id": "temperature_grid_to_quarter"
+        },
+        {
+          "kind": "attribute_transfer",
+          "rule_id": "flood_risk_grid_to_quarter"
+        }
+      ]
+    },
+    {
+      "scenario_id": "service_only",
+      "description": "Improve accessibility only via service relocation or service expansion.",
+      "operations": [
+        {
+          "kind": "copy_from",
+          "scenario_id": "baseline"
+        },
+        {
+          "kind": "service_optimization",
+          "target_layer": "quarters",
+          "method": "mclp_or_flp"
+        }
+      ]
+    },
+    {
+      "scenario_id": "transport_only",
+      "description": "Improve accessibility only via PT and bike network interventions.",
+      "operations": [
+        {
+          "kind": "copy_from",
+          "scenario_id": "baseline"
+        },
+        {
+          "kind": "transport_optimization",
+          "target_layer": "quarters",
+          "method": "pt_bike_network_design"
+        }
+      ]
+    },
+    {
+      "scenario_id": "joint_optimization",
+      "description": "Joint optimization of service placement and transport infrastructure.",
+      "operations": [
+        {
+          "kind": "copy_from",
+          "scenario_id": "baseline"
+        },
+        {
+          "kind": "service_optimization",
+          "target_layer": "quarters",
+          "method": "mclp_or_flp"
+        },
+        {
+          "kind": "transport_optimization",
+          "target_layer": "quarters",
+          "method": "pt_bike_network_design"
+        }
+      ]
+    },
+    {
+      "scenario_id": "shock_resilience",
+      "description": "Baseline or optimized state under climate or percolation shocks.",
+      "operations": [
+        {
+          "kind": "copy_from",
+          "scenario_id": "baseline"
+        },
+        {
+          "kind": "network_shock",
+          "target_layer": "quarters",
+          "method": "hazard_percolation"
+        }
+      ]
+    }
+  ]
+}

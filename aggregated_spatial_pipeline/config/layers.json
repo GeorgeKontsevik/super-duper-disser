@@ -1,0 +1,32 @@
+{
+  "layers": [
+    {
+      "layer_id": "quarters",
+      "unit_type": "quarter",
+      "role": "primary_analytical_layer",
+      "geometry_type": "polygon",
+      "description": "Base intra-urban analytical layer."
+    },
+    {
+      "layer_id": "street_grid",
+      "unit_type": "grid_cell",
+      "role": "technical_morphology_layer",
+      "geometry_type": "polygon",
+      "description": "Regular grid used for street-pattern inference."
+    },
+    {
+      "layer_id": "climate_grid",
+      "unit_type": "climate_cell",
+      "role": "external_environment_layer",
+      "geometry_type": "polygon",
+      "description": "Grid with temperature, precipitation, floods, and other environmental variables."
+    },
+    {
+      "layer_id": "cities",
+      "unit_type": "city",
+      "role": "agglomeration_layer",
+      "geometry_type": "polygon",
+      "description": "Aggregated inter-city analytical layer."
+    }
+  ]
+}

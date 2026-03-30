@@ -1,0 +1,2 @@
+"""Aggregated spatial pipeline scaffold."""
+

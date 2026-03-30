@@ -1,0 +1,67 @@
+{
+  "rules": [
+    {
+      "rule_id": "street_pattern_probs_grid_to_quarter",
+      "attribute": "street_pattern_probs",
+      "crosswalk_id": "street_grid_to_quarters",
+      "aggregation_method": "weighted_mean",
+      "disaggregation_method": null,
+      "weight_field": "intersection_area",
+      "notes": "Preferred transfer for morphology because it preserves mixed patterns."
+    },
+    {
+      "rule_id": "street_pattern_class_grid_to_quarter",
+      "attribute": "street_pattern_class",
+      "crosswalk_id": "street_grid_to_quarters",
+      "aggregation_method": "majority_vote",
+      "disaggregation_method": null,
+      "weight_field": "intersection_area",
+      "notes": "Fallback human-readable class after probability transfer."
+    },
+    {
+      "rule_id": "temperature_grid_to_quarter",
+      "attribute": "temperature_mean",
+      "crosswalk_id": "climate_grid_to_quarters",
+      "aggregation_method": "weighted_mean",
+      "disaggregation_method": null,
+      "weight_field": "intersection_area",
+      "notes": "Intensive variable."
+    },
+    {
+      "rule_id": "flood_risk_grid_to_quarter",
+      "attribute": "flood_risk_index",
+      "crosswalk_id": "climate_grid_to_quarters",
+      "aggregation_method": "weighted_mean",
+      "disaggregation_method": null,
+      "weight_field": "intersection_area",
+      "notes": "Hazard exposure transferred from environmental grid."
+    },
+    {
+      "rule_id": "population_quarter_to_city",
+      "attribute": "population_total",
+      "crosswalk_id": "quarters_to_cities",
+      "aggregation_method": "sum",
+      "disaggregation_method": "weighted_split",
+      "weight_field": "source_share",
+      "notes": "Extensive variable."
+    },
+    {
+      "rule_id": "service_capacity_quarter_to_city",
+      "attribute": "service_capacity_total",
+      "crosswalk_id": "quarters_to_cities",
+      "aggregation_method": "sum",
+      "disaggregation_method": "weighted_split",
+      "weight_field": "source_share",
+      "notes": "Extensive service supply variable."
+    },
+    {
+      "rule_id": "accessibility_quarter_to_city",
+      "attribute": "accessibility_time_mean",
+      "crosswalk_id": "quarters_to_cities",
+      "aggregation_method": "weighted_mean",
+      "disaggregation_method": null,
+      "weight_field": "population_weight",
+      "notes": "Population-weighted aggregation is preferable here."
+    }
+  ]
+}

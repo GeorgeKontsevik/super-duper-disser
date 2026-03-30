@@ -1,0 +1,27 @@
+{
+  "policy_id": "adapter_only_pipeline",
+  "principles": [
+    "Do not modify source repositories or upstream modules to satisfy aggregation needs.",
+    "Perform harmonization, aggregation, disaggregation, and crosswalk generation inside this pipeline layer.",
+    "Treat upstream repositories as data or computation providers.",
+    "Prefer adapters and local transformation steps over upstream code changes."
+  ],
+  "upstream_modules": [
+    {
+      "module_id": "street-pattern-classifier",
+      "role": "morphology_provider"
+    },
+    {
+      "module_id": "connectpt",
+      "role": "transport_provider"
+    },
+    {
+      "module_id": "solver_flp",
+      "role": "service_placement_provider"
+    },
+    {
+      "module_id": "arctic_access",
+      "role": "hazard_and_resilience_provider"
+    }
+  ]
+}
