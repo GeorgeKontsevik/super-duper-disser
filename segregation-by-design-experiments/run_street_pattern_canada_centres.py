@@ -6,6 +6,7 @@ import pickle
 import re
 import sys
 from collections import Counter
+from itertools import cycle
 from pathlib import Path
 
 import geopandas as gpd
@@ -28,6 +29,63 @@ if str(CLASSIFIER_DIR) not in sys.path:
 from block_dataset import BlockDataset
 from classification import classify_blocks
 from model import class_names
+
+
+TOP_10_CANADA_CITIES_2021 = [
+    "Toronto",
+    "Montreal",
+    "Calgary",
+    "Ottawa",
+    "Edmonton",
+    "Winnipeg",
+    "Mississauga",
+    "Vancouver",
+    "Brampton",
+    "Hamilton",
+]
+
+DISALLOWED_DRIVE_HIGHWAY_VALUES = {
+    "abandoned",
+    "bridleway",
+    "bus_guideway",
+    "construction",
+    "corridor",
+    "cycleway",
+    "elevator",
+    "escalator",
+    "footway",
+    "no",
+    "path",
+    "pedestrian",
+    "planned",
+    "platform",
+    "proposed",
+    "raceway",
+    "razed",
+    "service",
+    "steps",
+    "track",
+}
+DISALLOWED_DRIVE_ACCESS_VALUES = {"private"}
+DISALLOWED_DRIVE_SERVICE_VALUES = {
+    "alley",
+    "driveway",
+    "emergency_access",
+    "parking",
+    "parking_aisle",
+    "private",
+}
+DISALLOWED_DRIVE_MOTOR_VALUES = {"no"}
+CLASS_COLOR_PALETTE = [
+    "#1b9e77",
+    "#d95f02",
+    "#7570b3",
+    "#e7298a",
+    "#66a61e",
+    "#e6ab02",
+    "#a6761d",
+    "#666666",
+]
 
 
 def _round_probabilities(values, digits: int = 3) -> list[float]:
@@ -54,8 +112,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--places",
         nargs="+",
-        required=True,
         help='City names to process, for example "Montreal" "Toronto".',
+    )
+    parser.add_argument(
+        "--top-10-canada",
+        action="store_true",
+        help=(
+            "Process the 10 largest Canadian municipalities by 2021 Census population: "
+            + ", ".join(TOP_10_CANADA_CITIES_2021)
+            + "."
+        ),
     )
     parser.add_argument(
         "--place-suffix",
@@ -98,6 +164,11 @@ def parse_args() -> argparse.Namespace:
         help='Inference device. Use "cpu" by default.',
     )
     parser.add_argument(
+        "--model-path",
+        default=str(EXPERIMENTS_DIR / "models" / "best_model.pth"),
+        help="Local path to the classifier weights. Download is used only if this file is missing.",
+    )
+    parser.add_argument(
         "--output",
         default=str(EXPERIMENTS_DIR / "outputs" / "canada_city_centre_predictions.json"),
         help="Where to save the prediction summary JSON.",
@@ -113,11 +184,24 @@ def parse_args() -> argparse.Namespace:
         help="Directory for per-city pickle caches of expensive intermediate results.",
     )
     parser.add_argument(
+        "--per-city-dir",
+        default=str(EXPERIMENTS_DIR / "outputs" / "canada_city_centre" / "cities"),
+        help="Directory for per-city outputs such as GeoJSON, CSV, and JSON summaries.",
+    )
+    parser.add_argument(
+        "--maps-dir",
+        default=str(EXPERIMENTS_DIR / "outputs" / "canada_city_centre" / "maps"),
+        help="Directory for rendered per-city PNG maps.",
+    )
+    parser.add_argument(
         "--no-cache",
         action="store_true",
         help="Disable reading and writing intermediate pickle caches.",
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if not args.places and not args.top_10_canada:
+        parser.error("Provide --places or use --top-10-canada.")
+    return args
 
 
 def _relation_get(api: osm.OsmApi, relation_id: int) -> dict:
@@ -215,6 +299,12 @@ def _load_pickle(path: Path):
         return pickle.load(fh)
 
 
+def _resolve_places(args: argparse.Namespace) -> list[str]:
+    if args.top_10_canada:
+        return TOP_10_CANADA_CITIES_2021
+    return args.places
+
+
 def _normalize_lines(roads: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     lines = roads[roads.geometry.notna()].copy()
     lines = lines.explode(index_parts=False, ignore_index=True)
@@ -248,6 +338,70 @@ def _normalize_lines(roads: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     )
     normalized = normalized[normalized.geometry.length > 0].copy()
     return normalized.reset_index(drop=True)
+
+
+def _contains_value(value, blocked_values: set[str]) -> bool:
+    if value is None or pd.isna(value):
+        return False
+    if isinstance(value, (list, tuple, set)):
+        return any(_contains_value(item, blocked_values) for item in value)
+
+    parts = [part.strip().lower() for part in str(value).split(";") if part.strip()]
+    return any(part in blocked_values for part in parts)
+
+
+def _filter_roads_like_old_osm_pipeline(roads: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    filtered = roads.copy()
+
+    if "area" in filtered.columns:
+        filtered = filtered[~filtered["area"].apply(lambda value: _contains_value(value, {"yes"}))].copy()
+    if filtered.empty:
+        return filtered
+
+    if "highway" in filtered.columns:
+        filtered = filtered[
+            ~filtered["highway"].apply(
+                lambda value: _contains_value(value, DISALLOWED_DRIVE_HIGHWAY_VALUES)
+            )
+        ].copy()
+    if filtered.empty:
+        return filtered
+
+    if "access" in filtered.columns:
+        filtered = filtered[
+            ~filtered["access"].apply(
+                lambda value: _contains_value(value, DISALLOWED_DRIVE_ACCESS_VALUES)
+            )
+        ].copy()
+    if filtered.empty:
+        return filtered
+
+    if "motor_vehicle" in filtered.columns:
+        filtered = filtered[
+            ~filtered["motor_vehicle"].apply(
+                lambda value: _contains_value(value, DISALLOWED_DRIVE_MOTOR_VALUES)
+            )
+        ].copy()
+    if filtered.empty:
+        return filtered
+
+    if "motorcar" in filtered.columns:
+        filtered = filtered[
+            ~filtered["motorcar"].apply(
+                lambda value: _contains_value(value, DISALLOWED_DRIVE_MOTOR_VALUES)
+            )
+        ].copy()
+    if filtered.empty:
+        return filtered
+
+    if "service" in filtered.columns:
+        filtered = filtered[
+            ~filtered["service"].apply(
+                lambda value: _contains_value(value, DISALLOWED_DRIVE_SERVICE_VALUES)
+            )
+        ].copy()
+
+    return filtered
 
 
 def split_roads_by_grid_for_polygon(
@@ -312,7 +466,7 @@ def prepare_city_roads(
     roads_path: Path,
     centre_node: dict,
     buffer_m: float,
-) -> tuple[gpd.GeoDataFrame, Polygon, object]:
+) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, Polygon, object]:
     buffer_polygon_wgs84 = build_buffer_polygon(centre_node, buffer_m)
 
     buffer_gdf = gpd.GeoDataFrame({"geometry": [buffer_polygon_wgs84]}, crs=4326)
@@ -320,6 +474,7 @@ def prepare_city_roads(
 
     roads_subset = gpd.read_file(roads_path, mask=buffer_gdf)
     roads_subset = roads_subset[roads_subset.geometry.notna() & ~roads_subset.geometry.is_empty].copy()
+    roads_subset = _filter_roads_like_old_osm_pipeline(roads_subset)
     if roads_subset.empty:
         raise ValueError("No road geometries intersect the city-centre buffer.")
 
@@ -330,7 +485,24 @@ def prepare_city_roads(
         raise ValueError("Road clipping produced no valid line segments.")
 
     polygon_projected = buffer_gdf.to_crs(local_crs).iloc[0].geometry
-    return roads_projected, buffer_polygon_wgs84, polygon_projected
+    return roads_projected, roads_wgs84, buffer_polygon_wgs84, polygon_projected
+
+
+def project_cached_city_roads(
+    roads_wgs84: gpd.GeoDataFrame,
+    buffer_polygon_wgs84,
+) -> tuple[gpd.GeoDataFrame, object]:
+    buffer_gdf = gpd.GeoDataFrame({"geometry": [buffer_polygon_wgs84]}, crs=4326)
+    local_crs = buffer_gdf.estimate_utm_crs() or "EPSG:3857"
+
+    roads_wgs84 = _filter_roads_like_old_osm_pipeline(roads_wgs84)
+    roads_projected = roads_wgs84.to_crs(local_crs)
+    roads_projected = _normalize_lines(roads_projected)
+    if roads_projected.empty:
+        raise ValueError("Road clipping produced no valid line segments.")
+
+    polygon_projected = buffer_gdf.to_crs(local_crs).iloc[0].geometry
+    return roads_projected, polygon_projected
 
 
 def summarize_city(
@@ -416,8 +588,156 @@ def build_city_prediction_gdf(
     return prediction_gdf
 
 
+def build_buffer_gdf(
+    place_query: str,
+    relation: dict,
+    centre_node: dict,
+    buffer_polygon_wgs84,
+) -> gpd.GeoDataFrame:
+    return gpd.GeoDataFrame(
+        [
+            {
+                "place": place_query,
+                "relation_id": relation.get("id"),
+                "centre_node_id": centre_node.get("id"),
+                "centre_lon": float(centre_node["lon"]),
+                "centre_lat": float(centre_node["lat"]),
+                "geometry": buffer_polygon_wgs84,
+            }
+        ],
+        geometry="geometry",
+        crs=4326,
+    )
+
+
+def build_centre_gdf(place_query: str, relation: dict, centre_node: dict) -> gpd.GeoDataFrame:
+    return gpd.GeoDataFrame(
+        [
+            {
+                "place": place_query,
+                "relation_id": relation.get("id"),
+                "centre_node_id": centre_node.get("id"),
+                "lon": float(centre_node["lon"]),
+                "lat": float(centre_node["lat"]),
+                "geometry": Point(float(centre_node["lon"]), float(centre_node["lat"])),
+            }
+        ],
+        geometry="geometry",
+        crs=4326,
+    )
+
+
+def _class_color_lookup() -> dict[str, str]:
+    return {name: color for name, color in zip(class_names, cycle(CLASS_COLOR_PALETTE))}
+
+
+def render_city_map(
+    roads_wgs84: gpd.GeoDataFrame,
+    buffer_gdf: gpd.GeoDataFrame,
+    centre_gdf: gpd.GeoDataFrame,
+    prediction_gdf: gpd.GeoDataFrame,
+    title: str,
+    output_path: Path,
+) -> None:
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig, ax = plt.subplots(figsize=(10, 10))
+    color_lookup = _class_color_lookup()
+
+    if not roads_wgs84.empty:
+        roads_wgs84.plot(ax=ax, color="#7f8c8d", linewidth=0.4, alpha=0.7)
+    if not prediction_gdf.empty:
+        prediction_gdf = prediction_gdf.copy()
+        prediction_gdf["plot_color"] = prediction_gdf["class_name"].map(color_lookup).fillna("#34495e")
+        prediction_gdf.plot(
+            ax=ax,
+            color=prediction_gdf["plot_color"],
+            alpha=0.45,
+            edgecolor="#1f1f1f",
+            linewidth=0.35,
+        )
+    buffer_gdf.boundary.plot(ax=ax, color="#111111", linewidth=1.0)
+    centre_gdf.plot(ax=ax, color="#c0392b", markersize=20, zorder=5)
+
+    legend_handles = [
+        Patch(facecolor=color_lookup[class_name], edgecolor="#1f1f1f", label=class_name, linewidth=0.35)
+        for class_name in class_names
+    ]
+    ax.legend(
+        handles=legend_handles,
+        title="Street pattern class",
+        loc="upper left",
+        bbox_to_anchor=(1.02, 1.0),
+        borderaxespad=0.0,
+        frameon=True,
+        fontsize=8,
+        title_fontsize=9,
+    )
+
+    ax.set_title(title)
+    ax.set_axis_off()
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=200, bbox_inches="tight")
+    plt.close(fig)
+
+
+def save_city_outputs(
+    city_dir: Path,
+    maps_dir: Path,
+    raw_place: str,
+    place_query: str,
+    relation: dict,
+    centre_node: dict,
+    city_summary: dict,
+    roads_wgs84: gpd.GeoDataFrame,
+    buffer_polygon_wgs84,
+    prediction_gdf: gpd.GeoDataFrame,
+) -> None:
+    city_dir.mkdir(parents=True, exist_ok=True)
+    buffer_gdf = build_buffer_gdf(
+        place_query=place_query,
+        relation=relation,
+        centre_node=centre_node,
+        buffer_polygon_wgs84=buffer_polygon_wgs84,
+    )
+    centre_gdf = build_centre_gdf(place_query=place_query, relation=relation, centre_node=centre_node)
+
+    (city_dir / "summary.json").write_text(json.dumps(city_summary, ensure_ascii=False, indent=2))
+    roads_wgs84.to_file(city_dir / "roads.geojson", driver="GeoJSON")
+    buffer_gdf.to_file(city_dir / "buffer.geojson", driver="GeoJSON")
+    centre_gdf.to_file(city_dir / "centre.geojson", driver="GeoJSON")
+    if not prediction_gdf.empty:
+        prediction_gdf.to_file(city_dir / "predicted_cells.geojson", driver="GeoJSON")
+        prediction_gdf.drop(columns="geometry").to_csv(city_dir / "predicted_cells.csv", index=False)
+
+    render_city_map(
+        roads_wgs84=roads_wgs84,
+        buffer_gdf=buffer_gdf,
+        centre_gdf=centre_gdf,
+        prediction_gdf=prediction_gdf,
+        title=f"{raw_place} street-pattern predictions",
+        output_path=maps_dir / f"{_slugify(raw_place)}.png",
+    )
+
+
+def resolve_model_path(model_path: Path, models_dir: Path) -> Path:
+    if model_path.exists():
+        return model_path
+
+    models_dir.mkdir(parents=True, exist_ok=True)
+    downloaded_path = hf_hub_download(
+        repo_id="nochka/street-pattern-classifier",
+        filename=model_path.name,
+        local_dir=str(models_dir),
+    )
+    return Path(downloaded_path).resolve()
+
+
 def main() -> None:
     args = parse_args()
+    places = _resolve_places(args)
 
     output_path = Path(args.output).resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -426,20 +746,21 @@ def main() -> None:
     cache_dir = Path(args.cache_dir).resolve()
     if not args.no_cache:
         cache_dir.mkdir(parents=True, exist_ok=True)
+    per_city_dir = Path(args.per_city_dir).resolve()
+    per_city_dir.mkdir(parents=True, exist_ok=True)
+    maps_dir = Path(args.maps_dir).resolve()
+    maps_dir.mkdir(parents=True, exist_ok=True)
     models_dir = EXPERIMENTS_DIR / "models"
+    model_path = Path(args.model_path).resolve()
 
     roads_path = Path(args.roads).resolve()
     if not roads_path.exists():
         raise FileNotFoundError(f"Road GeoPackage not found: {roads_path}")
 
-    stage_bar = tqdm(total=2 + len(args.places), desc="Canada street-pattern pipeline", unit="stage")
+    stage_bar = tqdm(total=2 + len(places), desc="Canada street-pattern pipeline", unit="stage")
 
-    stage_bar.set_postfix_str("download model")
-    model_path = hf_hub_download(
-        repo_id="nochka/street-pattern-classifier",
-        filename="best_model.pth",
-        local_dir=str(models_dir),
-    )
+    stage_bar.set_postfix_str("resolve model")
+    model_path = resolve_model_path(model_path=model_path, models_dir=models_dir)
     stage_bar.update(1)
 
     stage_bar.set_postfix_str("ready")
@@ -449,7 +770,7 @@ def main() -> None:
     failures = []
     city_prediction_gdfs = []
 
-    for raw_place in args.places:
+    for raw_place in places:
         place_query = raw_place if args.place_suffix.strip() == "" else f"{raw_place}, {args.place_suffix}"
         stage_bar.set_postfix_str(f"process {raw_place}")
 
@@ -469,10 +790,30 @@ def main() -> None:
 
             if not args.no_cache and roads_cache_path.exists():
                 roads_cache = _load_pickle(roads_cache_path)
-                roads_projected = roads_cache["roads_projected"]
-                polygon_projected = roads_cache["polygon_projected"]
+                required_cache_keys = {"roads_wgs84", "buffer_polygon_wgs84"}
+                if required_cache_keys.issubset(roads_cache):
+                    roads_wgs84 = roads_cache["roads_wgs84"]
+                    buffer_polygon_wgs84 = roads_cache["buffer_polygon_wgs84"]
+                    roads_projected, polygon_projected = project_cached_city_roads(
+                        roads_wgs84=roads_wgs84,
+                        buffer_polygon_wgs84=buffer_polygon_wgs84,
+                    )
+                else:
+                    roads_projected, roads_wgs84, buffer_polygon_wgs84, polygon_projected = prepare_city_roads(
+                        roads_path=roads_path,
+                        centre_node=centre_node,
+                        buffer_m=args.buffer_m,
+                    )
+                    if not args.no_cache:
+                        _save_pickle(
+                            roads_cache_path,
+                            {
+                                "roads_wgs84": roads_wgs84,
+                                "buffer_polygon_wgs84": buffer_polygon_wgs84,
+                            },
+                        )
             else:
-                roads_projected, _, polygon_projected = prepare_city_roads(
+                roads_projected, roads_wgs84, buffer_polygon_wgs84, polygon_projected = prepare_city_roads(
                     roads_path=roads_path,
                     centre_node=centre_node,
                     buffer_m=args.buffer_m,
@@ -481,8 +822,8 @@ def main() -> None:
                     _save_pickle(
                         roads_cache_path,
                         {
-                            "roads_projected": roads_projected,
-                            "polygon_projected": polygon_projected,
+                            "roads_wgs84": roads_wgs84,
+                            "buffer_polygon_wgs84": buffer_polygon_wgs84,
                         },
                     )
 
@@ -522,18 +863,17 @@ def main() -> None:
                 device=args.device,
             )
 
-            city_results.append(
-                summarize_city(
-                    place_query=place_query,
-                    relation=relation,
-                    centre_node=centre_node,
-                    subgraphs=subgraphs,
-                    predictions=predictions,
-                    probabilities=probabilities,
-                    buffer_m=args.buffer_m,
-                    grid_step=args.grid_step,
-                )
+            city_summary = summarize_city(
+                place_query=place_query,
+                relation=relation,
+                centre_node=centre_node,
+                subgraphs=subgraphs,
+                predictions=predictions,
+                probabilities=probabilities,
+                buffer_m=args.buffer_m,
+                grid_step=args.grid_step,
             )
+            city_results.append(city_summary)
             city_prediction_gdf = build_city_prediction_gdf(
                 place_query=place_query,
                 relation=relation,
@@ -544,6 +884,18 @@ def main() -> None:
             )
             if not city_prediction_gdf.empty:
                 city_prediction_gdfs.append(city_prediction_gdf)
+            save_city_outputs(
+                city_dir=per_city_dir / _slugify(raw_place),
+                maps_dir=maps_dir,
+                raw_place=raw_place,
+                place_query=place_query,
+                relation=relation,
+                centre_node=centre_node,
+                city_summary=city_summary,
+                roads_wgs84=roads_wgs84,
+                buffer_polygon_wgs84=buffer_polygon_wgs84,
+                prediction_gdf=city_prediction_gdf,
+            )
         except Exception as exc:
             failures.append({"place": place_query, "error": str(exc)})
         finally:
@@ -561,6 +913,9 @@ def main() -> None:
         "workers": args.workers,
         "cache_dir": str(cache_dir),
         "cache_enabled": not args.no_cache,
+        "per_city_dir": str(per_city_dir),
+        "maps_dir": str(maps_dir),
+        "places_requested": places,
         "class_names": class_names,
         "cities_processed": len(city_results),
         "cities_failed": len(failures),
