@@ -9,6 +9,20 @@
 - по `--year` тянуть исторический snapshot OSM;
 - по `--compare-year` сравнивать два года и сохранять карту изменений.
 
+Визуализация `map_<map_coloring>.png` поддерживает режимы через `--map-coloring`:
+
+- `multivariate` (по умолчанию): цвет каждой ячейки — взвешенная смесь базовых цветов всех классов по вероятностям модели;
+- `top1`: классическая окраска по одному победившему (`top-1`) классу.
+- `vba`: каноничный PySAL value-by-alpha choropleth с отдельной `VBA`-легендой.
+
+Для пересчета "с нуля" можно добавить `--no-cache` (отключает использование OSMnx-кэша в этом запуске).
+
+Для single-city запуска используется отдельный pickle-кэш (`roads/subgraphs/dataset/predictions`) в:
+
+- `--cache-dir` (по умолчанию `outputs/cache/city_single`).
+
+Этот кэш не зависит от `--map-coloring`, поэтому можно переключать визуализацию (`top1`/`multivariate`/`vba`) без повторной классификации.
+
 По умолчанию используется `--road-source auto`:
 
 - `Canada` -> локальный Canada roads GeoPackage, если он есть;
@@ -38,6 +52,54 @@ MPLCONFIGDIR=/Users/gk/Code/super-duper-disser/segregation-by-design-experiments
   --road-source auto \
   --device cpu \
   --output /Users/gk/Code/super-duper-disser/segregation-by-design-experiments/outputs/montreal_auto.json
+```
+
+Тот же запуск с явным выбором режима карты:
+
+```bash
+# Классический top-1
+MPLCONFIGDIR=/Users/gk/Code/super-duper-disser/segregation-by-design-experiments/cache/mpl \
+/Users/gk/Code/super-duper-disser/segregation-by-design-experiments/.venv/bin/python \
+/Users/gk/Code/super-duper-disser/segregation-by-design-experiments/run_street_pattern_city.py \
+  --place 'Montreal, Canada' \
+  --road-source auto \
+  --map-coloring top1 \
+  --device cpu \
+  --output /Users/gk/Code/super-duper-disser/segregation-by-design-experiments/outputs/montreal_top1.json
+
+# Новый multivariate
+MPLCONFIGDIR=/Users/gk/Code/super-duper-disser/segregation-by-design-experiments/cache/mpl \
+/Users/gk/Code/super-duper-disser/segregation-by-design-experiments/.venv/bin/python \
+/Users/gk/Code/super-duper-disser/segregation-by-design-experiments/run_street_pattern_city.py \
+  --place 'Montreal, Canada' \
+  --road-source auto \
+  --map-coloring multivariate \
+  --device cpu \
+  --output /Users/gk/Code/super-duper-disser/segregation-by-design-experiments/outputs/montreal_multivariate.json
+
+# Каноничный value-by-alpha (PySAL)
+MPLCONFIGDIR=/Users/gk/Code/super-duper-disser/segregation-by-design-experiments/cache/mpl \
+/Users/gk/Code/super-duper-disser/segregation-by-design-experiments/.venv/bin/python \
+/Users/gk/Code/super-duper-disser/segregation-by-design-experiments/run_street_pattern_city.py \
+  --place 'Montreal, Canada' \
+  --road-source auto \
+  --map-coloring vba \
+  --device cpu \
+  --output /Users/gk/Code/super-duper-disser/segregation-by-design-experiments/outputs/montreal_vba.json
+```
+
+Полный пересчет без кэша:
+
+```bash
+MPLCONFIGDIR=/Users/gk/Code/super-duper-disser/segregation-by-design-experiments/cache/mpl \
+/Users/gk/Code/super-duper-disser/segregation-by-design-experiments/.venv/bin/python \
+/Users/gk/Code/super-duper-disser/segregation-by-design-experiments/run_street_pattern_city.py \
+  --place 'Montreal, Canada' \
+  --road-source auto \
+  --map-coloring multivariate \
+  --no-cache \
+  --device cpu \
+  --output /Users/gk/Code/super-duper-disser/segregation-by-design-experiments/outputs/montreal_multivariate_nocache.json
 ```
 
 Исторический snapshot OSM за выбранный год:
@@ -75,7 +137,14 @@ MPLCONFIGDIR=/Users/gk/Code/super-duper-disser/segregation-by-design-experiments
 - `outputs/<city_slug>/centre.geojson`
 - `outputs/<city_slug>/predicted_cells.geojson`
 - `outputs/<city_slug>/predicted_cells.csv`
-- `outputs/<city_slug>/map.png`
+- `outputs/<city_slug>/map_<map_coloring>.png`
+
+В `predicted_cells.geojson` / `predicted_cells.csv` дополнительно сохраняются:
+
+- `top2_class_name`, `top2_probability`
+- `top3_class_name`, `top3_probability`
+- `top3_signature`
+- `multivariate_color`
 
 Для запуска с `--year`:
 

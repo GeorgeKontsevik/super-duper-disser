@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import pickle
 import re
 import sys
 from collections import Counter
@@ -176,6 +178,26 @@ def parse_args() -> argparse.Namespace:
         default=str(EXPERIMENTS_DIR / "outputs" / "montreal_predictions.json"),
         help="Where to save the prediction summary JSON.",
     )
+    parser.add_argument(
+        "--map-coloring",
+        choices=("top1", "multivariate", "vba"),
+        default="multivariate",
+        help=(
+            'Map coloring mode: "top1" for argmax class color, '
+            '"multivariate" for weighted color mix, '
+            '"vba" for canonical PySAL value-by-alpha.'
+        ),
+    )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Disable OSMnx cache usage for this run (useful for a full recalculation).",
+    )
+    parser.add_argument(
+        "--cache-dir",
+        default=str(EXPERIMENTS_DIR / "outputs" / "cache" / "city_single"),
+        help="Directory for per-run pickle caches of roads/subgraphs/dataset/predictions.",
+    )
     return parser.parse_args()
 
 
@@ -189,6 +211,47 @@ def _node_get(api: osm.OsmApi, node_id: int) -> dict:
     if hasattr(api, "node_get"):
         return api.node_get(node_id)
     return api.NodeGet(node_id)
+
+
+def _cache_prefix(
+    cache_dir: Path,
+    *,
+    place: str,
+    year: int | None,
+    network_type: str,
+    grid_step: float,
+    buffer_m: float,
+    road_source_label: str,
+    roads_path: Path | None,
+    model_path: Path | str,
+    device: str,
+) -> Path:
+    payload = {
+        "place": place,
+        "year": "current" if year is None else int(year),
+        "network_type": network_type,
+        "grid_step": float(grid_step),
+        "buffer_m": float(buffer_m),
+        "road_source": road_source_label,
+        "roads_path": str(roads_path.resolve()) if roads_path is not None else None,
+        "model_path": str(Path(model_path).resolve()),
+        "device": str(device),
+    }
+    digest = hashlib.sha1(
+        json.dumps(payload, sort_keys=True, ensure_ascii=True).encode("utf-8")
+    ).hexdigest()[:12]
+    return cache_dir / f"{_slugify(place)}__{payload['year']}__{digest}"
+
+
+def _save_pickle(path: Path, obj) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as fh:
+        pickle.dump(obj, fh, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def _load_pickle(path: Path):
+    with path.open("rb") as fh:
+        return pickle.load(fh)
 
 
 def resolve_city_centre_node(place: str) -> tuple[dict, dict]:
@@ -434,12 +497,18 @@ def build_city_prediction_gdf(
     probabilities: dict,
 ) -> gpd.GeoDataFrame:
     rows = []
+    class_color_lookup = _class_color_lookup()
     for cell_id, class_id in predictions.items():
         cell_data = subgraphs.get(cell_id)
         if cell_data is None:
             continue
 
-        probability_values = _round_probabilities(probabilities[cell_id])
+        raw_probability_values = [float(value) for value in probabilities[cell_id]]
+        probability_values = _round_probabilities(raw_probability_values)
+        top_indices = _top_k_indices(raw_probability_values, k=3)
+        top1_idx = top_indices[0] if top_indices else int(class_id)
+        top2_idx = top_indices[1] if len(top_indices) > 1 else top1_idx
+        top3_idx = top_indices[2] if len(top_indices) > 2 else top2_idx
         row = {
             "place": place,
             "relation_id": relation.get("id"),
@@ -451,7 +520,21 @@ def build_city_prediction_gdf(
             "cell_j": int(cell_id[1]) if isinstance(cell_id, tuple) else None,
             "class_id": int(class_id),
             "class_name": class_names[class_id],
-            "top_probability": float(max(probability_values)),
+            "top_probability": float(raw_probability_values[class_id]),
+            "top1_class_id": int(top1_idx),
+            "top1_class_name": class_names[top1_idx],
+            "top1_probability": float(raw_probability_values[top1_idx]),
+            "top2_class_id": int(top2_idx),
+            "top2_class_name": class_names[top2_idx],
+            "top2_probability": float(raw_probability_values[top2_idx]),
+            "top3_class_id": int(top3_idx),
+            "top3_class_name": class_names[top3_idx],
+            "top3_probability": float(raw_probability_values[top3_idx]),
+            "top3_signature": " > ".join(class_names[idx] for idx in top_indices),
+            "multivariate_color": _multivariate_color_from_probabilities(
+                raw_probability_values,
+                class_color_lookup,
+            ),
             "geometry": cell_data["polygon"],
         }
         for probability_index, probability_value in enumerate(probability_values):
@@ -519,6 +602,54 @@ def _class_color_lookup() -> dict[str, str]:
     }
 
 
+def _hex_to_rgb(color: str) -> tuple[int, int, int]:
+    clean = color.strip().lstrip("#")
+    if len(clean) != 6:
+        raise ValueError(f"Expected #RRGGBB color, got {color!r}")
+    return tuple(int(clean[index : index + 2], 16) for index in (0, 2, 4))
+
+
+def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
+    return "#{:02x}{:02x}{:02x}".format(*rgb)
+
+
+def _top_k_indices(values: list[float], k: int) -> list[int]:
+    if not values:
+        return []
+    ordered = sorted(range(len(values)), key=lambda idx: values[idx], reverse=True)
+    return [int(idx) for idx in ordered[:k]]
+
+
+def _multivariate_color_from_probabilities(
+    probability_values: list[float],
+    color_lookup: dict[str, str],
+) -> str:
+    if not probability_values:
+        return "#34495e"
+    total = float(sum(max(0.0, float(value)) for value in probability_values))
+    if total <= 0.0:
+        return "#34495e"
+
+    red = 0.0
+    green = 0.0
+    blue = 0.0
+    for class_index, value in enumerate(probability_values):
+        weight = max(0.0, float(value)) / total
+        class_name = class_names[class_index]
+        class_rgb = _hex_to_rgb(color_lookup[class_name])
+        red += class_rgb[0] * weight
+        green += class_rgb[1] * weight
+        blue += class_rgb[2] * weight
+
+    return _rgb_to_hex(
+        (
+            int(round(max(0.0, min(255.0, red)))),
+            int(round(max(0.0, min(255.0, green)))),
+            int(round(max(0.0, min(255.0, blue)))),
+        )
+    )
+
+
 def _category_color_lookup(values: list[str]) -> dict[str, str]:
     unique_values = sorted({value for value in values if value is not None})
     return {
@@ -568,49 +699,168 @@ def render_city_map(
     prediction_gdf: gpd.GeoDataFrame,
     title: str,
     output_path: Path,
+    map_coloring: str = "multivariate",
 ) -> None:
     import matplotlib.pyplot as plt
+    from matplotlib.colors import ListedColormap
     from matplotlib.patches import Patch
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(10, 10))
+    if map_coloring == "vba":
+        fig = plt.figure(figsize=(16.0, 10.0))
+        grid = fig.add_gridspec(2, 1, height_ratios=(4.9, 1.3), hspace=0.2)
+        ax = fig.add_subplot(grid[0, 0])
+        legend_ax = fig.add_subplot(grid[1, 0])
+    else:
+        fig, ax = plt.subplots(figsize=(11.5, 10))
+        legend_ax = None
     color_lookup = _class_color_lookup()
 
     if not roads_wgs84.empty:
         roads_wgs84.plot(ax=ax, color="#7f8c8d", linewidth=0.4, alpha=0.7)
     if not prediction_gdf.empty:
         prediction_plot_gdf = prediction_gdf.copy()
-        prediction_plot_gdf["plot_color"] = (
-            prediction_plot_gdf["class_name"].map(color_lookup).fillna("#34495e")
-        )
-        prediction_plot_gdf.plot(
-            ax=ax,
-            color=prediction_plot_gdf["plot_color"],
-            alpha=0.45,
-            edgecolor="#1f1f1f",
-            linewidth=0.35,
-        )
+        if map_coloring == "vba":
+            try:
+                import mapclassify
+                from splot.mapping import vba_choropleth, vba_legend
+            except Exception:
+                prediction_plot_gdf["plot_color"] = (
+                    prediction_plot_gdf["class_name"].map(color_lookup).fillna("#34495e")
+                )
+                prediction_plot_gdf.plot(
+                    ax=ax,
+                    color=prediction_plot_gdf["plot_color"],
+                    alpha=0.6,
+                    edgecolor="#1f1f1f",
+                    linewidth=0.35,
+                )
+                map_coloring = "top1"
+            else:
+                rgb_values = prediction_plot_gdf["class_id"].astype(float).to_numpy()
+                rgb_bins = mapclassify.UserDefined(rgb_values, bins=list(range(len(class_names))))
+                alpha_values = prediction_plot_gdf["top_probability"].astype(float).to_numpy()
+                alpha_bins = mapclassify.Quantiles(alpha_values, k=min(5, max(2, len(prediction_plot_gdf))))
+                base_colors = [
+                    CLASS_COLOR_PALETTE[index % len(CLASS_COLOR_PALETTE)]
+                    for index in range(len(class_names))
+                ]
+                cmap = ListedColormap(base_colors, name="street_pattern_classes")
+                vba_choropleth(
+                    x_var=prediction_plot_gdf["class_id"].astype(float),
+                    y_var=prediction_plot_gdf["top_probability"].astype(float),
+                    gdf=prediction_plot_gdf,
+                    cmap=cmap,
+                    rgb_mapclassify={"classifier": "user_defined", "bins": list(range(len(class_names)))},
+                    alpha_mapclassify={
+                        "classifier": "quantiles",
+                        "k": min(5, max(2, len(prediction_plot_gdf))),
+                    },
+                    ax=ax,
+                    legend=False,
+                )
+                if legend_ax is not None:
+                    vba_legend(
+                        rgb_bins=rgb_bins,
+                        alpha_bins=alpha_bins,
+                        cmap=cmap,
+                        ax=legend_ax,
+                    )
+                    legend_ax.set_aspect("equal", adjustable="box")
+                    legend_ax.set_title("VBA legend", fontsize=10)
+                    legend_ax.set_xlabel("Top-1 probability bin", fontsize=9)
+                    legend_ax.set_ylabel("Top-1 class", fontsize=9)
+                    # legend_ax.xaxis.set_label_coords(0.5, -0.14)
+                    # legend_ax.yaxis.set_label_coords(-0.08, 0.5)
+                    alpha_label_count = len(getattr(alpha_bins, "bins", []))
+                    if alpha_label_count > 0:
+                        legend_ax.set_xticks(np.arange(alpha_label_count) + 0.5)
+                        legend_ax.set_xticklabels(
+                            [f"{float(value):.1f}" for value in alpha_bins.bins[:alpha_label_count]],
+                            rotation=0,
+                            fontsize=8,
+                        )
+                    rgb_label_count = min(len(class_names), len(getattr(rgb_bins, "bins", [])))
+                    if rgb_label_count > 0:
+                        legend_ax.set_yticks(np.arange(rgb_label_count) + 0.5)
+                        legend_ax.set_yticklabels(class_names[:rgb_label_count], fontsize=8)
+                    legend_ax.tick_params(axis="x", labelrotation=0, labelsize=8)
+                    legend_ax.tick_params(axis="y", labelsize=8)
+
+        if map_coloring == "top1":
+            prediction_plot_gdf["plot_color"] = (
+                prediction_plot_gdf["class_name"].map(color_lookup).fillna("#34495e")
+            )
+            prediction_plot_gdf.plot(
+                ax=ax,
+                color=prediction_plot_gdf["plot_color"],
+                alpha=0.6,
+                edgecolor="#1f1f1f",
+                linewidth=0.35,
+            )
+        elif map_coloring == "multivariate":
+            if "multivariate_color" in prediction_plot_gdf.columns:
+                prediction_plot_gdf["plot_color"] = prediction_plot_gdf["multivariate_color"].fillna("#34495e")
+            else:
+                probability_columns = [
+                    f"prob_{index}" for index in range(len(class_names))
+                    if f"prob_{index}" in prediction_plot_gdf.columns
+                ]
+                if probability_columns:
+                    prediction_plot_gdf["plot_color"] = prediction_plot_gdf[probability_columns].apply(
+                        lambda row: _multivariate_color_from_probabilities(
+                            [float(value) for value in row.values.tolist()],
+                            color_lookup,
+                        ),
+                        axis=1,
+                    )
+                else:
+                    prediction_plot_gdf["plot_color"] = (
+                        prediction_plot_gdf["class_name"].map(color_lookup).fillna("#34495e")
+                    )
+            prediction_plot_gdf.plot(
+                ax=ax,
+                color=prediction_plot_gdf["plot_color"],
+                alpha=0.6,
+                edgecolor="#1f1f1f",
+                linewidth=0.35,
+            )
     buffer_gdf.boundary.plot(ax=ax, color="#111111", linewidth=1.0)
     centre_gdf.plot(ax=ax, color="#c0392b", markersize=20, zorder=5)
 
-    legend_handles = [
-        Patch(facecolor=color_lookup[class_name], edgecolor="#1f1f1f", label=class_name, linewidth=0.35)
-        for class_name in class_names
-    ]
-    ax.legend(
-        handles=legend_handles,
-        title="Street pattern class",
-        loc="upper left",
-        bbox_to_anchor=(1.02, 1.0),
-        borderaxespad=0.0,
-        frameon=True,
-        fontsize=8,
-        title_fontsize=9,
-    )
+    if map_coloring != "vba":
+        legend_handles = [
+            Patch(facecolor=color_lookup[class_name], edgecolor="#1f1f1f", label=class_name, linewidth=0.35)
+            for class_name in class_names
+        ]
+        legend_title = (
+            "Street pattern class (top-1)"
+            if map_coloring == "top1"
+            else "Class palette (cell color = weighted class mix)"
+        )
+        ax.legend(
+            handles=legend_handles,
+            title=legend_title,
+            loc="upper left",
+            bbox_to_anchor=(1.02, 1.0),
+            borderaxespad=0.0,
+            frameon=True,
+            fontsize=8,
+            title_fontsize=9,
+        )
 
-    ax.set_title(title)
+    if map_coloring == "top1":
+        suffix = "top-1"
+    elif map_coloring == "vba":
+        suffix = "vba"
+    else:
+        suffix = "multivariate"
+    ax.set_title(f"{title} ({suffix})")
     ax.set_axis_off()
-    fig.tight_layout()
+    if map_coloring == "vba":
+        fig.subplots_adjust(left=0.04, right=0.99, top=0.94, bottom=0.06, hspace=0.15)
+    else:
+        fig.tight_layout()
     fig.savefig(output_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
@@ -679,8 +929,10 @@ def save_city_outputs(
     roads_wgs84: gpd.GeoDataFrame,
     buffer_polygon_wgs84,
     prediction_gdf: gpd.GeoDataFrame,
+    map_coloring: str = "multivariate",
 ) -> None:
     city_dir.mkdir(parents=True, exist_ok=True)
+    map_filename = f"map_{map_coloring}.png"
     buffer_gdf = build_buffer_gdf(
         place=place,
         relation=relation,
@@ -703,7 +955,8 @@ def save_city_outputs(
         centre_gdf=centre_gdf,
         prediction_gdf=prediction_gdf,
         title=f"{place} street-pattern predictions",
-        output_path=city_dir / "map.png",
+        output_path=city_dir / map_filename,
+        map_coloring=map_coloring,
     )
 
     if maps_dir is None:
@@ -715,7 +968,8 @@ def save_city_outputs(
         centre_gdf=centre_gdf,
         prediction_gdf=prediction_gdf,
         title=f"{place} street-pattern predictions",
-        output_path=maps_dir / f"{_slugify(place)}.png",
+        output_path=maps_dir / f"{_slugify(place)}_{map_coloring}.png",
+        map_coloring=map_coloring,
     )
 
 
@@ -726,6 +980,8 @@ def _snapshot_summary(
     grid_step: float,
     buffer_m: float,
     device: str,
+    no_cache: bool,
+    cache_dir: str | None,
     road_source: str,
     relation: dict,
     centre_node: dict,
@@ -741,6 +997,8 @@ def _snapshot_summary(
         "grid_step": grid_step,
         "buffer_m": buffer_m,
         "device": device,
+        "no_cache": bool(no_cache),
+        "cache_dir": cache_dir,
         "road_source": road_source,
         "relation_id": relation.get("id"),
         "centre_node_id": centre_node.get("id"),
@@ -778,40 +1036,106 @@ def classify_snapshot(
     grid_step: float,
     buffer_m: float,
     device: str,
+    no_cache: bool = False,
+    cache_dir: Path | None = None,
     roads_path: Path | None = None,
     road_source_label: str = "osm",
 ):
     graph_wgs84 = None
-    if roads_path is None:
-        graph_wgs84 = download_street_graph(polygon_wgs84, network_type=network_type, year=year)
-        _, roads_wgs84 = ox.graph_to_gdfs(graph_wgs84)
-        roads_wgs84 = roads_wgs84.reset_index()
-        graph_projected = ox.project_graph(graph_wgs84, to_crs=local_crs)
-        subgraphs = split_graph_by_grid_for_polygon(
-            graph_projected,
-            polygon_projected,
-            grid_step=grid_step,
-        )
-    else:
-        roads_projected, roads_wgs84, _, _ = prepare_city_roads(
-            roads_path=roads_path,
-            centre_node=centre_node,
-            buffer_m=buffer_m,
-        )
-        subgraphs = split_roads_by_grid_for_polygon(
-            roads_projected,
-            polygon_projected,
-            grid_step=grid_step,
-            min_road_count=0,
-            min_total_road_length=0.0,
-        )
+    roads_wgs84 = None
+    subgraphs = None
+    dataset = None
+    predictions = None
+    probabilities = None
 
-    dataset = BlockDataset(subgraphs)
-    predictions, probabilities = classify_blocks(
-        dataset,
-        model_path=model_path,
-        device=device,
-    )
+    roads_cache_path = None
+    subgraphs_cache_path = None
+    dataset_cache_path = None
+    predictions_cache_path = None
+
+    if cache_dir is not None:
+        prefix = _cache_prefix(
+            cache_dir=cache_dir,
+            place=place,
+            year=year,
+            network_type=network_type,
+            grid_step=grid_step,
+            buffer_m=buffer_m,
+            road_source_label=road_source_label,
+            roads_path=roads_path,
+            model_path=model_path,
+            device=device,
+        )
+        roads_cache_path = prefix.with_name(prefix.name + "__roads.pkl")
+        subgraphs_cache_path = prefix.with_name(prefix.name + "__subgraphs.pkl")
+        dataset_cache_path = prefix.with_name(prefix.name + "__dataset.pkl")
+        predictions_cache_path = prefix.with_name(prefix.name + "__predictions.pkl")
+
+    if not no_cache and subgraphs_cache_path is not None and subgraphs_cache_path.exists():
+        subgraphs = _load_pickle(subgraphs_cache_path)
+
+    if not no_cache and roads_cache_path is not None and roads_cache_path.exists():
+        roads_cache = _load_pickle(roads_cache_path)
+        if isinstance(roads_cache, dict) and "roads_wgs84" in roads_cache:
+            roads_wgs84 = roads_cache["roads_wgs84"]
+        elif isinstance(roads_cache, gpd.GeoDataFrame):
+            roads_wgs84 = roads_cache
+
+    if subgraphs is None or roads_wgs84 is None:
+        if roads_path is None:
+            graph_wgs84 = download_street_graph(polygon_wgs84, network_type=network_type, year=year)
+            _, roads_wgs84 = ox.graph_to_gdfs(graph_wgs84)
+            roads_wgs84 = roads_wgs84.reset_index()
+            graph_projected = ox.project_graph(graph_wgs84, to_crs=local_crs)
+            subgraphs = split_graph_by_grid_for_polygon(
+                graph_projected,
+                polygon_projected,
+                grid_step=grid_step,
+            )
+        else:
+            roads_projected, roads_wgs84, _, _ = prepare_city_roads(
+                roads_path=roads_path,
+                centre_node=centre_node,
+                buffer_m=buffer_m,
+            )
+            subgraphs = split_roads_by_grid_for_polygon(
+                roads_projected,
+                polygon_projected,
+                grid_step=grid_step,
+                min_road_count=0,
+                min_total_road_length=0.0,
+            )
+
+        if not no_cache and roads_cache_path is not None:
+            _save_pickle(roads_cache_path, {"roads_wgs84": roads_wgs84})
+        if not no_cache and subgraphs_cache_path is not None:
+            _save_pickle(subgraphs_cache_path, subgraphs)
+
+    if not no_cache and dataset_cache_path is not None and dataset_cache_path.exists():
+        dataset = _load_pickle(dataset_cache_path)
+    else:
+        dataset = BlockDataset(subgraphs)
+        if not no_cache and dataset_cache_path is not None:
+            _save_pickle(dataset_cache_path, dataset)
+
+    if not no_cache and predictions_cache_path is not None and predictions_cache_path.exists():
+        cached_predictions = _load_pickle(predictions_cache_path)
+        if isinstance(cached_predictions, dict):
+            predictions = cached_predictions.get("predictions")
+            probabilities = cached_predictions.get("probabilities")
+
+    if predictions is None or probabilities is None:
+        predictions, probabilities = classify_blocks(
+            dataset,
+            model_path=model_path,
+            device=device,
+        )
+        if not no_cache and predictions_cache_path is not None:
+            _save_pickle(
+                predictions_cache_path,
+                {"predictions": predictions, "probabilities": probabilities},
+            )
+
     summary = _snapshot_summary(
         place=place,
         year=year,
@@ -819,6 +1143,8 @@ def classify_snapshot(
         grid_step=grid_step,
         buffer_m=buffer_m,
         device=device,
+        no_cache=no_cache,
+        cache_dir=str(cache_dir) if cache_dir is not None else None,
         road_source=road_source_label,
         relation=relation,
         centre_node=centre_node,
@@ -1055,6 +1381,11 @@ def save_comparison_outputs(
 
 def main() -> None:
     args = parse_args()
+    if args.no_cache and hasattr(ox.settings, "use_cache"):
+        ox.settings.use_cache = False
+    cache_dir = Path(args.cache_dir).resolve()
+    if not args.no_cache:
+        cache_dir.mkdir(parents=True, exist_ok=True)
     resolved_road_source, resolved_roads_path = resolve_roads_source(
         place=args.place,
         road_source=args.road_source,
@@ -1112,6 +1443,8 @@ def main() -> None:
         grid_step=args.grid_step,
         buffer_m=args.buffer_m,
         device=args.device,
+        no_cache=args.no_cache,
+        cache_dir=cache_dir,
         roads_path=resolved_roads_path,
         road_source_label=resolved_road_source,
     )
@@ -1130,6 +1463,7 @@ def main() -> None:
         roads_wgs84=primary_snapshot["roads_wgs84"],
         buffer_polygon_wgs84=polygon,
         prediction_gdf=primary_snapshot["prediction_gdf"],
+        map_coloring=args.map_coloring,
     )
 
     summary = primary_snapshot["summary"]
@@ -1148,6 +1482,8 @@ def main() -> None:
             grid_step=args.grid_step,
             buffer_m=args.buffer_m,
             device=args.device,
+            no_cache=args.no_cache,
+            cache_dir=cache_dir,
             roads_path=resolved_roads_path,
             road_source_label=resolved_road_source,
         )
@@ -1164,6 +1500,7 @@ def main() -> None:
             roads_wgs84=comparison_snapshot["roads_wgs84"],
             buffer_polygon_wgs84=polygon,
             prediction_gdf=comparison_snapshot["prediction_gdf"],
+            map_coloring=args.map_coloring,
         )
 
         stage_bar.set_postfix_str("build comparison outputs")
@@ -1192,6 +1529,9 @@ def main() -> None:
             "grid_step": args.grid_step,
             "buffer_m": args.buffer_m,
             "device": args.device,
+            "map_coloring": args.map_coloring,
+            "no_cache": args.no_cache,
+            "cache_dir": str(cache_dir),
             "road_source": resolved_road_source,
             "roads_path": str(resolved_roads_path) if resolved_roads_path is not None else None,
             "relation_id": relation.get("id"),
@@ -1231,7 +1571,7 @@ def main() -> None:
     print("Classification complete.")
     print(f"Saved summary to {output_path}")
     print(f"Saved city artifacts to {primary_dir}")
-    print(f"Saved map to {primary_dir / 'map.png'}")
+    print(f"Saved map to {primary_dir / f'map_{args.map_coloring}.png'}")
     print(f"Road source: {resolved_road_source}")
     if resolved_roads_path is not None:
         print(f"Roads file: {resolved_roads_path}")

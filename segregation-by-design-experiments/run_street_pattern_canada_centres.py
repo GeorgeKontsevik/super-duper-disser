@@ -194,6 +194,16 @@ def parse_args() -> argparse.Namespace:
         help="Directory for rendered per-city PNG maps.",
     )
     parser.add_argument(
+        "--map-coloring",
+        choices=("top1", "multivariate", "vba"),
+        default="multivariate",
+        help=(
+            'Map coloring mode: "top1" for argmax class color, '
+            '"multivariate" for weighted color mix, '
+            '"vba" for canonical PySAL value-by-alpha.'
+        ),
+    )
+    parser.add_argument(
         "--no-cache",
         action="store_true",
         help="Disable reading and writing intermediate pickle caches.",
@@ -550,12 +560,18 @@ def build_city_prediction_gdf(
     probabilities: dict,
 ) -> gpd.GeoDataFrame:
     rows = []
+    class_color_lookup = _class_color_lookup()
     for cell_id, class_id in predictions.items():
         cell_data = subgraphs.get(cell_id)
         if cell_data is None:
             continue
 
-        probability_values = _round_probabilities(probabilities[cell_id])
+        raw_probability_values = [float(value) for value in probabilities[cell_id]]
+        probability_values = _round_probabilities(raw_probability_values)
+        top_indices = _top_k_indices(raw_probability_values, k=3)
+        top1_idx = top_indices[0] if top_indices else int(class_id)
+        top2_idx = top_indices[1] if len(top_indices) > 1 else top1_idx
+        top3_idx = top_indices[2] if len(top_indices) > 2 else top2_idx
         row = {
             "place": place_query,
             "relation_id": relation.get("id"),
@@ -567,7 +583,21 @@ def build_city_prediction_gdf(
             "cell_j": int(cell_id[1]) if isinstance(cell_id, tuple) else None,
             "class_id": int(class_id),
             "class_name": class_names[class_id],
-            "top_probability": float(max(probability_values)),
+            "top_probability": float(raw_probability_values[class_id]),
+            "top1_class_id": int(top1_idx),
+            "top1_class_name": class_names[top1_idx],
+            "top1_probability": float(raw_probability_values[top1_idx]),
+            "top2_class_id": int(top2_idx),
+            "top2_class_name": class_names[top2_idx],
+            "top2_probability": float(raw_probability_values[top2_idx]),
+            "top3_class_id": int(top3_idx),
+            "top3_class_name": class_names[top3_idx],
+            "top3_probability": float(raw_probability_values[top3_idx]),
+            "top3_signature": " > ".join(class_names[idx] for idx in top_indices),
+            "multivariate_color": _multivariate_color_from_probabilities(
+                raw_probability_values,
+                class_color_lookup,
+            ),
             "geometry": cell_data["polygon"],
         }
         for probability_index, probability_value in enumerate(probability_values):
@@ -631,6 +661,54 @@ def _class_color_lookup() -> dict[str, str]:
     return {name: color for name, color in zip(class_names, cycle(CLASS_COLOR_PALETTE))}
 
 
+def _hex_to_rgb(color: str) -> tuple[int, int, int]:
+    clean = color.strip().lstrip("#")
+    if len(clean) != 6:
+        raise ValueError(f"Expected #RRGGBB color, got {color!r}")
+    return tuple(int(clean[index : index + 2], 16) for index in (0, 2, 4))
+
+
+def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
+    return "#{:02x}{:02x}{:02x}".format(*rgb)
+
+
+def _top_k_indices(values: list[float], k: int) -> list[int]:
+    if not values:
+        return []
+    ordered = sorted(range(len(values)), key=lambda idx: values[idx], reverse=True)
+    return [int(idx) for idx in ordered[:k]]
+
+
+def _multivariate_color_from_probabilities(
+    probability_values: list[float],
+    color_lookup: dict[str, str],
+) -> str:
+    if not probability_values:
+        return "#34495e"
+    total = float(sum(max(0.0, float(value)) for value in probability_values))
+    if total <= 0.0:
+        return "#34495e"
+
+    red = 0.0
+    green = 0.0
+    blue = 0.0
+    for class_index, value in enumerate(probability_values):
+        weight = max(0.0, float(value)) / total
+        class_name = class_names[class_index]
+        class_rgb = _hex_to_rgb(color_lookup[class_name])
+        red += class_rgb[0] * weight
+        green += class_rgb[1] * weight
+        blue += class_rgb[2] * weight
+
+    return _rgb_to_hex(
+        (
+            int(round(max(0.0, min(255.0, red)))),
+            int(round(max(0.0, min(255.0, green)))),
+            int(round(max(0.0, min(255.0, blue)))),
+        )
+    )
+
+
 def render_city_map(
     roads_wgs84: gpd.GeoDataFrame,
     buffer_gdf: gpd.GeoDataFrame,
@@ -638,47 +716,162 @@ def render_city_map(
     prediction_gdf: gpd.GeoDataFrame,
     title: str,
     output_path: Path,
+    map_coloring: str = "multivariate",
 ) -> None:
     import matplotlib.pyplot as plt
+    from matplotlib.colors import ListedColormap
     from matplotlib.patches import Patch
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig, ax = plt.subplots(figsize=(10, 10))
+    if map_coloring == "vba":
+        fig = plt.figure(figsize=(16.0, 10.0))
+        grid = fig.add_gridspec(2, 1, height_ratios=(4.9, 1.3), hspace=0.2)
+        ax = fig.add_subplot(grid[0, 0])
+        legend_ax = fig.add_subplot(grid[1, 0])
+    else:
+        fig, ax = plt.subplots(figsize=(11.5, 10))
+        legend_ax = None
     color_lookup = _class_color_lookup()
 
     if not roads_wgs84.empty:
         roads_wgs84.plot(ax=ax, color="#7f8c8d", linewidth=0.4, alpha=0.7)
     if not prediction_gdf.empty:
         prediction_gdf = prediction_gdf.copy()
-        prediction_gdf["plot_color"] = prediction_gdf["class_name"].map(color_lookup).fillna("#34495e")
-        prediction_gdf.plot(
-            ax=ax,
-            color=prediction_gdf["plot_color"],
-            alpha=0.45,
-            edgecolor="#1f1f1f",
-            linewidth=0.35,
-        )
+        if map_coloring == "vba":
+            try:
+                import mapclassify
+                from splot.mapping import vba_choropleth, vba_legend
+            except Exception:
+                prediction_gdf["plot_color"] = prediction_gdf["class_name"].map(color_lookup).fillna("#34495e")
+                prediction_gdf.plot(
+                    ax=ax,
+                    color=prediction_gdf["plot_color"],
+                    alpha=0.6,
+                    edgecolor="#1f1f1f",
+                    linewidth=0.35,
+                )
+                map_coloring = "top1"
+            else:
+                rgb_values = prediction_gdf["class_id"].astype(float).to_numpy()
+                rgb_bins = mapclassify.UserDefined(rgb_values, bins=list(range(len(class_names))))
+                alpha_values = prediction_gdf["top_probability"].astype(float).to_numpy()
+                alpha_bins = mapclassify.Quantiles(alpha_values, k=min(5, max(2, len(prediction_gdf))))
+                base_colors = [
+                    CLASS_COLOR_PALETTE[index % len(CLASS_COLOR_PALETTE)]
+                    for index in range(len(class_names))
+                ]
+                cmap = ListedColormap(base_colors, name="street_pattern_classes")
+                vba_choropleth(
+                    x_var=prediction_gdf["class_id"].astype(float),
+                    y_var=prediction_gdf["top_probability"].astype(float),
+                    gdf=prediction_gdf,
+                    cmap=cmap,
+                    rgb_mapclassify={"classifier": "user_defined", "bins": list(range(len(class_names)))},
+                    alpha_mapclassify={
+                        "classifier": "quantiles",
+                        "k": min(5, max(2, len(prediction_gdf))),
+                    },
+                    ax=ax,
+                    legend=False,
+                )
+                if legend_ax is not None:
+                    vba_legend(
+                        rgb_bins=rgb_bins,
+                        alpha_bins=alpha_bins,
+                        cmap=cmap,
+                        ax=legend_ax,
+                    )
+                    legend_ax.set_aspect("equal", adjustable="box")
+                    legend_ax.set_title("VBA legend", fontsize=10)
+                    legend_ax.set_xlabel("Top-1 probability bin", fontsize=9)
+                    legend_ax.set_ylabel("Top-1 class", fontsize=9)
+                    legend_ax.xaxis.set_label_coords(0.5, -0.14)
+                    legend_ax.yaxis.set_label_coords(-0.08, 0.5)
+                    alpha_label_count = len(getattr(alpha_bins, "bins", []))
+                    if alpha_label_count > 0:
+                        legend_ax.set_xticks(np.arange(alpha_label_count) + 0.5)
+                        legend_ax.set_xticklabels(
+                            [f"{float(value):.1f}" for value in alpha_bins.bins[:alpha_label_count]],
+                            rotation=0,
+                            fontsize=8,
+                        )
+                    rgb_label_count = min(len(class_names), len(getattr(rgb_bins, "bins", [])))
+                    if rgb_label_count > 0:
+                        legend_ax.set_yticks(np.arange(rgb_label_count) + 0.5)
+                        legend_ax.set_yticklabels(class_names[:rgb_label_count], fontsize=8)
+                    legend_ax.tick_params(axis="x", labelrotation=0, labelsize=8)
+                    legend_ax.tick_params(axis="y", labelsize=8)
+
+        if map_coloring == "top1":
+            prediction_gdf["plot_color"] = prediction_gdf["class_name"].map(color_lookup).fillna("#34495e")
+            prediction_gdf.plot(
+                ax=ax,
+                color=prediction_gdf["plot_color"],
+                alpha=0.6,
+                edgecolor="#1f1f1f",
+                linewidth=0.35,
+            )
+        elif map_coloring == "multivariate":
+            if "multivariate_color" in prediction_gdf.columns:
+                prediction_gdf["plot_color"] = prediction_gdf["multivariate_color"].fillna("#34495e")
+            else:
+                probability_columns = [
+                    f"prob_{index}" for index in range(len(class_names))
+                    if f"prob_{index}" in prediction_gdf.columns
+                ]
+                if probability_columns:
+                    prediction_gdf["plot_color"] = prediction_gdf[probability_columns].apply(
+                        lambda row: _multivariate_color_from_probabilities(
+                            [float(value) for value in row.values.tolist()],
+                            color_lookup,
+                        ),
+                        axis=1,
+                    )
+                else:
+                    prediction_gdf["plot_color"] = prediction_gdf["class_name"].map(color_lookup).fillna("#34495e")
+            prediction_gdf.plot(
+                ax=ax,
+                color=prediction_gdf["plot_color"],
+                alpha=0.6,
+                edgecolor="#1f1f1f",
+                linewidth=0.35,
+            )
     buffer_gdf.boundary.plot(ax=ax, color="#111111", linewidth=1.0)
     centre_gdf.plot(ax=ax, color="#c0392b", markersize=20, zorder=5)
 
-    legend_handles = [
-        Patch(facecolor=color_lookup[class_name], edgecolor="#1f1f1f", label=class_name, linewidth=0.35)
-        for class_name in class_names
-    ]
-    ax.legend(
-        handles=legend_handles,
-        title="Street pattern class",
-        loc="upper left",
-        bbox_to_anchor=(1.02, 1.0),
-        borderaxespad=0.0,
-        frameon=True,
-        fontsize=8,
-        title_fontsize=9,
-    )
+    if map_coloring != "vba":
+        legend_handles = [
+            Patch(facecolor=color_lookup[class_name], edgecolor="#1f1f1f", label=class_name, linewidth=0.35)
+            for class_name in class_names
+        ]
+        legend_title = (
+            "Street pattern class (top-1)"
+            if map_coloring == "top1"
+            else "Class palette (cell color = weighted class mix)"
+        )
+        ax.legend(
+            handles=legend_handles,
+            title=legend_title,
+            loc="upper left",
+            bbox_to_anchor=(1.02, 1.0),
+            borderaxespad=0.0,
+            frameon=True,
+            fontsize=8,
+            title_fontsize=9,
+        )
 
-    ax.set_title(title)
+    if map_coloring == "top1":
+        suffix = "top-1"
+    elif map_coloring == "vba":
+        suffix = "vba"
+    else:
+        suffix = "multivariate"
+    ax.set_title(f"{title} ({suffix})")
     ax.set_axis_off()
-    fig.tight_layout()
+    if map_coloring == "vba":
+        fig.subplots_adjust(left=0.04, right=0.99, top=0.94, bottom=0.06, hspace=0.15)
+    else:
+        fig.tight_layout()
     fig.savefig(output_path, dpi=200, bbox_inches="tight")
     plt.close(fig)
 
@@ -694,6 +887,7 @@ def save_city_outputs(
     roads_wgs84: gpd.GeoDataFrame,
     buffer_polygon_wgs84,
     prediction_gdf: gpd.GeoDataFrame,
+    map_coloring: str = "multivariate",
 ) -> None:
     city_dir.mkdir(parents=True, exist_ok=True)
     buffer_gdf = build_buffer_gdf(
@@ -718,7 +912,8 @@ def save_city_outputs(
         centre_gdf=centre_gdf,
         prediction_gdf=prediction_gdf,
         title=f"{raw_place} street-pattern predictions",
-        output_path=maps_dir / f"{_slugify(raw_place)}.png",
+        output_path=maps_dir / f"{_slugify(raw_place)}_{map_coloring}.png",
+        map_coloring=map_coloring,
     )
 
 
@@ -895,6 +1090,7 @@ def main() -> None:
                 roads_wgs84=roads_wgs84,
                 buffer_polygon_wgs84=buffer_polygon_wgs84,
                 prediction_gdf=city_prediction_gdf,
+                map_coloring=args.map_coloring,
             )
         except Exception as exc:
             failures.append({"place": place_query, "error": str(exc)})
@@ -906,6 +1102,7 @@ def main() -> None:
     summary = {
         "roads": str(roads_path),
         "device": args.device,
+        "map_coloring": args.map_coloring,
         "buffer_m": args.buffer_m,
         "grid_step": args.grid_step,
         "min_road_count": args.min_road_count,
