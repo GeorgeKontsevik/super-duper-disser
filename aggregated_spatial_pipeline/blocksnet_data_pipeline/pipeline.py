@@ -171,8 +171,46 @@ def _features_from_polygon_or_empty(boundary_geom, tags: dict, layer_name: str) 
         raise
 
 
+def _roads_from_graph_or_empty(boundary_geom) -> gpd.GeoDataFrame:
+    logger.info("[blocksnet-raw] OSM request started: layer='roads' (graph)")
+    started = time.time()
+    try:
+        graph = ox.graph_from_polygon(
+            boundary_geom,
+            network_type="drive",
+            retain_all=True,
+            truncate_by_edge=True,
+        )
+        _, edges = ox.graph_to_gdfs(graph, nodes=True, edges=True, node_geometry=True, fill_edge_geometry=True)
+        roads_gdf = edges[edges.geom_type.isin(["LineString", "MultiLineString"])].copy()
+        logger.info(
+            "[blocksnet-raw] OSM request finished: layer='roads' (graph), features={}, elapsed={:.1f}s",
+            len(roads_gdf),
+            time.time() - started,
+        )
+        return roads_gdf
+    except Exception as exc:
+        if exc.__class__.__name__ == "InsufficientResponseError":
+            warnings.warn(
+                "[blocksnet_data_pipeline] OSM roads graph is empty for current territory; continuing with empty roads.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            logger.warning(
+                "[blocksnet-raw] OSM roads graph is empty, elapsed={:.1f}s (continuing)",
+                time.time() - started,
+            )
+            return gpd.GeoDataFrame({"geometry": []}, geometry="geometry", crs=4326)
+        logger.error(
+            "[blocksnet-raw] OSM request failed: layer='roads' (graph), elapsed={:.1f}s, error={}",
+            time.time() - started,
+            exc,
+        )
+        raise
+
+
 def _get_urban_objects(boundary_geom):
-    roads_gdf = _features_from_polygon_or_empty(boundary_geom, BC_TAGS["roads"], "roads")
+    roads_gdf = _roads_from_graph_or_empty(boundary_geom)
     railways_gdf = _features_from_polygon_or_empty(boundary_geom, BC_TAGS["railways"], "railways")
     water_gdf = _features_from_polygon_or_empty(boundary_geom, BC_TAGS["water"], "water")
 
