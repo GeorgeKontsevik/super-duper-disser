@@ -81,6 +81,11 @@ def parse_args() -> argparse.Namespace:
         help="Timeout (seconds) for OSMnx/Overpass requests during data collection.",
     )
     parser.add_argument(
+        "--overpass-url",
+        default=None,
+        help="Optional Overpass endpoint URL (e.g. https://overpass.kumi.systems/api/interpreter).",
+    )
+    parser.add_argument(
         "--osmnx-debug",
         action="store_true",
         help="Enable OSMnx console logs via OSMnx settings.",
@@ -214,7 +219,7 @@ def _configure_logging() -> None:
     )
 
 
-def _configure_osm_requests(timeout_s: float, *, debug: bool = False) -> None:
+def _configure_osm_requests(timeout_s: float, *, debug: bool = False, overpass_url: str | None = None) -> None:
     try:
         import osmnx as ox
     except Exception:
@@ -223,12 +228,18 @@ def _configure_osm_requests(timeout_s: float, *, debug: bool = False) -> None:
     ox.settings.requests_timeout = timeout_int
     # Keep other Overpass defaults, but force timeout in the query header.
     ox.settings.overpass_settings = f"[out:json][timeout:{timeout_int}]"
-    ox.settings.overpass_rate_limit = False
+    ox.settings.overpass_rate_limit = True
+    if overpass_url:
+        ox.settings.overpass_url = str(overpass_url).strip()
     ox.settings.log_console = bool(debug)
     if hasattr(ox.settings, "log_level"):
         ox.settings.log_level = 20
     if debug:
-        _log(f"OSMnx debug logs enabled (timeout={timeout_int}s, overpass_rate_limit=False).")
+        endpoint = getattr(ox.settings, "overpass_url", "default")
+        _log(
+            "OSMnx debug logs enabled "
+            f"(timeout={timeout_int}s, overpass_rate_limit=True, overpass_url={endpoint})."
+        )
 
 
 def _validate_layer_input_path(path: Path, layer_id: str) -> None:
@@ -356,6 +367,7 @@ def _ensure_street_grid_from_repo(
     no_cache: bool,
     buffer_m: float,
     center_node_id: int | None = None,
+    roads_path: Path | None = None,
 ) -> tuple[Path, Path, bool]:
     experiments_dir = repo_root / "segregation-by-design-experiments"
     output_dir = experiments_dir / "outputs"
@@ -391,6 +403,8 @@ def _ensure_street_grid_from_repo(
         "--buffer-m",
         str(float(buffer_m)),
     ]
+    if roads_path is not None and roads_path.exists():
+        command.extend(["--road-source", "local", "--roads", str(roads_path)])
     if center_node_id is not None:
         command.extend(["--center-node-id", str(int(center_node_id))])
     if no_cache:
@@ -412,6 +426,39 @@ def _ensure_street_grid_from_repo(
         )
     _log(f"Classification artifact: {predicted_cells_path}")
     return predicted_cells_path, summary_output, True
+
+
+def _ensure_shared_drive_roads(
+    *,
+    buffer_path: Path,
+    output_path: Path,
+    no_cache: bool,
+) -> tuple[Path, int, bool]:
+    if output_path.exists() and (not no_cache):
+        cached = gpd.read_file(output_path)
+        return output_path, int(len(cached)), False
+
+    import osmnx as ox
+
+    boundary_gdf = gpd.read_file(buffer_path)
+    if boundary_gdf.empty:
+        raise RuntimeError(f"Analysis buffer is empty: {buffer_path}")
+    boundary_geom = boundary_gdf.union_all()
+    if boundary_gdf.crs is not None and str(boundary_gdf.crs) != "EPSG:4326":
+        boundary_geom = gpd.GeoSeries([boundary_geom], crs=boundary_gdf.crs).to_crs(4326).iloc[0]
+
+    graph = ox.graph_from_polygon(
+        boundary_geom,
+        network_type="drive",
+        retain_all=True,
+        truncate_by_edge=True,
+    )
+    _, edges = ox.graph_to_gdfs(graph, nodes=True, edges=True, node_geometry=True, fill_edge_geometry=True)
+    edges = edges[edges.geometry.geom_type.isin(["LineString", "MultiLineString"])].copy()
+    edges = _clip_to_boundary(edges, boundary_geom)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    edges.to_file(output_path, driver="GeoJSON")
+    return output_path, int(len(edges)), True
 
 
 def _clip_street_grid_to_buffer(
@@ -1247,7 +1294,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
 
     # Some imported modules may reconfigure loguru on import; enforce compact format again.
     _configure_logging()
-    _configure_osm_requests(args.osm_timeout_s)
+    _configure_osm_requests(args.osm_timeout_s, overpass_url=args.overpass_url)
 
     place = args.place or (f"osm_node_{int(args.center_node_id)}" if args.center_node_id is not None else None)
     if not place:
@@ -1428,6 +1475,21 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         _log(f"Using cached clipped quarters: {buffered_quarters_path} ({buffered_quarters_count} features)")
 
         _log("Classification step: building street-pattern grid for the same territory policy.")
+    shared_roads_path = derived_dir / "roads_drive_osmnx.geojson"
+    shared_roads_path, shared_roads_count, shared_roads_rebuilt = _ensure_shared_drive_roads(
+        buffer_path=buffer_path,
+        output_path=shared_roads_path,
+        no_cache=args.no_cache,
+    )
+    if shared_roads_rebuilt:
+        _log(
+            "Shared roads prepared from OSMnx drive graph: "
+            f"{shared_roads_count} edges ({shared_roads_path})"
+        )
+        downloaded_in_this_run = True
+    else:
+        _log(f"Using cached shared drive roads: {shared_roads_path} ({shared_roads_count} edges)")
+
     street_grid_source_path, street_summary_path, street_rebuilt = _ensure_street_grid_from_repo(
         place=place,
         repo_root=repo_root,
@@ -1435,6 +1497,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         no_cache=args.no_cache,
         buffer_m=effective_buffer_m,
         center_node_id=args.center_node_id,
+        roads_path=shared_roads_path,
     )
     clipped_street_grid_path = derived_dir / "street_grid_buffered.geojson"
     if args.no_cache or street_rebuilt or not clipped_street_grid_path.exists():
@@ -1495,6 +1558,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             "connectpt_manifest": str(connectpt_manifest_path),
             "street_pattern_summary": str(street_summary_path),
             "street_pattern_buffer": str(buffer_path),
+            "shared_drive_roads": str(shared_roads_path),
         },
         "floor_predictor": floor_metrics,
     }
@@ -1578,7 +1642,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
 
 
 def _prepare_inputs(args: argparse.Namespace) -> PreparedInputs:
-    if args.place:
+    if args.place or args.center_node_id is not None:
         prepared = _prepare_inputs_from_place(args)
         return PreparedInputs(
             layer_inputs=prepared.layer_inputs,
@@ -1605,7 +1669,7 @@ def _prepare_inputs(args: argparse.Namespace) -> PreparedInputs:
 def main() -> None:
     _configure_logging()
     args = parse_args()
-    _configure_osm_requests(args.osm_timeout_s, debug=args.osmnx_debug)
+    _configure_osm_requests(args.osm_timeout_s, debug=args.osmnx_debug, overpass_url=args.overpass_url)
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 

@@ -172,9 +172,9 @@ def _features_from_polygon_or_empty(boundary_geom, tags: dict, layer_name: str) 
 
 
 def _get_urban_objects(boundary_geom):
-    water_gdf = _features_from_polygon_or_empty(boundary_geom, BC_TAGS["water"], "water")
     roads_gdf = _features_from_polygon_or_empty(boundary_geom, BC_TAGS["roads"], "roads")
     railways_gdf = _features_from_polygon_or_empty(boundary_geom, BC_TAGS["railways"], "railways")
+    water_gdf = _features_from_polygon_or_empty(boundary_geom, BC_TAGS["water"], "water")
 
     water_gdf = water_gdf[water_gdf.geom_type.isin(["Polygon", "MultiPolygon", "LineString", "MultiLineString"])]
     roads_gdf = roads_gdf[roads_gdf.geom_type.isin(["LineString", "MultiLineString"])]
