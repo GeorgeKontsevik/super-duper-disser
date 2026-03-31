@@ -58,6 +58,10 @@ COMPARISON_COLOR_PALETTE = [
     "#1f78b4",
     "#b2df8a",
 ]
+
+
+def _progress_log(message: str) -> None:
+    tqdm.write(f"[street-pattern] {message}")
 COUNTRY_ROADS_PATHS = {
     "canada": REPO_ROOT / "data_all_cities" / "hotosm_can_roads_lines_gpkg" / "hotosm_can_roads_lines_gpkg.gpkg",
     "usa": REPO_ROOT / "data_all_cities" / "hotosm_usa_roads_lines_gpkg" / "hotosm_usa_roads_lines_gpkg.gpkg",
@@ -113,6 +117,16 @@ def parse_args() -> argparse.Namespace:
         "--place",
         default="Montreal, Canada",
         help='Place string for OSM geocoding, for example "Montreal, Canada".',
+    )
+    parser.add_argument(
+        "--center-node-id",
+        "--centre-node-id",
+        dest="center_node_id",
+        type=int,
+        help=(
+            "Optional OSM node id for city centre. "
+            "If provided, this node is used directly and relation-centre lookup by place is skipped."
+        ),
     )
     parser.add_argument(
         "--network-type",
@@ -1041,6 +1055,8 @@ def classify_snapshot(
     roads_path: Path | None = None,
     road_source_label: str = "osm",
 ):
+    snapshot_label = _year_label(year)
+    _progress_log(f"{snapshot_label}: start classification snapshot")
     graph_wgs84 = None
     roads_wgs84 = None
     subgraphs = None
@@ -1073,6 +1089,7 @@ def classify_snapshot(
 
     if not no_cache and subgraphs_cache_path is not None and subgraphs_cache_path.exists():
         subgraphs = _load_pickle(subgraphs_cache_path)
+        _progress_log(f"{snapshot_label}: loaded cached subgraphs")
 
     if not no_cache and roads_cache_path is not None and roads_cache_path.exists():
         roads_cache = _load_pickle(roads_cache_path)
@@ -1080,24 +1097,31 @@ def classify_snapshot(
             roads_wgs84 = roads_cache["roads_wgs84"]
         elif isinstance(roads_cache, gpd.GeoDataFrame):
             roads_wgs84 = roads_cache
+        if roads_wgs84 is not None:
+            _progress_log(f"{snapshot_label}: loaded cached roads")
 
     if subgraphs is None or roads_wgs84 is None:
+        _progress_log(f"{snapshot_label}: preparing roads and graph split (this can take time)")
         if roads_path is None:
+            _progress_log(f"{snapshot_label}: downloading road graph from OSM")
             graph_wgs84 = download_street_graph(polygon_wgs84, network_type=network_type, year=year)
             _, roads_wgs84 = ox.graph_to_gdfs(graph_wgs84)
             roads_wgs84 = roads_wgs84.reset_index()
             graph_projected = ox.project_graph(graph_wgs84, to_crs=local_crs)
+            _progress_log(f"{snapshot_label}: splitting projected graph by grid")
             subgraphs = split_graph_by_grid_for_polygon(
                 graph_projected,
                 polygon_projected,
                 grid_step=grid_step,
             )
         else:
+            _progress_log(f"{snapshot_label}: loading roads from local dataset")
             roads_projected, roads_wgs84, _, _ = prepare_city_roads(
                 roads_path=roads_path,
                 centre_node=centre_node,
                 buffer_m=buffer_m,
             )
+            _progress_log(f"{snapshot_label}: splitting roads by grid")
             subgraphs = split_roads_by_grid_for_polygon(
                 roads_projected,
                 polygon_projected,
@@ -1113,7 +1137,9 @@ def classify_snapshot(
 
     if not no_cache and dataset_cache_path is not None and dataset_cache_path.exists():
         dataset = _load_pickle(dataset_cache_path)
+        _progress_log(f"{snapshot_label}: loaded cached dataset")
     else:
+        _progress_log(f"{snapshot_label}: building graph dataset/features")
         dataset = BlockDataset(subgraphs)
         if not no_cache and dataset_cache_path is not None:
             _save_pickle(dataset_cache_path, dataset)
@@ -1123,13 +1149,17 @@ def classify_snapshot(
         if isinstance(cached_predictions, dict):
             predictions = cached_predictions.get("predictions")
             probabilities = cached_predictions.get("probabilities")
+            if predictions is not None and probabilities is not None:
+                _progress_log(f"{snapshot_label}: loaded cached predictions")
 
     if predictions is None or probabilities is None:
+        _progress_log(f"{snapshot_label}: running model inference")
         predictions, probabilities = classify_blocks(
             dataset,
             model_path=model_path,
             device=device,
         )
+        _progress_log(f"{snapshot_label}: inference complete")
         if not no_cache and predictions_cache_path is not None:
             _save_pickle(
                 predictions_cache_path,
@@ -1161,6 +1191,7 @@ def classify_snapshot(
         probabilities=probabilities,
     )
     subgraph_metrics = summarize_subgraph_metrics(subgraphs)
+    _progress_log(f"{snapshot_label}: snapshot done")
     return {
         "year": year,
         "road_source": road_source_label,
@@ -1418,11 +1449,31 @@ def main() -> None:
     stage_bar.set_postfix_str("resolve model")
     stage_bar.update(1)
 
-    stage_bar.set_postfix_str("resolve city relation and centre node")
-    relation, centre_node = resolve_city_centre_node(args.place)
+    if args.center_node_id is not None:
+        stage_bar.set_postfix_str("resolve centre node by OSM node id")
+        api = osm.OsmApi()
+        centre_node = _node_get(api, int(args.center_node_id))
+        relation = {"id": None}
+        try:
+            geocoded = ox.geocode_to_gdf(args.place)
+            if not geocoded.empty:
+                row = geocoded.iloc[0]
+                relation_id = row.get("osm_id")
+                osm_type = str(row.get("osm_type", "")).lower()
+                if relation_id is not None and osm_type == "relation":
+                    relation = {"id": int(relation_id)}
+        except Exception:
+            pass
+    else:
+        stage_bar.set_postfix_str("resolve city relation and centre node")
+        relation, centre_node = resolve_city_centre_node(args.place)
     stage_bar.update(1)
 
-    stage_bar.set_postfix_str("build 20km buffer")
+    if args.buffer_m >= 1000:
+        buffer_label = f"{args.buffer_m / 1000:.1f}km"
+    else:
+        buffer_label = f"{int(args.buffer_m)}m"
+    stage_bar.set_postfix_str(f"build {buffer_label} buffer")
     polygon = build_buffer_polygon(centre_node, args.buffer_m)
     buffer_gdf = gpd.GeoDataFrame({"geometry": [polygon]}, crs=4326)
     local_crs = buffer_gdf.estimate_utm_crs() or "EPSG:3857"

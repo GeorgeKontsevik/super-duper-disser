@@ -11,6 +11,7 @@ import geopandas as gpd
 import momepy as mp
 import networkx as nx
 import osmnx as ox
+from loguru import logger
 
 CONNECTPT_SRC = Path(__file__).resolve().parents[2] / "connectpt" / "connectpt"
 if str(CONNECTPT_SRC) not in sys.path:
@@ -88,6 +89,17 @@ def _save_geojson(gdf: gpd.GeoDataFrame, path: Path) -> None:
     gdf.to_file(path, driver="GeoJSON")
 
 
+def _clip_to_boundary(gdf: gpd.GeoDataFrame, boundary_geom, crs: str = "EPSG:4326") -> gpd.GeoDataFrame:
+    if gdf.empty:
+        return gdf
+    boundary_gdf = gpd.GeoDataFrame({"geometry": [boundary_geom]}, crs=crs)
+    if gdf.crs != boundary_gdf.crs:
+        boundary_gdf = boundary_gdf.to_crs(gdf.crs)
+    clipped = gdf.clip(boundary_gdf)
+    clipped = clipped[clipped.geometry.notna() & ~clipped.geometry.is_empty].reset_index(drop=True)
+    return clipped
+
+
 def _save_time_matrix(matrix, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as handle:
@@ -111,11 +123,21 @@ def build_connectpt_osm_bundle(
     modalities: list[Modality],
     output_dir: str | Path,
     speed_kmh: float = DEFAULT_SPEED_KMH,
+    boundary_path: str | Path | None = None,
 ) -> dict:
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    place_gdf, boundary = geocode_place_boundary(place)
+    if boundary_path is not None:
+        place_gdf = gpd.read_file(Path(boundary_path))
+        if place_gdf.empty:
+            raise ValueError(f"Boundary override is empty: {boundary_path}")
+        if "display_name" not in place_gdf.columns:
+            place_gdf = place_gdf.copy()
+            place_gdf["display_name"] = place
+        boundary = place_gdf.union_all()
+    else:
+        place_gdf, boundary = geocode_place_boundary(place)
     boundary_path = output_path / "boundary.geojson"
     _save_geojson(place_gdf, boundary_path)
 
@@ -126,8 +148,27 @@ def build_connectpt_osm_bundle(
     centre_path = output_path / "centre.geojson"
     _save_geojson(centre_gdf, centre_path)
 
-    stops_by_modality = get_agg_stops(boundary, modalities)
-    lines_by_modality = get_lines(boundary, modalities)
+    stops_by_modality: dict[Modality, gpd.GeoDataFrame] = {}
+    lines_by_modality: dict[Modality, gpd.GeoDataFrame] = {}
+
+    for modality in modalities:
+        try:
+            stops_by_modality.update(get_agg_stops(boundary, [modality]))
+        except Exception as exc:
+            logger.warning(
+                "ConnectPT stops collection skipped for modality '{}' due to OSM/processing error: {}",
+                modality.value,
+                exc,
+            )
+
+        try:
+            lines_by_modality.update(get_lines(boundary, [modality]))
+        except Exception as exc:
+            logger.warning(
+                "ConnectPT lines collection skipped for modality '{}' due to OSM/processing error: {}",
+                modality.value,
+                exc,
+            )
 
     modality_artifacts: list[ModalityArtifacts] = []
 
@@ -136,6 +177,12 @@ def build_connectpt_osm_bundle(
         modality_dir.mkdir(parents=True, exist_ok=True)
 
         if modality not in stops_by_modality or modality not in lines_by_modality:
+            logger.warning(
+                "ConnectPT modality '{}' has incomplete inputs (stops_present={}, lines_present={}); skipping.",
+                modality.value,
+                modality in stops_by_modality,
+                modality in lines_by_modality,
+            )
             modality_artifacts.append(
                 ModalityArtifacts(
                     modality=modality.value,
@@ -150,6 +197,8 @@ def build_connectpt_osm_bundle(
 
         agg_stops = stops_by_modality[modality].copy()
         lines = lines_by_modality[modality].copy()
+        agg_stops = _clip_to_boundary(agg_stops, boundary, crs=place_gdf.crs)
+        lines = _clip_to_boundary(lines, boundary, crs=place_gdf.crs)
 
         agg_stops_path = modality_dir / "aggregated_stops.geojson"
         lines_path = modality_dir / "lines.geojson"
@@ -158,6 +207,8 @@ def build_connectpt_osm_bundle(
 
         roads_with_stops, filtered_stops = project_stops_on_roads(lines, agg_stops)
         roads_with_stops = _ensure_length_meter(roads_with_stops)
+        roads_with_stops = _clip_to_boundary(roads_with_stops, boundary, crs=place_gdf.crs)
+        filtered_stops = _clip_to_boundary(filtered_stops, boundary, crs=place_gdf.crs)
 
         projected_lines_path = modality_dir / "projected_lines.geojson"
         projected_stops_path = modality_dir / "projected_stops.geojson"
@@ -169,6 +220,8 @@ def build_connectpt_osm_bundle(
         simplified_graph = _largest_connected_component(simplified_graph)
 
         graph_nodes, graph_edges = _prepare_graph_outputs(simplified_graph, modality)
+        graph_nodes = _clip_to_boundary(graph_nodes, boundary, crs=place_gdf.crs)
+        graph_edges = _clip_to_boundary(graph_edges, boundary, crs=place_gdf.crs)
         graph_nodes_path = modality_dir / "graph_nodes.geojson"
         graph_edges_path = modality_dir / "graph_edges.geojson"
         _save_geojson(graph_nodes, graph_nodes_path)
@@ -200,6 +253,7 @@ def build_connectpt_osm_bundle(
     manifest = {
         "place": place,
         "slug": slugify_place(place),
+        "boundary_source": str(Path(boundary_path).resolve()) if boundary_path is not None else "osmnx_geocode",
         "speed_kmh": speed_kmh,
         "boundary": str(boundary_path),
         "centre": str(centre_path),
