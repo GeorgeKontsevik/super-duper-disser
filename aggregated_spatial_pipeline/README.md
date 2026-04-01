@@ -364,6 +364,49 @@ FLOOR_PREDICTOR_DIR=/Users/gk/Code/somewhere/floor-predictor \
 - `street_grid` и `climate_grid` — технические или внешние слои;
 - `cities` — уровень агломерации, где город выступает как супер-узел.
 
+## Pipeline_2: Сбор Данных И Подготовка Для Solver
+
+Для второго пайплайна добавлен отдельный скрипт:
+
+- `aggregated_spatial_pipeline/pipeline/run_pipeline2_prepare_solver_inputs.py`
+
+Он запускается поверх уже готового city bundle из `pipeline_1` и делает шаги строго в таком порядке:
+
+1. `data_collection`: скачать raw OSM сервисы внутри той же analysis territory (`buffer.parquet`).
+2. `capacity_aggregation`: агрегировать сервисные capacity по кварталам.
+3. `matrix_build`: посчитать матрицу доступности между кварталами через `blocksnet.relations.calculate_accessibility_matrix`.
+4. `solver_prep`: сохранить solver-ready таблицы по каждому сервису (`demand`, `demand_within`, `demand_without`, `capacity`, `capacity_left`, `provision`).
+
+Теги, которые используются на шаге `data_collection`:
+
+- `health`: `{"amenity": ["hospital", "clinic", "doctors", "dentist"]}`, `{"healthcare": true}`
+- `post`: `{"amenity": "post_office"}`
+- `culture`: `{"amenity": ["theatre", "cinema", "arts_centre", "community_centre", "library"]}`, `{"tourism": ["museum", "gallery"]}`
+- `port`: `{"landuse": "port"}`, `{"amenity": "ferry_terminal"}`, `{"harbour": true}`
+- `airport`: `{"aeroway": ["aerodrome", "terminal"]}`
+- `marina`: `{"leisure": "marina"}`
+
+Пример запуска:
+
+```bash
+PYTHONPATH=/Users/gk/Code/super-duper-disser \
+/Users/gk/Code/super-duper-disser/.venv/bin/python -m aggregated_spatial_pipeline.pipeline.run_pipeline2_prepare_solver_inputs \
+  --joint-input-dir /Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/joint_inputs/barcelona_spain \
+  --no-cache \
+  --osm-timeout-s 180 \
+  --overpass-url https://overpass-api.de/api/interpreter
+```
+
+Что сохраняется:
+
+- `pipeline_2/services_raw/<service>.parquet`
+- `pipeline_2/prepared/units_union.parquet`
+- `pipeline_2/prepared/adj_matrix_time_min_union.parquet`
+- `pipeline_2/solver_inputs/<service>/blocks_solver.parquet`
+- `pipeline_2/solver_inputs/<service>/adj_matrix_time_min.parquet`
+- `pipeline_2/solver_inputs/<service>/provision_links.csv`
+- `pipeline_2/manifest_prepare_solver_inputs.json`
+
 ## Главные сущности
 
 ### 1. Layers
