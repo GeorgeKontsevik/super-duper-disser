@@ -337,6 +337,171 @@ def _ensure_services_valid(services: Iterable[str]) -> list[str]:
     return normalized
 
 
+def _try_load_json(path: Path) -> dict | None:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _plot_accessibility_previews(units: gpd.GeoDataFrame, matrix_union: pd.DataFrame, out_dir: Path) -> dict[str, str]:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out: dict[str, str] = {}
+
+    matrix_numeric = matrix_union.apply(pd.to_numeric, errors="coerce").astype(np.float32, copy=False)
+    matrix_numeric = matrix_numeric.where(np.isfinite(matrix_numeric), np.nan)
+    row_mean = matrix_numeric.mean(axis=1, skipna=True)
+
+    units_plot = units[["geometry"]].copy()
+    units_plot["access_time_mean_min"] = row_mean.reindex(units_plot.index).astype(float)
+    units_plot = units_plot[units_plot.geometry.notna() & ~units_plot.geometry.is_empty].copy()
+    if not units_plot.empty:
+        if units_plot.crs is not None:
+            try:
+                units_plot = units_plot.to_crs("EPSG:3857")
+            except Exception:
+                pass
+        fig, ax = plt.subplots(figsize=(12, 10))
+        units_plot.plot(
+            ax=ax,
+            column="access_time_mean_min",
+            cmap="viridis",
+            linewidth=0.05,
+            edgecolor="#d1d5db",
+            legend=True,
+            legend_kwds={"label": "mean travel time (min)"},
+            missing_kwds={"color": "#9ca3af", "label": "no path"},
+        )
+        ax.set_title("Accessibility: mean travel time per quarter", fontsize=12)
+        ax.set_axis_off()
+        access_map_path = out_dir / "01_accessibility_mean_time_map.png"
+        fig.savefig(access_map_path, dpi=180, bbox_inches="tight")
+        plt.close(fig)
+        out["accessibility_mean_time_map"] = str(access_map_path)
+
+    n = int(matrix_numeric.shape[0])
+    sample_n = min(600, n)
+    if sample_n > 1:
+        idx = np.linspace(0, n - 1, num=sample_n, dtype=int)
+        sub = matrix_numeric.iloc[idx, idx].to_numpy(dtype=float)
+        vmax = np.nanpercentile(sub, 95) if np.isfinite(sub).any() else 1.0
+        vmax = float(vmax) if np.isfinite(vmax) and vmax > 0 else 1.0
+        fig, ax = plt.subplots(figsize=(10, 8))
+        im = ax.imshow(sub, cmap="magma_r", vmin=0.0, vmax=vmax, interpolation="nearest")
+        ax.set_title(f"Accessibility matrix sample ({sample_n}x{sample_n})", fontsize=12)
+        ax.set_xlabel("destination index (sampled)")
+        ax.set_ylabel("origin index (sampled)")
+        cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label("travel time (min)")
+        matrix_png = out_dir / "02_accessibility_matrix_sample_heatmap.png"
+        fig.savefig(matrix_png, dpi=180, bbox_inches="tight")
+        plt.close(fig)
+        out["accessibility_matrix_sample_heatmap"] = str(matrix_png)
+
+    return out
+
+
+def _coerce_solver_blocks_geodataframe(
+    solver_blocks: pd.DataFrame | gpd.GeoDataFrame,
+    *,
+    quarters_ref: gpd.GeoDataFrame | None = None,
+) -> gpd.GeoDataFrame | None:
+    gdf = solver_blocks.copy()
+    if isinstance(gdf, gpd.GeoDataFrame) and "geometry" in gdf.columns:
+        return gdf
+
+    if "geometry" not in gdf.columns and quarters_ref is not None and "name" in gdf.columns:
+        name_to_geom = {str(idx): geom for idx, geom in quarters_ref.geometry.items()}
+        gdf["geometry"] = gdf["name"].astype(str).map(name_to_geom)
+
+    if "geometry" not in gdf.columns:
+        return None
+    return gpd.GeoDataFrame(gdf, geometry="geometry", crs=(quarters_ref.crs if quarters_ref is not None else 4326))
+
+
+def _plot_service_lp_preview(
+    solver_blocks: pd.DataFrame | gpd.GeoDataFrame,
+    service: str,
+    out_path: Path,
+    *,
+    quarters_ref: gpd.GeoDataFrame | None = None,
+) -> str | None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    if solver_blocks is None or solver_blocks.empty:
+        return None
+
+    gdf = _coerce_solver_blocks_geodataframe(solver_blocks, quarters_ref=quarters_ref)
+    if gdf is None:
+        return None
+    gdf = gdf[gdf.geometry.notna() & ~gdf.geometry.is_empty].copy()
+    if gdf.empty:
+        return None
+    if gdf.crs is not None:
+        try:
+            gdf = gdf.to_crs("EPSG:3857")
+        except Exception:
+            pass
+
+    provision_col = "provision_strong" if "provision_strong" in gdf.columns else "provision" if "provision" in gdf.columns else None
+    demand_without_col = "demand_without" if "demand_without" in gdf.columns else None
+    if provision_col is None and demand_without_col is None:
+        return None
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+
+    if provision_col is not None:
+        gdf.plot(
+            ax=axes[0],
+            column=provision_col,
+            cmap="YlGnBu",
+            linewidth=0.05,
+            edgecolor="#d1d5db",
+            legend=True,
+            vmin=0.0,
+            vmax=max(1.0, float(pd.to_numeric(gdf[provision_col], errors="coerce").max(skipna=True) or 1.0)),
+            missing_kwds={"color": "#9ca3af", "label": "missing"},
+        )
+        axes[0].set_title(f"{service}: provision", fontsize=11)
+    else:
+        axes[0].text(0.5, 0.5, "no provision column", ha="center", va="center")
+    axes[0].set_axis_off()
+
+    if demand_without_col is not None:
+        demand_wo = pd.to_numeric(gdf[demand_without_col], errors="coerce")
+        vmax_dw = float(np.nanpercentile(demand_wo.to_numpy(dtype=float), 95)) if demand_wo.notna().any() else 1.0
+        vmax_dw = vmax_dw if np.isfinite(vmax_dw) and vmax_dw > 0 else 1.0
+        gdf.plot(
+            ax=axes[1],
+            column=demand_without_col,
+            cmap="OrRd",
+            linewidth=0.05,
+            edgecolor="#d1d5db",
+            legend=True,
+            vmin=0.0,
+            vmax=vmax_dw,
+            missing_kwds={"color": "#9ca3af", "label": "missing"},
+        )
+        axes[1].set_title(f"{service}: unmet demand (demand_without)", fontsize=11)
+    else:
+        axes[1].text(0.5, 0.5, "no demand_without column", ha="center", va="center")
+    axes[1].set_axis_off()
+
+    fig.suptitle(f"LP results preview: {service}", fontsize=13)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+    return str(out_path)
+
+
 def main() -> None:
     args = parse_args()
     _configure_osmnx(args)
@@ -352,6 +517,7 @@ def main() -> None:
     raw_dir = output_root / "services_raw"
     prepared_dir = output_root / "prepared"
     solver_dir = output_root / "solver_inputs"
+    preview_dir = output_root / "previews"
     manifest_path = output_root / "manifest_prepare_solver_inputs.json"
 
     _log(f"Starting preparation for services={services}")
@@ -461,10 +627,45 @@ def main() -> None:
         )
 
     _log("STEP solver_prep: building per-service solver-ready blocks and links.")
+    _log("STEP previews: generating PNGs for accessibility and LP outputs.")
 
     # 4) Per-service solver-ready tables (demand_within/demand_without/capacity_left/provision).
     service_outputs: dict[str, dict] = {}
+    preview_outputs: dict[str, object] = {}
+    preview_outputs.update(_plot_accessibility_previews(units, matrix_union, preview_dir))
     for service in services:
+        service_dir = solver_dir / service
+        blocks_path = service_dir / "blocks_solver.parquet"
+        matrix_service_path = service_dir / "adj_matrix_time_min.parquet"
+        links_path = service_dir / "provision_links.csv"
+        summary_path = service_dir / "summary.json"
+        lp_preview_target = preview_dir / f"lp_{service}_provision_unmet.png"
+
+        if (not args.no_cache) and blocks_path.exists() and matrix_service_path.exists() and summary_path.exists():
+            _log(f"Using cached solver input [{service}]: {summary_path}")
+            cached_summary = _try_load_json(summary_path) or {}
+            lp_preview_path = str(lp_preview_target) if lp_preview_target.exists() else None
+            if lp_preview_path is None:
+                try:
+                    cached_blocks = pd.read_parquet(blocks_path)
+                    lp_preview_path = _plot_service_lp_preview(
+                        cached_blocks,
+                        service,
+                        lp_preview_target,
+                        quarters_ref=quarters,
+                    )
+                except Exception:
+                    lp_preview_path = None
+            service_outputs[service] = {
+                "summary": str(summary_path),
+                "blocks_solver": str(blocks_path),
+                "adj_matrix": str(matrix_service_path),
+                "provision_links": str(links_path),
+                "blocks_count": int(cached_summary.get("blocks_count", 0)),
+                "lp_preview_png": lp_preview_path,
+            }
+            continue
+
         cap_col = f"capacity_{service}"
         blocks = units[["unit_name", "population", "demand_base", cap_col, "geometry"]].copy()
         blocks = blocks.rename(columns={"demand_base": "demand", cap_col: "capacity"})
@@ -486,22 +687,26 @@ def main() -> None:
         )
         _log(f"Service [{service}] competitive_provision finished in {time.time() - provision_started:.1f}s")
         solver_blocks = provision_df.copy()
+        if "geometry" not in solver_blocks.columns and "geometry" in blocks.columns:
+            solver_blocks = solver_blocks.join(blocks[["geometry"]], how="left")
+        if not isinstance(solver_blocks, gpd.GeoDataFrame) and "geometry" in solver_blocks.columns:
+            solver_blocks = gpd.GeoDataFrame(solver_blocks, geometry="geometry", crs=blocks.crs)
         solver_blocks["name"] = solver_blocks.index.astype(str)
         solver_blocks["service_name"] = service
         solver_blocks["service_radius_min"] = float(args.service_radius_min)
         # Compatibility with arctic solver runner fields.
         solver_blocks["provision"] = solver_blocks["provision_strong"].fillna(0.0)
 
-        service_dir = solver_dir / service
-        blocks_path = service_dir / "blocks_solver.parquet"
-        matrix_service_path = service_dir / "adj_matrix_time_min.parquet"
-        links_path = service_dir / "provision_links.csv"
-        summary_path = service_dir / "summary.json"
-
         _save_geodata(solver_blocks, blocks_path)
         _save_dataframe(sub_mx, matrix_service_path)
         links_path.parent.mkdir(parents=True, exist_ok=True)
         links_df.reset_index().to_csv(links_path, index=False)
+        lp_preview_path = _plot_service_lp_preview(
+            solver_blocks,
+            service,
+            lp_preview_target,
+            quarters_ref=quarters,
+        )
 
         summary = {
             "service": service,
@@ -529,6 +734,7 @@ def main() -> None:
             "adj_matrix": str(matrix_service_path),
             "provision_links": str(links_path),
             "blocks_count": int(len(solver_blocks)),
+            "lp_preview_png": lp_preview_path,
         }
         _log(
             f"Prepared solver input [{service}]: blocks={len(solver_blocks)}, "
@@ -545,6 +751,8 @@ def main() -> None:
         "demand_per_1000": float(args.demand_per_1000),
         "units_union": str(units_path),
         "adj_matrix_union": str(matrix_path),
+        "previews_dir": str(preview_dir),
+        "preview_outputs": preview_outputs,
         "raw_services": raw_stats,
         "solver_outputs": service_outputs,
     }
