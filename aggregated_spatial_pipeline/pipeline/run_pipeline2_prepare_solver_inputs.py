@@ -23,6 +23,7 @@ from blocksnet.relations import calculate_accessibility_matrix
 
 
 SUPPORTED_SERVICES = ("health", "post", "culture", "port", "airport", "marina")
+LP_BLOCK_SELECTION_POLICY = "has_living_buildings_or_service_capacity"
 
 # Keep matplotlib/tqdm ecosystem caches in writable workspace path.
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/mpl-asp-pipeline2")
@@ -584,6 +585,13 @@ def main() -> None:
     _log(f"Starting preparation for services={services}")
     _log(f"Using city bundle: {city_dir}")
     _log(f"Territory boundary: {boundary_path}")
+    if args.no_cache:
+        _warn(
+            "Cache mode: disabled (--no-cache). "
+            "Raw layers, matrix, and solver inputs may be rebuilt."
+        )
+    else:
+        _log("Cache mode: enabled")
 
     boundary = _read_boundary(boundary_path)
     quarters = _read_quarters(quarters_path)
@@ -721,44 +729,54 @@ def main() -> None:
         lp_preview_target = preview_dir / f"lp_{service}_provision_unmet.png"
 
         if (not args.no_cache) and blocks_path.exists() and matrix_service_path.exists() and summary_path.exists():
-            _log(f"Using cached solver input [{service}]: {summary_path}")
             cached_summary = _try_load_json(summary_path) or {}
-            lp_preview_path = str(lp_preview_target) if lp_preview_target.exists() else None
-            if lp_preview_path is None:
-                try:
-                    cached_blocks = pd.read_parquet(blocks_path)
-                    lp_preview_path = _plot_service_lp_preview(
-                        cached_blocks,
-                        service,
-                        lp_preview_target,
-                        quarters_ref=quarters,
-                    )
-                except Exception:
-                    lp_preview_path = None
-            service_outputs[service] = {
-                "summary": str(summary_path),
-                "blocks_solver": str(blocks_path),
-                "adj_matrix": str(matrix_service_path),
-                "provision_links": str(links_path),
-                "blocks_count": int(cached_summary.get("blocks_count", 0)),
-                "lp_preview_png": lp_preview_path,
-            }
-            continue
+            if cached_summary.get("block_selection_policy") != LP_BLOCK_SELECTION_POLICY:
+                _warn(
+                    f"Cached solver input [{service}] is outdated for current block-selection policy "
+                    f"({LP_BLOCK_SELECTION_POLICY}). Rebuilding."
+                )
+            else:
+                _log(f"Using cached solver input [{service}]: {summary_path}")
+                lp_preview_path = str(lp_preview_target) if lp_preview_target.exists() else None
+                if lp_preview_path is None:
+                    try:
+                        cached_blocks = pd.read_parquet(blocks_path)
+                        lp_preview_path = _plot_service_lp_preview(
+                            cached_blocks,
+                            service,
+                            lp_preview_target,
+                            quarters_ref=quarters,
+                        )
+                    except Exception:
+                        lp_preview_path = None
+                service_outputs[service] = {
+                    "summary": str(summary_path),
+                    "blocks_solver": str(blocks_path),
+                    "adj_matrix": str(matrix_service_path),
+                    "provision_links": str(links_path),
+                    "blocks_count": int(cached_summary.get("blocks_count", 0)),
+                    "lp_preview_png": lp_preview_path,
+                }
+                continue
 
         cap_col = f"capacity_{service}"
-        blocks = units[["unit_name", "population", "demand_base", cap_col, "geometry"]].copy()
+        blocks = units[["unit_name", "population", "demand_base", cap_col, "geometry", "has_living_buildings"]].copy()
         blocks = blocks.rename(columns={"demand_base": "demand", cap_col: "capacity"})
-        # Strict rule: quarters without population are excluded.
-        blocks = blocks[blocks["population"] > 0].copy()
+        # LP policy: include only quarters with living buildings OR own service capacity.
+        blocks["has_living_buildings"] = blocks["has_living_buildings"].fillna(False).astype(bool)
+        blocks = blocks[blocks["has_living_buildings"] | (blocks["capacity"] > 0)].copy()
         if blocks.empty:
             _warn(f"No active blocks for service [{service}] after filtering. Skipping.")
             service_outputs[service] = {
                 "skipped": True,
-                "reason": "no_population_blocks_after_filtering",
+                "reason": "no_living_or_service_blocks_after_filtering",
             }
             continue
 
-        _log(f"Service [{service}] provisioning prep: blocks={len(blocks)}")
+        _log(
+            f"Service [{service}] provisioning prep: blocks={len(blocks)} "
+            f"(living={int(blocks['has_living_buildings'].sum())}, capacity>0={int((blocks['capacity'] > 0).sum())})"
+        )
         sub_mx = matrix_union.loc[blocks.index, blocks.index].copy()
         provision_started = time.time()
         provision_df, links_df = competitive_provision(
@@ -797,7 +815,10 @@ def main() -> None:
 
         summary = {
             "service": service,
+            "block_selection_policy": LP_BLOCK_SELECTION_POLICY,
             "blocks_count": int(len(solver_blocks)),
+            "blocks_with_living": int(blocks["has_living_buildings"].sum()),
+            "blocks_with_service_capacity": int((blocks["capacity"] > 0).sum()),
             "demand_total": float(solver_blocks["demand"].sum()),
             "capacity_total": float(solver_blocks["capacity"].sum()),
             "demand_within_total": float(solver_blocks["demand_within"].sum()),
