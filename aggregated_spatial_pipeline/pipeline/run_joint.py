@@ -1015,6 +1015,7 @@ def _save_collection_previews(
     buffer_path: Path,
     raw_files: dict,
     connectpt_manifest_path: Path,
+    intermodal_manifest_path: Path | None,
     blocks_manifest_path: Path,
     buffered_quarters_path: Path,
     street_grid_path: Path,
@@ -1258,6 +1259,72 @@ def _save_collection_previews(
     )
     if prep_png is not None:
         saved.append(prep_png)
+
+    intermodal_manifest = _try_load_json(intermodal_manifest_path) if intermodal_manifest_path else None
+    if isinstance(intermodal_manifest, dict):
+        intermodal_files = intermodal_manifest.get("files") or {}
+        intermodal_nodes = _read(Path(intermodal_files["graph_nodes"])) if intermodal_files.get("graph_nodes") else None
+        intermodal_edges = _read(Path(intermodal_files["graph_edges"])) if intermodal_files.get("graph_edges") else None
+        if (intermodal_nodes is not None and not intermodal_nodes.empty) or (intermodal_edges is not None and not intermodal_edges.empty):
+            edges_plot = intermodal_edges.copy() if intermodal_edges is not None and not intermodal_edges.empty else None
+            nodes_plot = intermodal_nodes.copy() if intermodal_nodes is not None and not intermodal_nodes.empty else None
+            buffer_plot = buffer_gdf
+
+            if edges_plot is not None and edges_plot.crs is not None:
+                try:
+                    edges_plot = edges_plot.to_crs("EPSG:3857")
+                except Exception:
+                    pass
+            if nodes_plot is not None and nodes_plot.crs is not None:
+                try:
+                    nodes_plot = nodes_plot.to_crs("EPSG:3857")
+                except Exception:
+                    pass
+            if buffer_plot is not None and not buffer_plot.empty and buffer_plot.crs is not None:
+                try:
+                    buffer_plot = buffer_plot.to_crs("EPSG:3857")
+                except Exception:
+                    pass
+
+            fig, ax = plt.subplots(figsize=(12, 12))
+            legend_handles = []
+
+            if edges_plot is not None and not edges_plot.empty:
+                mode_col = next((c for c in ("type", "transport_type", "mode", "route_type") if c in edges_plot.columns), None)
+                if mode_col is None:
+                    edges_plot.plot(ax=ax, color="#0f766e", linewidth=0.65, alpha=0.8)
+                    legend_handles.append(Line2D([0], [0], color="#0f766e", linewidth=2, label="intermodal edges"))
+                else:
+                    mode_values = edges_plot[mode_col].astype("string").fillna("unknown")
+                    top_modes = mode_values.value_counts().head(8).index.tolist()
+                    palette = ["#0f766e", "#0ea5e9", "#8b5cf6", "#f97316", "#16a34a", "#dc2626", "#334155", "#eab308"]
+                    for idx, mode_name in enumerate(top_modes):
+                        color = palette[idx % len(palette)]
+                        part = edges_plot[mode_values == mode_name]
+                        if part.empty:
+                            continue
+                        part.plot(ax=ax, color=color, linewidth=0.7, alpha=0.85)
+                        legend_handles.append(Line2D([0], [0], color=color, linewidth=2, label=str(mode_name)))
+                    other = edges_plot[~mode_values.isin(top_modes)]
+                    if not other.empty:
+                        other.plot(ax=ax, color="#9ca3af", linewidth=0.5, alpha=0.5)
+                        legend_handles.append(Line2D([0], [0], color="#9ca3af", linewidth=2, label="other"))
+
+            if nodes_plot is not None and not nodes_plot.empty:
+                nodes_plot.plot(ax=ax, color="#111827", markersize=5, alpha=0.7)
+                legend_handles.append(Line2D([0], [0], marker="o", color="none", markerfacecolor="#111827", markersize=6, label="nodes"))
+
+            if buffer_plot is not None and not buffer_plot.empty:
+                buffer_plot.plot(ax=ax, facecolor="none", edgecolor="#111111", linewidth=1.1)
+                legend_handles.append(Line2D([0], [0], color="#111111", linewidth=2, label="analysis buffer"))
+
+            _legend_bottom(ax, legend_handles)
+            ax.set_title("Intermodal Transport Graph (all PT modes)", fontsize=12)
+            ax.set_axis_off()
+            intermodal_png = all_together_dir / _next_name("intermodal_graph_modes")
+            fig.savefig(intermodal_png, dpi=180, bbox_inches="tight")
+            plt.close(fig)
+            saved.append(intermodal_png)
 
     if street_grid_gdf is not None and not street_grid_gdf.empty:
         street_plot = street_grid_gdf.copy()
@@ -1948,6 +2015,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         buffer_path=buffer_path,
         raw_files=raw_files,
         connectpt_manifest_path=connectpt_manifest_path,
+        intermodal_manifest_path=intermodal_manifest_path,
         blocks_manifest_path=blocks_manifest_path,
         buffered_quarters_path=buffered_quarters_path,
         street_grid_path=clipped_street_grid_path,
