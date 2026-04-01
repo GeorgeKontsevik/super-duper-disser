@@ -188,6 +188,43 @@ def _read_quarters(quarters_path: Path) -> gpd.GeoDataFrame:
     return quarters
 
 
+def _derive_has_living_from_buildings(units: gpd.GeoDataFrame, city_dir: Path) -> pd.Series:
+    flags = pd.Series(False, index=units.index, dtype=bool)
+    buildings_path = city_dir / "derived_layers" / "buildings_floor_enriched.parquet"
+    if not buildings_path.exists():
+        _warn(
+            "buildings_floor_enriched.parquet not found; "
+            "falling back to quarter-level residential proxies for accessibility preview mask."
+        )
+        return flags
+    try:
+        buildings = read_geodata(buildings_path)
+    except Exception as exc:  # noqa: BLE001
+        _warn(f"Could not read buildings_floor_enriched: {exc}")
+        return flags
+    if buildings.empty or "is_living" not in buildings.columns:
+        _warn(
+            "No is_living column in buildings_floor_enriched; "
+            "falling back to quarter-level residential proxies for accessibility preview mask."
+        )
+        return flags
+
+    living = pd.to_numeric(buildings["is_living"], errors="coerce")
+    living_gdf = buildings.loc[living >= 0.5, ["geometry"]].copy()
+    living_gdf = living_gdf[living_gdf.geometry.notna() & ~living_gdf.geometry.is_empty]
+    if living_gdf.empty:
+        return flags
+    living_gdf["geometry"] = living_gdf.geometry.representative_point()
+    if units.crs is not None and living_gdf.crs is not None and living_gdf.crs != units.crs:
+        living_gdf = living_gdf.to_crs(units.crs)
+
+    joined = gpd.sjoin(living_gdf, units[["geometry"]], how="inner", predicate="intersects")
+    if joined.empty:
+        return flags
+    flags.loc[joined["index_right"].unique()] = True
+    return flags
+
+
 def _read_graph_pickle(graph_path: Path) -> nx.MultiDiGraph:
     graph = pd.read_pickle(graph_path)
     if not isinstance(graph, nx.Graph):
@@ -371,7 +408,19 @@ def _plot_accessibility_previews(
     row_mean = matrix_numeric.mean(axis=1, skipna=True)
 
     units_plot = units[["geometry"]].copy()
+    # Accessibility map policy: color only quarters with residential stock.
+    residential_mask = pd.Series(False, index=units.index, dtype=bool)
+    if "has_living_buildings" in units.columns:
+        residential_mask = units["has_living_buildings"].fillna(False).astype(bool)
+    elif "residential" in units.columns:
+        residential_mask = pd.to_numeric(units["residential"], errors="coerce").fillna(0.0) > 0.0
+    elif "living_area" in units.columns:
+        residential_mask = pd.to_numeric(units["living_area"], errors="coerce").fillna(0.0) > 0.0
+    elif "living_area_proxy" in units.columns:
+        residential_mask = pd.to_numeric(units["living_area_proxy"], errors="coerce").fillna(0.0) > 0.0
+
     units_plot["access_time_mean_min"] = row_mean.reindex(units_plot.index).astype(float)
+    units_plot["is_residential"] = residential_mask.reindex(units_plot.index).fillna(False).astype(bool)
     units_plot = units_plot[units_plot.geometry.notna() & ~units_plot.geometry.is_empty].copy()
     if not units_plot.empty:
         if units_plot.crs is not None:
@@ -379,18 +428,28 @@ def _plot_accessibility_previews(
                 units_plot = units_plot.to_crs("EPSG:3857")
             except Exception:
                 pass
+        base_plot = units_plot.copy()
+        res_plot = units_plot[units_plot["is_residential"]].copy()
         fig, ax = plt.subplots(figsize=(12, 10))
-        units_plot.plot(
+        base_plot.plot(
             ax=ax,
-            column="access_time_mean_min",
-            cmap="viridis",
+            color="#f3f4f6",
             linewidth=0.05,
             edgecolor="#d1d5db",
-            legend=True,
-            legend_kwds={"label": "mean travel time (min)"},
-            missing_kwds={"color": "#9ca3af", "label": "no path"},
+            alpha=0.95,
         )
-        ax.set_title("Accessibility: mean travel time per quarter", fontsize=12)
+        if not res_plot.empty:
+            res_plot.plot(
+                ax=ax,
+                column="access_time_mean_min",
+                cmap="viridis",
+                linewidth=0.05,
+                edgecolor="#d1d5db",
+                legend=True,
+                legend_kwds={"label": "mean travel time (min), residential quarters only"},
+                missing_kwds={"color": "#9ca3af", "label": "residential with no path"},
+            )
+        ax.set_title("Accessibility: mean travel time (residential quarters only)", fontsize=12)
         ax.set_axis_off()
         fig.savefig(access_map_path, dpi=180, bbox_inches="tight")
         plt.close(fig)
@@ -588,6 +647,10 @@ def main() -> None:
         units = quarters[[population_col, "geometry"]].copy()
         units = units.rename(columns={population_col: "population"})
         units["population"] = pd.to_numeric(units["population"], errors="coerce").fillna(0.0)
+    # Keep residential context for accessibility-map styling.
+    for residential_col in ("residential", "living_area", "living_area_proxy"):
+        if residential_col in quarters.columns:
+            units[residential_col] = quarters[residential_col].reindex(units.index)
 
     for cap_col, series in capacity_columns.items():
         units[cap_col] = series.reindex(units.index).fillna(0.0).astype(float)
@@ -595,9 +658,14 @@ def main() -> None:
     # Strict rule: quarters without population are excluded from all pipeline_2 calculations.
     units_mask = units["population"] > 0
     units = units[units_mask].copy()
+    units["has_living_buildings"] = _derive_has_living_from_buildings(units, city_dir)
     units["unit_name"] = units.index.astype(str)
     units["demand_base"] = _calc_demand(units["population"], args.demand_per_1000)
-    _log(f"Active units for solver/matrix: {len(units)} (population>0 only)")
+    living_units = int(units["has_living_buildings"].fillna(False).sum())
+    _log(
+        f"Active units for solver/matrix: {len(units)} (population>0 only); "
+        f"units with is_living buildings={living_units}"
+    )
 
     units_path = prepared_dir / "units_union.parquet"
     _save_geodata(units, units_path)
