@@ -8,6 +8,12 @@ import pandas as pd
 
 
 def resolve_attribute_columns(source_gdf: gpd.GeoDataFrame, attribute: str) -> list[str]:
+    if attribute == "street_pattern_prob_area_shares":
+        probability_columns = [column for column in source_gdf.columns if column.startswith("prob_")]
+        if not probability_columns:
+            raise KeyError("No probability columns found for attribute 'street_pattern_prob_area_shares'.")
+        return probability_columns
+
     if attribute == "street_pattern_class_shares":
         for candidate in ("top1_class_name", "class_name", "street_pattern_class", "predicted_class"):
             if candidate in source_gdf.columns:
@@ -85,6 +91,12 @@ def apply_transfer_rule(
             weight_field=weight_field,
             prefix=attribute,
         )
+
+    if aggregation_method == "weighted_sum":
+        for attribute_column in attribute_columns:
+            aggregated = _weighted_sum(joined, target_id, attribute_column, weight_field)
+            result[attribute_column] = result[target_id].map(aggregated).fillna(0.0)
+        return result
 
     raise NotImplementedError(f"Unsupported aggregation method: {aggregation_method}")
 
