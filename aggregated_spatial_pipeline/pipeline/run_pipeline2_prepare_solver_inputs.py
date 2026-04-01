@@ -359,10 +359,11 @@ def _plot_accessibility_previews(
     out_dir.mkdir(parents=True, exist_ok=True)
     out: dict[str, str] = {}
     access_map_path = out_dir / "01_accessibility_mean_time_map.png"
-    matrix_png = out_dir / "02_accessibility_matrix_sample_heatmap.png"
-    if use_cache and access_map_path.exists() and matrix_png.exists():
+    legacy_matrix_png = out_dir / "02_accessibility_matrix_sample_heatmap.png"
+    if legacy_matrix_png.exists():
+        legacy_matrix_png.unlink(missing_ok=True)
+    if use_cache and access_map_path.exists():
         out["accessibility_mean_time_map"] = str(access_map_path)
-        out["accessibility_matrix_sample_heatmap"] = str(matrix_png)
         return out
 
     matrix_numeric = matrix_union.apply(pd.to_numeric, errors="coerce").astype(np.float32, copy=False)
@@ -394,24 +395,6 @@ def _plot_accessibility_previews(
         fig.savefig(access_map_path, dpi=180, bbox_inches="tight")
         plt.close(fig)
         out["accessibility_mean_time_map"] = str(access_map_path)
-
-    n = int(matrix_numeric.shape[0])
-    sample_n = min(600, n)
-    if sample_n > 1:
-        idx = np.linspace(0, n - 1, num=sample_n, dtype=int)
-        sub = matrix_numeric.iloc[idx, idx].to_numpy(dtype=float)
-        vmax = np.nanpercentile(sub, 95) if np.isfinite(sub).any() else 1.0
-        vmax = float(vmax) if np.isfinite(vmax) and vmax > 0 else 1.0
-        fig, ax = plt.subplots(figsize=(10, 8))
-        im = ax.imshow(sub, cmap="magma_r", vmin=0.0, vmax=vmax, interpolation="nearest")
-        ax.set_title(f"Accessibility matrix sample ({sample_n}x{sample_n})", fontsize=12)
-        ax.set_xlabel("destination index (sampled)")
-        ax.set_ylabel("origin index (sampled)")
-        cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        cbar.set_label("travel time (min)")
-        fig.savefig(matrix_png, dpi=180, bbox_inches="tight")
-        plt.close(fig)
-        out["accessibility_matrix_sample_heatmap"] = str(matrix_png)
 
     return out
 
@@ -609,13 +592,12 @@ def main() -> None:
     for cap_col, series in capacity_columns.items():
         units[cap_col] = series.reindex(units.index).fillna(0.0).astype(float)
 
-    cap_cols = [f"capacity_{s}" for s in services]
-    capacity_any = units[cap_cols].sum(axis=1) > 0
-    units_mask = (units["population"] > 0) | capacity_any
+    # Strict rule: quarters without population are excluded from all pipeline_2 calculations.
+    units_mask = units["population"] > 0
     units = units[units_mask].copy()
     units["unit_name"] = units.index.astype(str)
     units["demand_base"] = _calc_demand(units["population"], args.demand_per_1000)
-    _log(f"Active units for solver/matrix: {len(units)} (population>0 OR any service capacity>0)")
+    _log(f"Active units for solver/matrix: {len(units)} (population>0 only)")
 
     units_path = prepared_dir / "units_union.parquet"
     _save_geodata(units, units_path)
@@ -655,6 +637,14 @@ def main() -> None:
         _plot_accessibility_previews(units, matrix_union, preview_dir, use_cache=(not args.no_cache))
     )
     for service in services:
+        if float(raw_stats.get(service, {}).get("capacity_total", 0.0)) <= 0.0:
+            _warn(f"Service [{service}] has zero total capacity in territory; skipping.")
+            service_outputs[service] = {
+                "skipped": True,
+                "reason": "zero_capacity_in_territory",
+            }
+            continue
+
         service_dir = solver_dir / service
         blocks_path = service_dir / "blocks_solver.parquet"
         matrix_service_path = service_dir / "adj_matrix_time_min.parquet"
@@ -690,9 +680,14 @@ def main() -> None:
         cap_col = f"capacity_{service}"
         blocks = units[["unit_name", "population", "demand_base", cap_col, "geometry"]].copy()
         blocks = blocks.rename(columns={"demand_base": "demand", cap_col: "capacity"})
-        blocks = blocks[(blocks["population"] > 0) | (blocks["capacity"] > 0)].copy()
+        # Strict rule: quarters without population are excluded.
+        blocks = blocks[blocks["population"] > 0].copy()
         if blocks.empty:
             _warn(f"No active blocks for service [{service}] after filtering. Skipping.")
+            service_outputs[service] = {
+                "skipped": True,
+                "reason": "no_population_blocks_after_filtering",
+            }
             continue
 
         _log(f"Service [{service}] provisioning prep: blocks={len(blocks)}")
