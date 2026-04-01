@@ -7,9 +7,12 @@ import warnings
 from pathlib import Path
 
 import geopandas as gpd
+import numpy as np
 import osmnx as ox
 import pandas as pd
 from loguru import logger
+
+from aggregated_spatial_pipeline.geodata_io import prepare_geodata_for_parquet, read_geodata
 
 DEFAULT_RESIDENTIAL_SHARE = 0.8
 DEFAULT_AREA_PER_PERSON_SQM = 20.0
@@ -114,11 +117,33 @@ BC_TAGS = {
 }
 
 IS_LIVING_TAGS = ["residential", "house", "apartments", "detached", "terrace", "dormitory"]
+BUILDINGS_OPTIONAL_COLUMNS = [
+    "footprint_area",
+    "build_floor_area",
+    "living_area",
+    "non_living_area",
+    "population",
+]
 
 
-def _save_geojson(gdf: gpd.GeoDataFrame, path: Path) -> None:
+def _save_geodata(gdf: gpd.GeoDataFrame, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    gdf.to_file(path, driver="GeoJSON")
+    if path.suffix.lower() == ".parquet":
+        prepare_geodata_for_parquet(gdf).to_parquet(path)
+    elif path.suffix.lower() == ".gpkg":
+        gdf.to_file(path, driver="GPKG")
+    else:
+        gdf.to_file(path, driver="GeoJSON")
+
+
+def _ensure_buildings_optional_columns(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    out = gdf.copy()
+    for col in BUILDINGS_OPTIONAL_COLUMNS:
+        if col not in out.columns:
+            out[col] = pd.Series(np.nan, index=out.index, dtype="float64")
+        else:
+            out[col] = pd.to_numeric(out[col], errors="coerce").astype("float64")
+    return out
 
 
 def _get_boundaries_gdf(place: str) -> gpd.GeoDataFrame:
@@ -183,6 +208,7 @@ def _roads_from_graph_or_empty(boundary_geom) -> gpd.GeoDataFrame:
         )
         _, edges = ox.graph_to_gdfs(graph, nodes=True, edges=True, node_geometry=True, fill_edge_geometry=True)
         roads_gdf = edges[edges.geom_type.isin(["LineString", "MultiLineString"])].copy()
+        roads_gdf = gpd.GeoDataFrame(roads_gdf[["geometry"]].copy(), geometry="geometry", crs=edges.crs)
         logger.info(
             "[blocksnet-raw] OSM request finished: layer='roads' (graph), features={}, elapsed={:.1f}s",
             len(roads_gdf),
@@ -232,6 +258,7 @@ def _get_buildings(boundary_geom, crs, impute_buildings):
         return buildings_gdf
     buildings_gdf["is_living"] = buildings_gdf["building"].apply(lambda value: value in IS_LIVING_TAGS)
     buildings_gdf["number_of_floors"] = pd.to_numeric(buildings_gdf.get("building:levels"), errors="coerce")
+    buildings_gdf = _ensure_buildings_optional_columns(buildings_gdf)
     return impute_buildings(buildings_gdf)
 
 
@@ -279,7 +306,7 @@ def collect_blocksnet_raw_osm_bundle(
     output_path.mkdir(parents=True, exist_ok=True)
 
     if boundary_path is not None:
-        boundaries_gdf = gpd.read_file(Path(boundary_path))
+        boundaries_gdf = read_geodata(Path(boundary_path))
         if boundaries_gdf.empty:
             raise ValueError(f"Boundary override is empty: {boundary_path}")
     else:
@@ -287,8 +314,8 @@ def collect_blocksnet_raw_osm_bundle(
 
     boundary_geom = boundaries_gdf.union_all()
 
-    saved_boundary_path = output_path / "boundary.geojson"
-    _save_geojson(boundaries_gdf, saved_boundary_path)
+    saved_boundary_path = output_path / "boundary.parquet"
+    _save_geodata(boundaries_gdf, saved_boundary_path)
 
     water_gdf, roads_gdf, railways_gdf = _get_urban_objects(boundary_geom)
     land_use_gdf = _get_land_use(boundary_geom)
@@ -300,17 +327,17 @@ def collect_blocksnet_raw_osm_bundle(
     land_use_gdf = _clip_to_boundary(land_use_gdf, boundary_geom)
     buildings_gdf = _clip_to_boundary(buildings_gdf, boundary_geom)
 
-    water_path = output_path / "water.geojson"
-    roads_path = output_path / "roads.geojson"
-    railways_path = output_path / "railways.geojson"
-    land_use_path = output_path / "land_use.geojson"
-    buildings_path = output_path / "buildings.geojson"
+    water_path = output_path / "water.parquet"
+    roads_path = output_path / "roads.parquet"
+    railways_path = output_path / "railways.parquet"
+    land_use_path = output_path / "land_use.parquet"
+    buildings_path = output_path / "buildings.parquet"
 
-    _save_geojson(water_gdf, water_path)
-    _save_geojson(roads_gdf, roads_path)
-    _save_geojson(railways_gdf, railways_path)
-    _save_geojson(land_use_gdf, land_use_path)
-    _save_geojson(buildings_gdf, buildings_path)
+    _save_geodata(water_gdf, water_path)
+    _save_geodata(roads_gdf, roads_path)
+    _save_geodata(railways_gdf, railways_path)
+    _save_geodata(land_use_gdf, land_use_path)
+    _save_geodata(buildings_gdf, buildings_path)
 
     manifest = {
         "place": place,
@@ -351,7 +378,7 @@ def build_blocksnet_bundle(
     output_path.mkdir(parents=True, exist_ok=True)
 
     if boundary_path is not None:
-        boundaries_gdf = gpd.read_file(Path(boundary_path))
+        boundaries_gdf = read_geodata(Path(boundary_path))
         if boundaries_gdf.empty:
             raise ValueError(f"Boundary override is empty: {boundary_path}")
     else:
@@ -360,16 +387,16 @@ def build_blocksnet_bundle(
     local_crs = boundaries_gdf.estimate_utm_crs()
     boundaries_local = boundaries_gdf.to_crs(local_crs)
 
-    boundary_path = output_path / "boundary.geojson"
-    _save_geojson(boundaries_gdf, boundary_path)
+    boundary_path = output_path / "boundary.parquet"
+    _save_geodata(boundaries_gdf, boundary_path)
 
     if prefetched_layers is not None:
-        water_gdf = gpd.read_file(prefetched_layers["water"])
-        roads_gdf = gpd.read_file(prefetched_layers["roads"])
-        railways_gdf = gpd.read_file(prefetched_layers["railways"])
-        land_use_gdf = gpd.read_file(prefetched_layers["land_use"])
+        water_gdf = read_geodata(prefetched_layers["water"])
+        roads_gdf = read_geodata(prefetched_layers["roads"])
+        railways_gdf = read_geodata(prefetched_layers["railways"])
+        land_use_gdf = read_geodata(prefetched_layers["land_use"])
         selected_buildings_path = str(buildings_override_path) if buildings_override_path is not None else prefetched_layers["buildings"]
-        buildings_gdf = gpd.read_file(selected_buildings_path)
+        buildings_gdf = read_geodata(selected_buildings_path)
     else:
         water_gdf, roads_gdf, railways_gdf = _get_urban_objects(boundary_geom)
         land_use_gdf = _get_land_use(boundary_geom)
@@ -387,9 +414,9 @@ def build_blocksnet_bundle(
     land_use_gdf = land_use_gdf.to_crs(local_crs)
     buildings_gdf = buildings_gdf.to_crs(local_crs)
 
-    _save_geojson(water_gdf, output_path / "water.geojson")
-    _save_geojson(roads_gdf, output_path / "roads.geojson")
-    _save_geojson(railways_gdf, output_path / "railways.geojson")
+    _save_geodata(water_gdf, output_path / "water.parquet")
+    _save_geodata(roads_gdf, output_path / "roads.parquet")
+    _save_geodata(railways_gdf, output_path / "railways.parquet")
 
     lines_gdf, polygons_gdf = symbols["preprocess_urban_objects"](roads_gdf, railways_gdf, water_gdf)
     blocks_gdf = symbols["cut_urban_blocks"](boundaries_local, lines_gdf, polygons_gdf, buildings_gdf)
@@ -410,6 +437,7 @@ def build_blocksnet_bundle(
         buildings_gdf["is_living"] = pd.to_numeric(buildings_gdf["is_living"], errors="coerce").fillna(0).astype(bool)
     elif "building" in buildings_gdf.columns:
         buildings_gdf["is_living"] = buildings_gdf["building"].apply(lambda value: value in IS_LIVING_TAGS)
+    buildings_gdf = _ensure_buildings_optional_columns(buildings_gdf)
     buildings_gdf = symbols["impute_buildings"](buildings_gdf)
 
     aggregated_buildings, _ = symbols["aggregate_objects"](blocks_with_land_use, buildings_gdf)
@@ -421,12 +449,12 @@ def build_blocksnet_bundle(
     blocks_final = blocks_with_land_use.join(aggregated_buildings[building_columns])
     blocks_final = _add_population_proxy(blocks_final)
 
-    blocks_path = output_path / "blocks.geojson"
-    land_use_path = output_path / "land_use.geojson"
-    buildings_path = output_path / "buildings.geojson"
-    _save_geojson(blocks_final, blocks_path)
-    _save_geojson(land_use_gdf, land_use_path)
-    _save_geojson(buildings_gdf, buildings_path)
+    blocks_path = output_path / "blocks.parquet"
+    land_use_path = output_path / "land_use.parquet"
+    buildings_path = output_path / "buildings.parquet"
+    _save_geodata(blocks_final, blocks_path)
+    _save_geodata(land_use_gdf, land_use_path)
+    _save_geodata(buildings_gdf, buildings_path)
 
     manifest = {
         "place": place,
@@ -435,9 +463,9 @@ def build_blocksnet_bundle(
         "crs": str(local_crs),
         "files": {
             "boundary": str(boundary_path),
-            "water": str(output_path / "water.geojson"),
-            "roads": str(output_path / "roads.geojson"),
-            "railways": str(output_path / "railways.geojson"),
+            "water": str(output_path / "water.parquet"),
+            "roads": str(output_path / "roads.parquet"),
+            "railways": str(output_path / "railways.parquet"),
             "land_use": str(land_use_path),
             "buildings": str(buildings_path),
             "blocks": str(blocks_path),

@@ -40,23 +40,32 @@ def apply_transfer_rule(
     attribute_columns = resolve_attribute_columns(source_gdf, attribute)
 
     source_attributes = source_gdf[[source_id, *attribute_columns]].copy()
-    joined = crosswalk_gdf[[source_id, target_id, weight_field]].merge(source_attributes, on=source_id, how="left")
+    joined = _prepare_joined_crosswalk(
+        crosswalk_gdf=crosswalk_gdf,
+        source_attributes=source_attributes,
+        source_id=source_id,
+        target_id=target_id,
+        weight_field=weight_field,
+    )
 
     result = target_gdf.copy()
 
     if aggregation_method == "weighted_mean":
         for attribute_column in attribute_columns:
-            result[attribute_column] = _weighted_mean(joined, target_id, attribute_column, weight_field)
+            aggregated = _weighted_mean(joined, target_id, attribute_column, weight_field)
+            result[attribute_column] = result[target_id].map(aggregated)
         return result
 
     if aggregation_method == "majority_vote":
         attribute_column = attribute_columns[0]
-        result[attribute] = _majority_vote(joined, target_id, attribute_column, weight_field)
+        aggregated = _majority_vote(joined, target_id, attribute_column, weight_field)
+        result[attribute] = result[target_id].map(aggregated)
         return result
 
     if aggregation_method == "sum":
         attribute_column = attribute_columns[0]
-        result[attribute] = _weighted_sum(joined, target_id, attribute_column, weight_field)
+        aggregated = _weighted_sum(joined, target_id, attribute_column, weight_field)
+        result[attribute] = result[target_id].map(aggregated)
         return result
 
     raise NotImplementedError(f"Unsupported aggregation method: {aggregation_method}")
@@ -85,3 +94,41 @@ def _majority_vote(joined: pd.DataFrame, target_id: str, attribute_column: str, 
     for target_value, class_scores in scores.items():
         winners[target_value] = max(class_scores.items(), key=lambda item: item[1])[0]
     return pd.Series(winners, name=attribute_column)
+
+
+def _prepare_joined_crosswalk(
+    *,
+    crosswalk_gdf: gpd.GeoDataFrame,
+    source_attributes: pd.DataFrame,
+    source_id: str,
+    target_id: str,
+    weight_field: str,
+) -> pd.DataFrame:
+    required_columns = [source_id, target_id]
+    for candidate_weight in ("intersection_area", "source_share", "target_share", weight_field):
+        if candidate_weight in crosswalk_gdf.columns and candidate_weight not in required_columns:
+            required_columns.append(candidate_weight)
+
+    joined = crosswalk_gdf[required_columns].merge(source_attributes, on=source_id, how="left")
+    _ensure_weight_field(joined, weight_field)
+    return joined
+
+
+def _ensure_weight_field(joined: pd.DataFrame, weight_field: str) -> None:
+    if weight_field in joined.columns:
+        return
+
+    if (
+        weight_field == "population_weight"
+        and "population_total" in joined.columns
+        and "source_share" in joined.columns
+    ):
+        joined[weight_field] = joined["population_total"] * joined["source_share"]
+        return
+
+    for fallback in ("intersection_area", "source_share", "target_share"):
+        if fallback in joined.columns:
+            joined[weight_field] = joined[fallback]
+            return
+
+    raise KeyError(f"Weight field {weight_field!r} is not available and no fallback can be derived.")

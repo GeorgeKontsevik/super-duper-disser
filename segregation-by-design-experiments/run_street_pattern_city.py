@@ -168,7 +168,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--grid-step",
         type=float,
-        default=2000,
+        default=1000,
         help="Grid cell size in projected CRS units.",
     )
     parser.add_argument(

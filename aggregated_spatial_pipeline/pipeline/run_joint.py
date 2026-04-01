@@ -17,6 +17,9 @@ from matplotlib.patches import Patch
 from shapely.geometry import Point, box
 from tqdm.auto import tqdm
 
+from aggregated_spatial_pipeline.geodata_io import (
+    read_geodata,
+)
 from aggregated_spatial_pipeline.spec import CONFIG_DIR, PipelineSpec
 
 from .crosswalks import build_crosswalk, save_crosswalk
@@ -25,6 +28,7 @@ from .scenarios import run_scenarios
 
 
 JOINT_SCENARIO_ID = "joint_optimization"
+ORIGINAL_LIVING_BUILDING_TAGS = {"residential", "house", "apartments", "detached", "terrace", "dormitory"}
 
 
 @dataclass(frozen=True)
@@ -97,6 +101,12 @@ def parse_args() -> argparse.Namespace:
         help="Buffer radius in meters used by street-pattern pipeline and joint layer preparation.",
     )
     parser.add_argument(
+        "--street-grid-step",
+        type=float,
+        default=1000.0,
+        help="Grid step in meters for street-pattern classification. Default: 1000.",
+    )
+    parser.add_argument(
         "--analysis-margin-m",
         type=float,
         default=0.0,
@@ -107,6 +117,24 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=25000.0,
         help="Recommended minimum clipping radius (meters) for floor/is_living restoration context.",
+    )
+    parser.add_argument(
+        "--floor-ignore-missing-below-pct",
+        type=float,
+        default=2.0,
+        help=(
+            "Skip heavy storey model inference when share of buildings requiring prediction "
+            "is below this threshold (in percent). Default: 2.0"
+        ),
+    )
+    parser.add_argument(
+        "--simple-bad-is-living-restore",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Enable simple annotation-based restoration for missing is_living before storey prediction "
+            "(default: enabled). Use --no-simple-bad-is-living-restore to disable."
+        ),
     )
     parser.add_argument(
         "--climate-grid-step-m",
@@ -209,14 +237,39 @@ def _warn(message: str) -> None:
     logger.warning(f"[joint-pipeline] {message}")
 
 
+def _log_data_sources_summary(source_details: dict[str, dict]) -> None:
+    if not source_details:
+        return
+    lines = ["Data sources summary:"]
+    for layer_id, detail in source_details.items():
+        parts = [f"{layer_id}={detail.get('input_path') or 'n/a'}"]
+        origin = detail.get("origin")
+        if origin:
+            parts.append(f"origin={origin}")
+        manifest_path = detail.get("manifest_path")
+        if manifest_path:
+            parts.append(f"manifest={manifest_path}")
+        lines.append(" | ".join(parts))
+    _log("\n".join(lines))
+
+
 def _configure_logging() -> None:
     logger.remove()
     logger.add(
         sys.stderr,
         level="INFO",
-        format="{time:DD MMM HH:mm} | {level} | {message}",
-        colorize=False,
+        format="<green>{time:DD MMM HH:mm}</green> | <level>{level}</level> | <level>{message}</level>",
+        colorize=True,
     )
+
+
+def _clear_terminal() -> None:
+    if not sys.stdout.isatty():
+        return
+    try:
+        subprocess.run(["clear"], check=False)
+    except Exception:
+        pass
 
 
 def _configure_osm_requests(timeout_s: float, *, debug: bool = False, overpass_url: str | None = None) -> None:
@@ -247,7 +300,7 @@ def _validate_layer_input_path(path: Path, layer_id: str) -> None:
     if raw in {"...", ""} or "..." in raw:
         raise SystemExit(
             f"Invalid path for layer {layer_id!r}: {raw!r}. "
-            "Replace placeholders with a real GeoJSON/GPKG path."
+            "Replace placeholders with a real Parquet/GeoJSON/GPKG path."
         )
     if not path.exists():
         raise SystemExit(
@@ -366,28 +419,34 @@ def _ensure_street_grid_from_repo(
     data_root: Path,
     no_cache: bool,
     buffer_m: float,
+    grid_step: float,
     center_node_id: int | None = None,
     roads_path: Path | None = None,
 ) -> tuple[Path, Path, bool]:
     experiments_dir = repo_root / "segregation-by-design-experiments"
-    output_dir = experiments_dir / "outputs"
     city_slug = _slugify(place)
-    predicted_cells_path = output_dir / city_slug / "predicted_cells.geojson"
 
     summary_output = data_root / "street_pattern" / f"{city_slug}_summary.json"
     summary_output.parent.mkdir(parents=True, exist_ok=True)
+    predicted_cells_path = summary_output.parent / city_slug / "predicted_cells.geojson"
 
     if predicted_cells_path.exists() and summary_output.exists() and not no_cache:
         summary_payload = _try_load_json(summary_output)
         cached_buffer = None
+        cached_grid_step = None
         if isinstance(summary_payload, dict):
             cached_buffer = summary_payload.get("buffer_m")
-        if cached_buffer is not None and abs(float(cached_buffer) - float(buffer_m)) <= 1e-6:
+            cached_grid_step = summary_payload.get("grid_step")
+        buffer_matches = cached_buffer is not None and abs(float(cached_buffer) - float(buffer_m)) <= 1e-6
+        grid_matches = cached_grid_step is not None and abs(float(cached_grid_step) - float(grid_step)) <= 1e-6
+        if buffer_matches and grid_matches:
             _log(f"Using cached street grid from repo outputs: {predicted_cells_path}")
             return predicted_cells_path, summary_output, False
         _warn(
-            "Cached street-grid summary buffer does not match current --buffer-m "
-            f"(cached={cached_buffer}, requested={float(buffer_m)}). Rebuilding classification."
+            "Cached street-grid summary does not match current request "
+            f"(buffer cached={cached_buffer}, requested={float(buffer_m)}; "
+            f"grid_step cached={cached_grid_step}, requested={float(grid_step)}). "
+            "Rebuilding classification."
         )
 
     script_path = experiments_dir / "run_street_pattern_city.py"
@@ -402,9 +461,22 @@ def _ensure_street_grid_from_repo(
         str(summary_output),
         "--buffer-m",
         str(float(buffer_m)),
+        "--grid-step",
+        str(float(grid_step)),
     ]
     if roads_path is not None and roads_path.exists():
-        command.extend(["--road-source", "local", "--roads", str(roads_path)])
+        roads_for_street_pattern = roads_path
+        if roads_path.suffix.lower() == ".parquet":
+            roads_for_street_pattern = roads_path.with_name(f"{roads_path.stem}_street_pattern.geojson")
+            if not roads_for_street_pattern.exists():
+                roads_local = read_geodata(roads_path)
+                roads_for_street_pattern.parent.mkdir(parents=True, exist_ok=True)
+                roads_local.to_file(roads_for_street_pattern, driver="GeoJSON")
+            _log(
+                "Street-pattern compatibility export prepared: "
+                f"{roads_for_street_pattern} (source parquet: {roads_path})"
+            )
+        command.extend(["--road-source", "local", "--roads", str(roads_for_street_pattern)])
     if center_node_id is not None:
         command.extend(["--center-node-id", str(int(center_node_id))])
     if no_cache:
@@ -434,13 +506,18 @@ def _ensure_shared_drive_roads(
     output_path: Path,
     no_cache: bool,
 ) -> tuple[Path, int, bool]:
+    compat_geojson = output_path.with_name(f"{output_path.stem}_street_pattern.geojson")
     if output_path.exists() and (not no_cache):
-        cached = gpd.read_file(output_path)
+        if not compat_geojson.exists():
+            cached_for_compat = read_geodata(output_path)
+            compat_geojson.parent.mkdir(parents=True, exist_ok=True)
+            cached_for_compat.to_file(compat_geojson, driver="GeoJSON")
+        cached = read_geodata(output_path)
         return output_path, int(len(cached)), False
 
     import osmnx as ox
 
-    boundary_gdf = gpd.read_file(buffer_path)
+    boundary_gdf = read_geodata(buffer_path)
     if boundary_gdf.empty:
         raise RuntimeError(f"Analysis buffer is empty: {buffer_path}")
     boundary_geom = boundary_gdf.union_all()
@@ -455,9 +532,20 @@ def _ensure_shared_drive_roads(
     )
     _, edges = ox.graph_to_gdfs(graph, nodes=True, edges=True, node_geometry=True, fill_edge_geometry=True)
     edges = edges[edges.geometry.geom_type.isin(["LineString", "MultiLineString"])].copy()
-    edges = _clip_to_boundary(edges, boundary_geom)
+    boundary_clip = gpd.GeoDataFrame({"geometry": [boundary_geom]}, crs=4326)
+    if edges.crs != boundary_clip.crs:
+        boundary_clip = boundary_clip.to_crs(edges.crs)
+    edges = edges.clip(boundary_clip)
+    edges = edges[edges.geometry.notna() & ~edges.geometry.is_empty].reset_index(drop=True)
+    for col in [c for c in edges.columns if c != "geometry"]:
+        edges[col] = edges[col].map(
+            lambda v: json.dumps(list(v), ensure_ascii=False)
+            if isinstance(v, (list, tuple, set))
+            else (json.dumps(v, ensure_ascii=False) if isinstance(v, dict) else v)
+        )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    edges.to_file(output_path, driver="GeoJSON")
+    edges.to_parquet(output_path)
+    edges.to_file(compat_geojson, driver="GeoJSON")
     return output_path, int(len(edges)), True
 
 
@@ -467,8 +555,8 @@ def _clip_street_grid_to_buffer(
     buffer_path: Path,
     output_path: Path,
 ) -> tuple[Path, int]:
-    street_grid = gpd.read_file(street_grid_path)
-    buffer_gdf = gpd.read_file(buffer_path)
+    street_grid = read_geodata(street_grid_path)
+    buffer_gdf = read_geodata(buffer_path)
     if street_grid.empty:
         raise RuntimeError(f"Street grid is empty: {street_grid_path}")
     if street_grid.crs != buffer_gdf.crs:
@@ -481,7 +569,8 @@ def _clip_street_grid_to_buffer(
             "Increase --buffer-m or check classification source."
         )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    clipped.to_file(output_path, driver="GeoJSON")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    clipped.to_parquet(output_path)
     return output_path, len(clipped)
 
 
@@ -567,7 +656,8 @@ def _resolve_analysis_buffer_from_osm(
         crs=4326,
     )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    buffer_gdf.to_file(output_path, driver="GeoJSON")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    buffer_gdf.to_parquet(output_path)
     return output_path
 
 
@@ -575,7 +665,7 @@ def _analysis_buffer_matches(path: Path, expected_buffer_m: float) -> bool:
     if not path.exists():
         return False
     try:
-        gdf = gpd.read_file(path)
+        gdf = read_geodata(path)
         if gdf.empty:
             return False
         if "buffer_m" not in gdf.columns:
@@ -594,7 +684,7 @@ def _build_climate_grid(
     output_path: Path,
     step_m: float,
 ) -> Path:
-    boundary = gpd.read_file(boundary_path)
+    boundary = read_geodata(boundary_path)
     grid = _create_regular_grid(boundary, step_m, "climate")
     local = grid.to_crs(grid.estimate_utm_crs() or "EPSG:3857").copy()
     centroids = local.geometry.centroid
@@ -611,7 +701,8 @@ def _build_climate_grid(
 
     climate_grid = local.to_crs(boundary.crs)[["temperature_mean", "flood_risk_index", "geometry"]]
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    climate_grid.to_file(output_path, driver="GeoJSON")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    climate_grid.to_parquet(output_path)
     return output_path
 
 
@@ -621,8 +712,8 @@ def _build_buffered_quarters(
     buffer_path: Path,
     output_path: Path,
 ) -> tuple[Path, int]:
-    blocks = gpd.read_file(blocks_path)
-    buffer_gdf = gpd.read_file(buffer_path)
+    blocks = read_geodata(blocks_path)
+    buffer_gdf = read_geodata(buffer_path)
 
     if blocks.crs != buffer_gdf.crs:
         buffer_gdf = buffer_gdf.to_crs(blocks.crs)
@@ -657,7 +748,8 @@ def _build_buffered_quarters(
         ).fillna(0.0)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    clipped.to_file(output_path, driver="GeoJSON")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    clipped.to_parquet(output_path)
     return output_path, len(clipped)
 
 
@@ -669,56 +761,30 @@ def _to_numeric_storey(series: pd.Series) -> pd.Series:
     return pd.to_numeric(cleaned, errors="coerce")
 
 
-def _run_floor_predictor_preprocessing(
+def _floor_output_is_current(path: Path) -> bool:
+    if not path.exists():
+        return False
+    try:
+        gdf = read_geodata(path)
+    except Exception:
+        return False
+    required_columns = {"is_living_source", "storey_source"}
+    return required_columns.issubset(set(gdf.columns))
+
+
+def _simple_bad_is_living_restore(
     *,
-    repo_root: Path,
-    buildings_path: Path,
-    land_use_path: Path,
-    output_path: Path,
-) -> dict:
-    floor_repo = repo_root / "floor-predictor"
-    floor_pkg = floor_repo / "floor_predictior"
-    if not floor_pkg.exists():
-        raise RuntimeError(f"floor-predictor package not found: {floor_pkg}")
-
-    if str(floor_repo) not in sys.path:
-        sys.path.insert(0, str(floor_repo))
-
+    gdf: gpd.GeoDataFrame,
+    osm_buildings_source: gpd.GeoDataFrame,
+    osm_landuse_source: gpd.GeoDataFrame,
+) -> gpd.GeoDataFrame:
     from floor_predictior.utils.IsLivingChecker import IsLivingAnnotator, TAG_COLUMNS
-    from floor_predictior.osm_height_predictor.geo import (
-        GeometryFeatureGenerator,
-        SpatialNeighborhoodAnalyzer,
-        StoreyModelTrainer,
-    )
 
-    buildings = gpd.read_file(buildings_path)
-    land_use = gpd.read_file(land_use_path)
-    if buildings.empty:
-        raise RuntimeError(f"BlocksNet buildings layer is empty: {buildings_path}")
+    out = gdf.copy()
+    local_crs = out.estimate_utm_crs() or "EPSG:3857"
+    annotator = IsLivingAnnotator(gdf=out.copy(), local_crs=local_crs, match_strategy="iou", iou_threshold=0.3)
 
-    if buildings.crs is None:
-        buildings = buildings.set_crs(4326)
-
-    gdf = buildings.copy()
-    gdf = gdf[gdf.geometry.notna() & ~gdf.geometry.is_empty].copy()
-    gdf = gdf[gdf.geom_type.isin(["Polygon", "MultiPolygon"])].copy()
-    if gdf.empty:
-        raise RuntimeError("No polygon buildings available for floor-predictor preprocessing.")
-    gdf = gdf.reset_index(drop=True)
-
-    # 1) Fill missing is_living via floor-predictor rules using pre-downloaded BlocksNet layers
-    # (no extra OSM download at this step).
-    if "is_living" not in gdf.columns:
-        gdf["is_living"] = pd.Series([pd.NA] * len(gdf), dtype="Float64")
-    else:
-        gdf["is_living"] = pd.to_numeric(gdf["is_living"], errors="coerce")
-    missing_living_mask_before = gdf["is_living"].isna()
-    missing_living_before = int(gdf["is_living"].isna().sum())
-
-    local_crs = gdf.estimate_utm_crs() or "EPSG:3857"
-    annotator = IsLivingAnnotator(gdf=gdf.copy(), local_crs=local_crs, match_strategy="iou", iou_threshold=0.3)
-
-    osm_buildings = buildings.copy()
+    osm_buildings = osm_buildings_source.copy()
     osm_buildings = osm_buildings[osm_buildings.geometry.notna() & ~osm_buildings.geometry.is_empty].copy()
     if osm_buildings.crs is None:
         osm_buildings = osm_buildings.set_crs(4326)
@@ -728,7 +794,7 @@ def _run_floor_predictor_preprocessing(
         keep_building_cols.append("geometry")
     osm_buildings = osm_buildings[keep_building_cols].copy()
 
-    osm_landuse = land_use.copy()
+    osm_landuse = osm_landuse_source.copy()
     osm_landuse = osm_landuse[osm_landuse.geometry.notna() & ~osm_landuse.geometry.is_empty].copy()
     if osm_landuse.crs is None:
         osm_landuse = osm_landuse.set_crs(4326)
@@ -741,49 +807,175 @@ def _run_floor_predictor_preprocessing(
         keep_landuse_cols.append("geometry")
     osm_landuse = osm_landuse[keep_landuse_cols].copy()
 
-    tagged = annotator._transfer_tags(gdf, osm_buildings)
+    tagged = annotator._transfer_tags(out, osm_buildings)
     annotated = annotator._label_is_living(tagged, osm_landuse)
     if annotator.fallback_landuse_only and annotated["is_living"].isna().all():
         annotated = annotator._label_is_living_by_landuse_only(annotated, osm_landuse)
     if "is_living" in annotated.columns:
-        gdf["is_living"] = gdf["is_living"].fillna(pd.to_numeric(annotated["is_living"], errors="coerce"))
+        out["is_living"] = out["is_living"].fillna(pd.to_numeric(annotated["is_living"], errors="coerce"))
+    return out
+
+
+def _run_floor_predictor_preprocessing(
+    *,
+    repo_root: Path,
+    buildings_path: Path,
+    land_use_path: Path,
+    output_path: Path,
+    simple_bad_is_living_restore: bool = False,
+    floor_ignore_missing_below_pct: float = 2.0,
+) -> dict:
+    started_total = time.time()
+    floor_repo = repo_root / "floor-predictor"
+    floor_pkg = floor_repo / "floor_predictior"
+    if not floor_pkg.exists():
+        raise RuntimeError(f"floor-predictor package not found: {floor_pkg}")
+
+    if str(floor_repo) not in sys.path:
+        sys.path.insert(0, str(floor_repo))
+
+    from floor_predictior.osm_height_predictor.geo import (
+        GeometryFeatureGenerator,
+        SpatialNeighborhoodAnalyzer,
+        StoreyModelTrainer,
+    )
+
+    _log(f"Floor step: reading buildings layer: {buildings_path}")
+    t0 = time.time()
+    buildings = read_geodata(buildings_path)
+    _log(f"Floor step: buildings loaded ({len(buildings)} rows) in {time.time() - t0:.1f}s")
+    _log(f"Floor step: reading land-use layer: {land_use_path}")
+    t0 = time.time()
+    land_use = read_geodata(land_use_path)
+    _log(f"Floor step: land-use loaded ({len(land_use)} rows) in {time.time() - t0:.1f}s")
+    if buildings.empty:
+        raise RuntimeError(f"BlocksNet buildings layer is empty: {buildings_path}")
+
+    if buildings.crs is None:
+        buildings = buildings.set_crs(4326)
+
+    gdf = buildings.copy()
+    gdf = gdf[gdf.geometry.notna() & ~gdf.geometry.is_empty].copy()
+    gdf = gdf[gdf.geom_type.isin(["Polygon", "MultiPolygon"])].copy()
+    if gdf.empty:
+        raise RuntimeError("No polygon buildings available for floor-predictor preprocessing.")
+    gdf = gdf.reset_index(drop=True)
+    _log(f"Floor step: valid polygon buildings for processing: {len(gdf)}")
+
+    # 1) Optionally apply simple annotation-based restoration for missing is_living.
+    if "is_living" not in gdf.columns:
+        gdf["is_living"] = pd.Series([pd.NA] * len(gdf), dtype="Float64")
+    else:
+        gdf["is_living"] = pd.to_numeric(gdf["is_living"], errors="coerce")
+    gdf["is_living_source"] = pd.Series("missing", index=gdf.index, dtype="string")
+    gdf.loc[gdf["is_living"].notna(), "is_living_source"] = "original_is_living"
+    if "building" in gdf.columns:
+        building_tags = gdf["building"].astype("string").str.lower()
+        living_from_building_mask = gdf["is_living"].isna() & building_tags.isin(ORIGINAL_LIVING_BUILDING_TAGS)
+        gdf.loc[living_from_building_mask, "is_living"] = 1.0
+        gdf.loc[living_from_building_mask, "is_living_source"] = "original_building_tag"
+    missing_living_mask_before = gdf["is_living"].isna()
+    missing_living_before = int(gdf["is_living"].isna().sum())
+    if simple_bad_is_living_restore:
+        _log("Floor step: running simple_bad_is_living_restore...")
+        t0 = time.time()
+        gdf = _simple_bad_is_living_restore(
+            gdf=gdf,
+            osm_buildings_source=buildings,
+            osm_landuse_source=land_use,
+        )
+        _log(f"Floor step: simple_bad_is_living_restore finished in {time.time() - t0:.1f}s")
+    local_crs = gdf.estimate_utm_crs() or "EPSG:3857"
     missing_living_after = int(gdf["is_living"].isna().sum())
-    gdf["is_living_restored"] = (missing_living_mask_before & gdf["is_living"].notna()).astype(int)
+    restored_living_mask = missing_living_mask_before & gdf["is_living"].notna()
+    gdf.loc[restored_living_mask, "is_living_source"] = "simple_bad_is_living_restore"
+    gdf["is_living_restored"] = (gdf["is_living_source"] == "simple_bad_is_living_restore").astype(int)
+    original_living_count = int(gdf["is_living_source"].isin(["original_is_living", "original_building_tag"]).sum())
+    original_living_from_building_tag_count = int((gdf["is_living_source"] == "original_building_tag").sum())
+    restored_living_count = int((gdf["is_living_source"] == "simple_bad_is_living_restore").sum())
+    _log(
+        "Floor step: is_living source after preprocessing: "
+        f"original_is_living={int((gdf['is_living_source'] == 'original_is_living').sum())}, "
+        f"original_building_tag={original_living_from_building_tag_count}, "
+        f"simple_bad_is_living_restore={restored_living_count}, "
+        f"still_missing={missing_living_after}"
+    )
 
     # 2) Normalize storey from existing tags first.
     if "storey" not in gdf.columns:
         gdf["storey"] = pd.Series([pd.NA] * len(gdf), dtype="Float64")
     gdf["storey"] = pd.to_numeric(gdf["storey"], errors="coerce")
+    gdf["storey_source"] = pd.Series("missing", index=gdf.index, dtype="string")
+    gdf.loc[gdf["storey"].notna(), "storey_source"] = "original_storey"
     missing_storey_mask_before = gdf["storey"].isna()
+    original_storey_count = int((gdf["storey_source"] == "original_storey").sum())
+    filled_from_building_levels_count = 0
 
     if "building:levels" in gdf.columns:
+        _log("Floor step: normalizing storey from building:levels...")
         parsed_levels = _to_numeric_storey(gdf["building:levels"])
-        gdf["storey"] = gdf["storey"].fillna(parsed_levels)
+        fill_from_levels_mask = gdf["storey"].isna() & parsed_levels.notna()
+        gdf.loc[fill_from_levels_mask, "storey"] = parsed_levels.loc[fill_from_levels_mask]
+        gdf.loc[fill_from_levels_mask, "storey_source"] = "osm_building_levels"
+        filled_from_building_levels_count = int(fill_from_levels_mask.sum())
 
     missing_storey_before_model = int(gdf["storey"].isna().sum())
+    _log(
+        "Floor step: storey source before model: "
+        f"original_storey={original_storey_count}, "
+        f"osm_building_levels={filled_from_building_levels_count}, "
+        f"still_missing={missing_storey_before_model}"
+    )
 
     # 3) Predict missing storey for living buildings using pre-trained height model.
     model_path = floor_repo / "floor_predictior" / "model" / "StoreyModelTrainer.joblib"
+    storey_model_info: dict | None = None
     predicted_storey_count = 0
-    if model_path.exists():
-        model = StoreyModelTrainer.load_model(str(model_path))
-        features_df = GeometryFeatureGenerator(gdf.copy()).compute_geometry_features()
-        analyzer = SpatialNeighborhoodAnalyzer(features_df, radius=500)
-        features_df, _ = analyzer.compute_neighborhood_metrics(plot=False, show_progress=False)
+    prediction_skipped_by_threshold = False
+    target_mask = gdf["storey"].isna() & (gdf["is_living"].fillna(0) >= 0.5)
+    target_missing_count = int(target_mask.sum())
+    target_missing_pct = (100.0 * target_missing_count / max(1, len(gdf)))
+    _log(
+        "Floor step: missing storey requiring model prediction: "
+        f"{target_missing_count}/{len(gdf)} ({target_missing_pct:.2f}%)."
+    )
+    if float(floor_ignore_missing_below_pct) > 0 and target_missing_pct < float(floor_ignore_missing_below_pct):
+        _warn(
+            "Floor step: skipping storey model inference because missing share is below threshold "
+            f"({target_missing_pct:.2f}% < {float(floor_ignore_missing_below_pct):.2f}%)."
+        )
+        prediction_skipped_by_threshold = True
 
-        target_mask = gdf["storey"].isna() & (gdf["is_living"].fillna(0) >= 0.5)
-        if int(target_mask.sum()) > 0:
-            pred_values = model.predict(features_df.loc[target_mask].copy())
-            pred_series = pd.Series(pred_values, index=gdf.index[target_mask], dtype="float64")
-            pred_series = pred_series.round().clip(lower=1)
-            gdf.loc[target_mask, "storey"] = pred_series
-            predicted_storey_count = int(target_mask.sum())
+    if model_path.exists():
+        if not prediction_skipped_by_threshold:
+            _log(f"Floor step: loading storey model: {model_path}")
+            model = StoreyModelTrainer.load_model(str(model_path))
+            storey_model_info = getattr(model, "info", None)
+            _log("Floor step: computing geometry features for storey model...")
+            features_df = GeometryFeatureGenerator(gdf.copy()).compute_geometry_features()
+            analyzer = SpatialNeighborhoodAnalyzer(features_df, radius=500)
+            _log("Floor step: computing neighborhood metrics (this can be slow on large areas)...")
+            features_df, _ = analyzer.compute_neighborhood_metrics(plot=False, show_progress=True)
+
+            if target_missing_count > 0:
+                _log(f"Floor step: predicting missing storey for {target_missing_count} buildings...")
+                pred_values = model.predict(features_df.loc[target_mask].copy())
+                pred_series = pd.Series(pred_values, index=gdf.index[target_mask], dtype="float64")
+                pred_series = pred_series.round().clip(lower=1)
+                gdf.loc[target_mask, "storey"] = pred_series
+                gdf.loc[target_mask, "storey_source"] = "model_predicted"
+                predicted_storey_count = target_missing_count
+                _log("Floor step: storey prediction complete.")
+    else:
+        _warn(f"Floor step: storey model not found, skipping prediction: {model_path}")
 
     missing_storey_after_model = int(gdf["storey"].isna().sum())
-    gdf["storey_restored"] = (missing_storey_mask_before & gdf["storey"].notna()).astype(int)
+    gdf["storey_restored"] = (gdf["storey_source"] == "model_predicted").astype(int)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    gdf.to_file(output_path, driver="GeoJSON")
+    _log(f"Floor step: writing enriched buildings layer: {output_path}")
+    gdf.to_parquet(output_path)
+    _log(f"Floor step: preprocessing finished in {time.time() - started_total:.1f}s")
 
     return {
         "output_path": str(output_path),
@@ -791,11 +983,21 @@ def _run_floor_predictor_preprocessing(
         "rows_total": int(len(gdf)),
         "is_living_missing_before": missing_living_before,
         "is_living_missing_after": missing_living_after,
+        "is_living_original_count": original_living_count,
+        "is_living_original_from_building_tag_count": original_living_from_building_tag_count,
         "is_living_restored_count": int(gdf["is_living_restored"].sum()),
+        "is_living_restore_method": "simple_bad_is_living_restore" if simple_bad_is_living_restore else "none",
+        "storey_original_count": original_storey_count,
+        "storey_filled_from_building_levels_count": filled_from_building_levels_count,
         "storey_missing_before_model": missing_storey_before_model,
+        "storey_prediction_target_count": target_missing_count,
+        "storey_prediction_target_pct": target_missing_pct,
+        "storey_prediction_skipped_by_threshold": prediction_skipped_by_threshold,
+        "storey_prediction_skip_threshold_pct": float(floor_ignore_missing_below_pct),
         "storey_predicted_by_model": predicted_storey_count,
         "storey_missing_after_model": missing_storey_after_model,
         "storey_restored_count": int(gdf["storey_restored"].sum()),
+        "storey_model_info": storey_model_info,
     }
 
 
@@ -809,17 +1011,37 @@ def _save_collection_previews(
     buffered_quarters_path: Path,
     street_grid_path: Path,
     floor_enriched_path: Path,
+    floor_metrics: dict | None = None,
 ) -> list[Path]:
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
 
+    def _visual_only_shrink_buffer(
+        buffer_layer: gpd.GeoDataFrame | None,
+        shrink_m: float = 5.0,
+    ) -> gpd.GeoDataFrame | None:
+        if buffer_layer is None or buffer_layer.empty:
+            return buffer_layer
+        try:
+            work = buffer_layer.copy()
+            if work.crs is None:
+                work = work.set_crs(4326)
+            local = work.to_crs(work.estimate_utm_crs() or "EPSG:3857")
+            local["geometry"] = local.geometry.buffer(-abs(float(shrink_m)))
+            local = local[local.geometry.notna() & ~local.geometry.is_empty].copy()
+            if local.empty:
+                return buffer_layer
+            return local.to_crs(work.crs)
+        except Exception:
+            return buffer_layer
+
     def _read(path: Path) -> gpd.GeoDataFrame | None:
         try:
             if not path.exists():
                 return None
-            gdf = gpd.read_file(path)
+            gdf = read_geodata(path)
             if gdf.empty:
                 return None
             return gdf
@@ -837,6 +1059,14 @@ def _save_collection_previews(
             frameon=True,
             fontsize=8,
         )
+
+    def _footer_text(fig, lines: list[str] | None) -> None:
+        if not lines:
+            return
+        text = "\n".join(line for line in lines if line)
+        if not text.strip():
+            return
+        fig.text(0.5, 0.02, text, ha="center", va="bottom", fontsize=8, color="#374151")
 
     def _plot(
         output_path: Path,
@@ -919,6 +1149,7 @@ def _save_collection_previews(
         *,
         title: str,
         groups: list[tuple[gpd.GeoDataFrame | None, str, str]],
+        footer_lines: list[str] | None = None,
     ) -> Path | None:
         valid = [(g, color, label) for g, color, label in groups if g is not None and not g.empty]
         if not valid:
@@ -950,6 +1181,7 @@ def _save_collection_previews(
         _legend_bottom(ax, legend_handles)
         ax.set_title(title, fontsize=12)
         ax.set_axis_off()
+        _footer_text(fig, footer_lines)
         out = all_together_dir / output_name
         out.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(out, dpi=180, bbox_inches="tight")
@@ -979,6 +1211,7 @@ def _save_collection_previews(
 
     saved: list[Path] = []
     buffer_gdf = _read(buffer_path)
+    buffer_gdf = _visual_only_shrink_buffer(buffer_gdf, shrink_m=5.0)
     water_gdf = _read(Path(raw_files["water"]))
     roads_gdf = _read(Path(raw_files["roads"]))
     railways_gdf = _read(Path(raw_files["railways"]))
@@ -1017,6 +1250,79 @@ def _save_collection_previews(
     )
     if prep_png is not None:
         saved.append(prep_png)
+
+    if street_grid_gdf is not None and not street_grid_gdf.empty:
+        street_plot = street_grid_gdf.copy()
+        roads_plot = roads_gdf.copy() if roads_gdf is not None and not roads_gdf.empty else None
+        buffer_plot = buffer_gdf
+        if street_plot.crs is not None:
+            try:
+                street_plot = street_plot.to_crs("EPSG:3857")
+            except Exception:
+                pass
+        if roads_plot is not None and roads_plot.crs is not None:
+            try:
+                roads_plot = roads_plot.to_crs("EPSG:3857")
+            except Exception:
+                pass
+        if buffer_plot is not None and not buffer_plot.empty and buffer_plot.crs is not None:
+            try:
+                buffer_plot = buffer_plot.to_crs("EPSG:3857")
+            except Exception:
+                pass
+
+        if "top1_class_name" in street_plot.columns:
+            fig, ax = plt.subplots(figsize=(12, 12))
+            legend_handles = []
+            if roads_plot is not None and not roads_plot.empty:
+                roads_plot.plot(ax=ax, color="#d1d5db", linewidth=0.35, alpha=0.65)
+                legend_handles.append(Line2D([0], [0], color="#9ca3af", linewidth=2, label="roads"))
+            classes = street_plot["top1_class_name"].astype("string").fillna("unknown")
+            class_order = [v for v in classes.value_counts().index.tolist() if v][:8]
+            palette = ["#0f766e", "#0ea5e9", "#8b5cf6", "#f97316", "#16a34a", "#dc2626", "#334155", "#eab308"]
+            for idx, class_name in enumerate(class_order):
+                color = palette[idx % len(palette)]
+                part = street_plot[classes == class_name]
+                if part.empty:
+                    continue
+                part.plot(ax=ax, color=color, alpha=0.55, linewidth=0.1)
+                legend_handles.append(Patch(facecolor=color, edgecolor="none", label=str(class_name)))
+            if buffer_plot is not None and not buffer_plot.empty:
+                buffer_plot.plot(ax=ax, facecolor="none", edgecolor="#111111", linewidth=1.1)
+                legend_handles.append(Line2D([0], [0], color="#111111", linewidth=2, label="analysis buffer"))
+            _legend_bottom(ax, legend_handles)
+            ax.set_title("Street Pattern Top-1 Classification", fontsize=12)
+            ax.set_axis_off()
+            street_top1_png = all_together_dir / _next_name("street_pattern_top1")
+            fig.savefig(street_top1_png, dpi=180, bbox_inches="tight")
+            plt.close(fig)
+            saved.append(street_top1_png)
+
+        if "multivariate_color" in street_plot.columns:
+            fig, ax = plt.subplots(figsize=(12, 12))
+            legend_handles = []
+            if roads_plot is not None and not roads_plot.empty:
+                roads_plot.plot(ax=ax, color="#d1d5db", linewidth=0.35, alpha=0.65)
+                legend_handles.append(Line2D([0], [0], color="#9ca3af", linewidth=2, label="roads"))
+            multi = street_plot[street_plot["multivariate_color"].notna()].copy()
+            if not multi.empty:
+                multi.plot(
+                    ax=ax,
+                    color=multi["multivariate_color"].astype("string"),
+                    alpha=0.65,
+                    linewidth=0.1,
+                )
+                legend_handles.append(Patch(facecolor="#98c5d7", edgecolor="none", label="multivariate coloring"))
+            if buffer_plot is not None and not buffer_plot.empty:
+                buffer_plot.plot(ax=ax, facecolor="none", edgecolor="#111111", linewidth=1.1)
+                legend_handles.append(Line2D([0], [0], color="#111111", linewidth=2, label="analysis buffer"))
+            _legend_bottom(ax, legend_handles)
+            ax.set_title("Street Pattern Multivariate Classification", fontsize=12)
+            ax.set_axis_off()
+            street_multi_png = all_together_dir / _next_name("street_pattern_multivariate")
+            fig.savefig(street_multi_png, dpi=180, bbox_inches="tight")
+            plt.close(fig)
+            saved.append(street_multi_png)
 
     connectpt_manifest = _try_load_json(connectpt_manifest_path) or {}
     for modality in connectpt_manifest.get("modalities", []):
@@ -1103,7 +1409,6 @@ def _save_collection_previews(
         _single_layer("raw_buildings", buildings_gdf, color="#f97316", linewidth=0.05, alpha=0.35, title="Raw Buildings"),
         _single_layer("blocksnet_blocks", blocks_gdf, color="#334155", linewidth=0.2, alpha=0.75, title="BlocksNet Blocks"),
         _single_layer("quarters_clipped", quarters_gdf, color="#2563eb", linewidth=0.15, alpha=0.45, title="Quarters Clipped To Analysis Buffer"),
-        _single_layer("street_grid", street_grid_gdf, color="#dc2626", linewidth=0.15, alpha=0.35, title="Street Grid"),
     ]:
         if item is not None:
             saved.append(item)
@@ -1157,40 +1462,52 @@ def _save_collection_previews(
             saved.append(landuse_png)
 
     floor_enriched_gdf = _read(floor_enriched_path)
+    storey_model_footer_lines: list[str] = []
     if floor_enriched_gdf is not None and not floor_enriched_gdf.empty:
         floor_base = floor_enriched_gdf.copy()
         try:
             floor_base["is_living"] = pd.to_numeric(floor_base.get("is_living"), errors="coerce")
             if "is_living_restored" not in floor_base.columns:
                 floor_base["is_living_restored"] = 0
+            if "is_living_source" not in floor_base.columns:
+                floor_base["is_living_source"] = "missing"
+                floor_base.loc[floor_base["is_living"].notna(), "is_living_source"] = "original_is_living"
+                floor_base.loc[pd.to_numeric(floor_base["is_living_restored"], errors="coerce").fillna(0) >= 0.5, "is_living_source"] = "simple_bad_is_living_restore"
             if "storey_restored" not in floor_base.columns:
                 floor_base["storey_restored"] = 0
+            if "storey_source" not in floor_base.columns:
+                floor_base["storey_source"] = "missing"
+                floor_base.loc[floor_base["storey"].notna(), "storey_source"] = "original_storey"
+                floor_base.loc[pd.to_numeric(floor_base["storey_restored"], errors="coerce").fillna(0) >= 0.5, "storey_source"] = "model_predicted"
             floor_base["is_living_restored"] = pd.to_numeric(floor_base["is_living_restored"], errors="coerce").fillna(0)
             floor_base["storey_restored"] = pd.to_numeric(floor_base["storey_restored"], errors="coerce").fillna(0)
+            floor_base["is_living_source"] = floor_base["is_living_source"].astype("string").fillna("missing")
+            floor_base["storey_source"] = floor_base["storey_source"].astype("string").fillna("missing")
             living_known = floor_base[floor_base["is_living"].notna()].copy()
             if not living_known.empty:
                 living_distribution_png = _plot_status(
                     "buildings_is_living_distribution",
-                    title="Buildings is_living distribution (original/restored)",
+                    title="Buildings is_living distribution by source",
                     groups=[
-                        (living_known[(living_known["is_living"] >= 0.5) & (living_known["is_living_restored"] >= 0.5)], "#f59e0b", "restored living"),
-                        (living_known[(living_known["is_living"] < 0.5) & (living_known["is_living_restored"] >= 0.5)], "#d97706", "restored non-living"),
-                        (living_known[(living_known["is_living"] >= 0.5) & (living_known["is_living_restored"] < 0.5)], "#16a34a", "original living"),
-                        (living_known[(living_known["is_living"] < 0.5) & (living_known["is_living_restored"] < 0.5)], "#ef4444", "original non-living"),
+                        (living_known[(living_known["is_living"] >= 0.5) & (living_known["is_living_source"] == "simple_bad_is_living_restore")], "#f59e0b", "restored living"),
+                        (living_known[(living_known["is_living"] < 0.5) & (living_known["is_living_source"] == "simple_bad_is_living_restore")], "#d97706", "restored non-living"),
+                        (living_known[(living_known["is_living"] >= 0.5) & (living_known["is_living_source"] == "original_is_living")], "#16a34a", "original living"),
+                        (living_known[(living_known["is_living"] >= 0.5) & (living_known["is_living_source"] == "original_building_tag")], "#84cc16", "living from building tag"),
+                        (living_known[(living_known["is_living"] < 0.5) & (living_known["is_living_source"] == "original_is_living")], "#ef4444", "original non-living"),
                         (floor_base[floor_base["is_living"].isna()], "#6b7280", "missing"),
                     ],
                 )
                 if living_distribution_png is not None:
                     saved.append(living_distribution_png)
 
-            if "is_living_restored" in floor_base.columns:
-                restored_mask = pd.to_numeric(floor_base["is_living_restored"], errors="coerce").fillna(0) >= 0.5
+            if "is_living_source" in floor_base.columns:
                 living_status_png = _plot_status(
                     "buildings_is_living_restoration_status",
                     title="Buildings is_living restoration status",
                     groups=[
-                        (floor_base[restored_mask], "#f59e0b", "restored"),
-                        (floor_base[(~restored_mask) & floor_base["is_living"].notna()], "#16a34a", "original"),
+                        (floor_base[floor_base["is_living_source"] == "simple_bad_is_living_restore"], "#f59e0b", "simple_bad_is_living_restore"),
+                        (floor_base[floor_base["is_living_source"] == "original_is_living"], "#16a34a", "original is_living"),
+                        (floor_base[floor_base["is_living_source"] == "original_building_tag"], "#84cc16", "original building tag"),
                         (floor_base[floor_base["is_living"].isna()], "#dc2626", "missing"),
                     ],
                 )
@@ -1232,24 +1549,25 @@ def _save_collection_previews(
                 _legend_bottom(ax, legend_handles_all)
                 ax.set_title("Buildings storey quantiles (all known storey)", fontsize=12)
                 ax.set_axis_off()
+                _footer_text(fig, storey_model_footer_lines)
                 storey_png_all = all_together_dir / _next_name("buildings_storey_quantiles_all")
                 fig.savefig(storey_png_all, dpi=180, bbox_inches="tight")
                 plt.close(fig)
                 saved.append(storey_png_all)
 
-                # Storey quantiles only for restored buildings.
-                restored_known = known_storey_plot[known_storey_plot["storey_restored"] >= 0.5].copy()
-                if not restored_known.empty:
+                # Storey quantiles only for model-predicted buildings.
+                predicted_known = known_storey_plot[known_storey_plot["storey_source"] == "model_predicted"].copy()
+                if not predicted_known.empty:
                     fig, ax = plt.subplots(figsize=(12, 12))
-                    q_rest = min(5, max(1, int(restored_known["storey"].nunique())))
-                    bins_rest = pd.qcut(restored_known["storey"], q=q_rest, duplicates="drop")
-                    restored_known["storey_q"] = bins_rest.astype("string")
-                    labels_rest = [v for v in restored_known["storey_q"].dropna().unique().tolist() if v]
+                    q_rest = min(5, max(1, int(predicted_known["storey"].nunique())))
+                    bins_rest = pd.qcut(predicted_known["storey"], q=q_rest, duplicates="drop")
+                    predicted_known["storey_q"] = bins_rest.astype("string")
+                    labels_rest = [v for v in predicted_known["storey_q"].dropna().unique().tolist() if v]
                     labels_rest = sorted(labels_rest)
                     colors_rest = plt.get_cmap("plasma")(pd.Series(range(len(labels_rest))) / max(1, len(labels_rest) - 1))
                     legend_handles_rest = []
                     for idx, label in enumerate(labels_rest):
-                        part = restored_known[restored_known["storey_q"] == label]
+                        part = predicted_known[predicted_known["storey_q"] == label]
                         color = colors_rest[idx]
                         part.plot(ax=ax, color=color, linewidth=0.03, alpha=0.85)
                         legend_handles_rest.append(Patch(facecolor=color, edgecolor="none", label=str(label)))
@@ -1257,23 +1575,36 @@ def _save_collection_previews(
                         buffer_storey_plot.plot(ax=ax, facecolor="none", edgecolor="#111111", linewidth=1.1)
                         legend_handles_rest.append(Line2D([0], [0], color="#111111", linewidth=2, label="analysis buffer"))
                     _legend_bottom(ax, legend_handles_rest)
-                    ax.set_title("Buildings storey quantiles (restored only)", fontsize=12)
+                    ax.set_title("Buildings storey quantiles (model predicted only)", fontsize=12)
                     ax.set_axis_off()
-                    storey_png_restored = all_together_dir / _next_name("buildings_storey_quantiles_restored")
+                    _footer_text(fig, storey_model_footer_lines)
+                    storey_png_restored = all_together_dir / _next_name("buildings_storey_quantiles_model_predicted")
                     fig.savefig(storey_png_restored, dpi=180, bbox_inches="tight")
                     plt.close(fig)
                     saved.append(storey_png_restored)
 
-            if "storey_restored" in floor_base.columns:
-                restored_storey = pd.to_numeric(floor_base["storey_restored"], errors="coerce").fillna(0) >= 0.5
+            if "storey_source" in floor_base.columns:
+                known_non_living = floor_base["is_living"].notna() & (floor_base["is_living"] < 0.5)
+                known_living = floor_base["is_living"].notna() & (floor_base["is_living"] >= 0.5)
+                known_storey = floor_base["storey"].notna()
+                missing_storey_living = floor_base["storey"].isna() & known_living
+                missing_storey_non_living = floor_base["storey"].isna() & known_non_living
+                known_storey_non_living = known_storey & known_non_living
+                known_storey_living_original = known_storey & known_living & floor_base["storey_source"].isin(["original_storey", "osm_building_levels"])
+                known_storey_living_predicted = known_storey & known_living & (floor_base["storey_source"] == "model_predicted")
+                missing_storey_unknown = floor_base["storey"].isna() & floor_base["is_living"].isna()
                 storey_status_png = _plot_status(
                     "buildings_storey_restoration_status",
                     title="Buildings storey restoration status",
                     groups=[
-                        (floor_base[restored_storey], "#f59e0b", "restored"),
-                        (floor_base[(~restored_storey) & floor_base["storey"].notna()], "#0ea5e9", "original"),
-                        (floor_base[floor_base["storey"].isna()], "#dc2626", "missing"),
+                        (floor_base[known_storey_non_living], "#111111", "non-living with known storey"),
+                        (floor_base[known_storey_living_predicted], "#f59e0b", "living with model-predicted storey"),
+                        (floor_base[known_storey_living_original], "#0ea5e9", "living with known storey"),
+                        (floor_base[missing_storey_non_living], "#a3a3a3", "non-living (storey skipped)"),
+                        (floor_base[missing_storey_living], "#dc2626", "missing living"),
+                        (floor_base[missing_storey_unknown], "#6b7280", "missing / unknown living"),
                     ],
+                    footer_lines=storey_model_footer_lines,
                 )
                 if storey_status_png is not None:
                     saved.append(storey_status_png)
@@ -1335,7 +1666,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         )
 
     analysis_dir = data_root / "analysis_territory"
-    analysis_buffer_path = analysis_dir / "buffer.geojson"
+    analysis_buffer_path = analysis_dir / "buffer.parquet"
     buffer_matches = _analysis_buffer_matches(analysis_buffer_path, effective_buffer_m)
     if (not args.no_cache) and analysis_buffer_path.exists() and (not buffer_matches):
         _warn(
@@ -1356,6 +1687,20 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
     else:
         _log(f"Using cached analysis buffer: {analysis_buffer_path}")
     buffer_path = analysis_buffer_path
+    shared_roads_path = derived_dir / "roads_drive_osmnx.parquet"
+    shared_roads_path, shared_roads_count, shared_roads_rebuilt = _ensure_shared_drive_roads(
+        buffer_path=buffer_path,
+        output_path=shared_roads_path,
+        no_cache=args.no_cache,
+    )
+    if shared_roads_rebuilt:
+        _log(
+            "Shared roads prepared from OSMnx drive graph: "
+            f"{shared_roads_count} edges ({shared_roads_path})"
+        )
+        downloaded_in_this_run = True
+    else:
+        _log(f"Using cached shared drive roads: {shared_roads_path} ({shared_roads_count} edges)")
 
     if args.no_cache or not blocks_raw_manifest_path.exists():
         _log("Collecting raw OSM layers for blocks/buildings preprocessing...")
@@ -1369,27 +1714,30 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         _log(f"Raw OSM bundle collected in {time.time() - started:.1f}s: {blocks_raw_manifest_path}")
         downloaded_in_this_run = True
     else:
-        _log(f"Using cached raw OSM bundle: {blocks_raw_manifest_path}")
+        _log("Using cached raw OSM bundle.")
 
+    parsed_modalities = parse_modalities(args.modalities)
     if args.no_cache or not connectpt_manifest_path.exists():
         _log("Collecting connectpt bundle (OSM download)...")
         _log(
             "OSM download (connectpt): "
-            "requesting PT stops/lines and network geometry via Overpass for selected modalities "
+            "requesting PT stops/lines via Overpass for selected modalities; "
+            "bus road geometry is reused from pre-collected shared drive graph "
             f"directly inside the same fixed {effective_buffer_m}m analysis buffer."
         )
         started = time.time()
         build_connectpt_osm_bundle(
             place=place,
-            modalities=parse_modalities(args.modalities),
+            modalities=parsed_modalities,
             output_dir=connectpt_dir,
             speed_kmh=args.speed_kmh,
             boundary_path=buffer_path,
+            drive_roads_path=shared_roads_path,
         )
         _log(f"ConnectPT bundle collected in {time.time() - started:.1f}s: {connectpt_manifest_path}")
         downloaded_in_this_run = True
     else:
-        _log(f"Using cached connectpt bundle: {connectpt_manifest_path}")
+        _log("Using cached connectpt bundle.")
 
     blocks_raw_manifest = _try_load_json(blocks_raw_manifest_path)
     if blocks_raw_manifest is None:
@@ -1399,12 +1747,20 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
     boundary_path = Path(raw_files["boundary"]).resolve()
     buildings_path = Path(raw_files["buildings"]).resolve()
     land_use_path = Path(raw_files["land_use"]).resolve()
-    _log(f"Blocks raw boundary source (not analysis layer): {boundary_path}")
-    _log(f"Buildings source for floor-predictor preprocessing: {buildings_path}")
-    _log(f"Land-use source for floor-predictor preprocessing: {land_use_path}")
-
-    floor_output_path = derived_dir / "buildings_floor_enriched.geojson"
-    if args.no_cache or not floor_output_path.exists():
+    floor_output_path = derived_dir / "buildings_floor_enriched.parquet"
+    floor_cache_current = _floor_output_is_current(floor_output_path)
+    if floor_output_path.exists() and (not floor_cache_current) and (not args.no_cache):
+        _warn(
+            "Cached floor-preprocessing output is outdated for current source-tracking logic. "
+            "Rebuilding buildings_floor_enriched."
+        )
+    if args.no_cache or not floor_output_path.exists() or not floor_cache_current:
+        if bool(args.simple_bad_is_living_restore):
+            _warn(
+                "SERIOUS WARNING: simple_bad_is_living_restore is ENABLED. "
+                "This is a heuristic annotation path and may introduce classification noise in is_living. "
+                "Disable with --no-simple-bad-is-living-restore for stricter behavior."
+            )
         _log(
             "Floor-predictor preprocessing: "
             "filling missing is_living/storey using pre-collected blocksnet layers "
@@ -1415,6 +1771,8 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             buildings_path=buildings_path,
             land_use_path=land_use_path,
             output_path=floor_output_path,
+            simple_bad_is_living_restore=bool(args.simple_bad_is_living_restore),
+            floor_ignore_missing_below_pct=float(args.floor_ignore_missing_below_pct),
         )
         _log(
             "Floor-predictor done: "
@@ -1425,7 +1783,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         downloaded_in_this_run = True
     else:
         _log(f"Using cached floor-preprocessing output: {floor_output_path}")
-        floor_enriched = gpd.read_file(floor_output_path)
+        floor_enriched = read_geodata(floor_output_path)
         floor_is_living_missing = int(pd.to_numeric(floor_enriched.get("is_living"), errors="coerce").isna().sum())
         floor_storey_missing = int(pd.to_numeric(floor_enriched.get("storey"), errors="coerce").isna().sum())
         floor_metrics = {
@@ -1452,16 +1810,14 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         _log(f"BlocksNet bundle built in {time.time() - started:.1f}s: {blocks_manifest_path}")
         downloaded_in_this_run = True
     else:
-        _log(f"Using cached BlocksNet processed bundle: {blocks_manifest_path}")
+        _log("Using cached BlocksNet processed bundle.")
 
     blocks_manifest = _try_load_json(blocks_manifest_path)
     if blocks_manifest is None:
         raise RuntimeError(f"Cannot read blocksnet manifest: {blocks_manifest_path}")
     files = blocks_manifest.get("files", {})
     blocks_path = Path(files["blocks"]).resolve()
-    _log(f"Blocks quarters source: {blocks_path}")
-
-    buffered_quarters_path = derived_dir / "quarters_clipped.geojson"
+    buffered_quarters_path = derived_dir / "quarters_clipped.parquet"
     if args.no_cache or not buffered_quarters_path.exists():
         _log("Clipping blocks quarters to analysis buffer...")
         buffered_quarters_path, buffered_quarters_count = _build_buffered_quarters(
@@ -1471,35 +1827,21 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         )
         _log(f"Clipped quarters ready: {buffered_quarters_count} features")
     else:
-        buffered_quarters_count = len(gpd.read_file(buffered_quarters_path))
+        buffered_quarters_count = len(read_geodata(buffered_quarters_path))
         _log(f"Using cached clipped quarters: {buffered_quarters_path} ({buffered_quarters_count} features)")
 
         _log("Classification step: building street-pattern grid for the same territory policy.")
-    shared_roads_path = derived_dir / "roads_drive_osmnx.geojson"
-    shared_roads_path, shared_roads_count, shared_roads_rebuilt = _ensure_shared_drive_roads(
-        buffer_path=buffer_path,
-        output_path=shared_roads_path,
-        no_cache=args.no_cache,
-    )
-    if shared_roads_rebuilt:
-        _log(
-            "Shared roads prepared from OSMnx drive graph: "
-            f"{shared_roads_count} edges ({shared_roads_path})"
-        )
-        downloaded_in_this_run = True
-    else:
-        _log(f"Using cached shared drive roads: {shared_roads_path} ({shared_roads_count} edges)")
-
     street_grid_source_path, street_summary_path, street_rebuilt = _ensure_street_grid_from_repo(
         place=place,
         repo_root=repo_root,
         data_root=data_root,
         no_cache=args.no_cache,
         buffer_m=effective_buffer_m,
+        grid_step=float(args.street_grid_step),
         center_node_id=args.center_node_id,
         roads_path=shared_roads_path,
     )
-    clipped_street_grid_path = derived_dir / "street_grid_buffered.geojson"
+    clipped_street_grid_path = derived_dir / "street_grid_buffered.parquet"
     if args.no_cache or street_rebuilt or not clipped_street_grid_path.exists():
         _log("Clipping street-grid to analysis buffer...")
         clipped_street_grid_path, clipped_street_grid_count = _clip_street_grid_to_buffer(
@@ -1509,15 +1851,13 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         )
         _log(f"Street-grid clipped by analysis buffer: {clipped_street_grid_count} features")
     else:
-        clipped_street_grid_count = len(gpd.read_file(clipped_street_grid_path))
+        clipped_street_grid_count = len(read_geodata(clipped_street_grid_path))
         _log(
             f"Using cached clipped street-grid: {clipped_street_grid_path} "
             f"({clipped_street_grid_count} features)"
         )
     downloaded_in_this_run = downloaded_in_this_run or street_rebuilt
-    _log(f"Street grid source: {street_grid_source_path}")
-
-    climate_grid_path = derived_dir / "climate_grid.geojson"
+    climate_grid_path = derived_dir / "climate_grid.parquet"
 
     climate_enabled = bool(args.climate_grid)
     if climate_enabled:
@@ -1539,6 +1879,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         "slug": slug,
         "generated_by": "aggregated_spatial_pipeline.pipeline.run_joint",
         "buffer_m": args.buffer_m,
+        "street_grid_step": args.street_grid_step,
         "analysis_margin_m": 0.0,
         "effective_buffer_m": effective_buffer_m,
         "climate_grid_step_m": args.climate_grid_step_m,
@@ -1564,6 +1905,8 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
     }
     derived_manifest_path.write_text(json.dumps(derived_manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    _log("Generating preview PNGs for collected and derived layers...")
+    preview_started = time.time()
     preview_paths = _save_collection_previews(
         data_root=data_root,
         buffer_path=buffer_path,
@@ -1574,6 +1917,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         street_grid_path=clipped_street_grid_path,
         floor_enriched_path=floor_output_path,
     )
+    _log(f"Preview generation finished in {time.time() - preview_started:.1f}s.")
     if preview_paths:
         _log("Preview PNG files:")
         for preview_path in preview_paths:
@@ -1667,6 +2011,7 @@ def _prepare_inputs(args: argparse.Namespace) -> PreparedInputs:
 
 
 def main() -> None:
+    _clear_terminal()
     _configure_logging()
     args = parse_args()
     _configure_osm_requests(args.osm_timeout_s, debug=args.osmnx_debug, overpass_url=args.overpass_url)
@@ -1690,14 +2035,7 @@ def main() -> None:
         prepared = _prepare_inputs(args)
         _log(f"Data download in this run: {'YES' if prepared.downloaded_in_this_run else 'NO'}")
         _log(f"Detected city: {prepared.city_label or 'unknown'}")
-        for layer_id, detail in prepared.source_details.items():
-            _log(
-                f"Input {layer_id}: path={detail.get('input_path')}, "
-                f"manifest={detail.get('manifest_path') or 'not found'}, "
-                f"place={detail.get('place') or 'unknown'}, "
-                f"cached={detail.get('cached')}, "
-                f"origin={detail.get('origin') or 'unspecified'}"
-            )
+        _log_data_sources_summary(prepared.source_details)
         climate_meta = {"climate_enabled": "climate_grid" in prepared.layer_inputs}
         if not climate_meta["climate_enabled"]:
             runtime_spec, pruned_meta = _prune_climate_from_spec(runtime_spec)
@@ -1738,10 +2076,10 @@ def main() -> None:
             except Exception as exc:
                 raise SystemExit(
                     f"Failed to read layer {layer_id!r} from {path}: {exc}\n"
-                    "Expected a valid GeoJSON/GPKG with geometry and CRS."
+                    "Expected a valid Parquet/GeoJSON/GPKG with geometry and CRS."
                 ) from exc
             layers[layer_id] = gdf
-            _log(f"Loaded {layer_id}: {len(gdf)} features, CRS={gdf.crs}, source={path}")
+            _log(f"Loaded {layer_id}: {len(gdf)} features, CRS={gdf.crs}")
         steps.update(1)
 
         steps.set_description("Joint Pipeline: build crosswalks")
@@ -1782,8 +2120,8 @@ def main() -> None:
             result = all_results[scenario_id]
             scenario_dir = output_dir / scenario_id
             scenario_dir.mkdir(parents=True, exist_ok=True)
-            quarters_path = scenario_dir / "quarters.geojson"
-            cities_path = scenario_dir / "cities.geojson"
+            quarters_path = scenario_dir / "quarters.parquet"
+            cities_path = scenario_dir / "cities.parquet"
             metadata_path = scenario_dir / "metadata.json"
 
             save_layer(result.quarters, quarters_path)
