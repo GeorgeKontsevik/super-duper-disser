@@ -463,49 +463,58 @@ def _plot_service_lp_preview(
 
     provision_col = "provision_strong" if "provision_strong" in gdf.columns else "provision" if "provision" in gdf.columns else None
     demand_without_col = "demand_without" if "demand_without" in gdf.columns else None
-    if provision_col is None and demand_without_col is None:
+    if provision_col is None:
         return None
 
-    fig, axes = plt.subplots(1, 2, figsize=(16, 7))
+    provision = pd.to_numeric(gdf[provision_col], errors="coerce")
+    gdf["provision_binary"] = np.where(provision >= 1.0, "good", "bad")
+    if provision.notna().sum() > 0:
+        gdf.loc[provision.isna(), "provision_binary"] = "missing"
 
-    if provision_col is not None:
-        gdf.plot(
-            ax=axes[0],
-            column=provision_col,
-            cmap="YlGnBu",
+    color_map = {"good": "#16a34a", "bad": "#dc2626", "missing": "#9ca3af"}
+    fig, axes = plt.subplots(
+        2,
+        1,
+        figsize=(12, 12),
+        gridspec_kw={"height_ratios": [5, 1.7], "hspace": 0.18},
+    )
+    ax = axes[0]
+    hist_ax = axes[1]
+    for status in ("good", "bad", "missing"):
+        part = gdf[gdf["provision_binary"] == status]
+        if part.empty:
+            continue
+        part.plot(
+            ax=ax,
+            color=color_map[status],
             linewidth=0.05,
             edgecolor="#d1d5db",
-            legend=True,
-            vmin=0.0,
-            vmax=max(1.0, float(pd.to_numeric(gdf[provision_col], errors="coerce").max(skipna=True) or 1.0)),
-            missing_kwds={"color": "#9ca3af", "label": "missing"},
+            alpha=0.9,
         )
-        axes[0].set_title(f"{service}: provision", fontsize=11)
-    else:
-        axes[0].text(0.5, 0.5, "no provision column", ha="center", va="center")
-    axes[0].set_axis_off()
+    good_cnt = int((gdf["provision_binary"] == "good").sum())
+    bad_cnt = int((gdf["provision_binary"] == "bad").sum())
+    miss_cnt = int((gdf["provision_binary"] == "missing").sum())
+    ax.set_title(
+        f"{service}: provision status (1=good, <1=bad) | good={good_cnt}, bad={bad_cnt}, missing={miss_cnt}",
+        fontsize=11,
+    )
+    ax.set_axis_off()
 
-    if demand_without_col is not None:
-        demand_wo = pd.to_numeric(gdf[demand_without_col], errors="coerce")
-        vmax_dw = float(np.nanpercentile(demand_wo.to_numpy(dtype=float), 95)) if demand_wo.notna().any() else 1.0
-        vmax_dw = vmax_dw if np.isfinite(vmax_dw) and vmax_dw > 0 else 1.0
-        gdf.plot(
-            ax=axes[1],
-            column=demand_without_col,
-            cmap="OrRd",
-            linewidth=0.05,
-            edgecolor="#d1d5db",
-            legend=True,
-            vmin=0.0,
-            vmax=vmax_dw,
-            missing_kwds={"color": "#9ca3af", "label": "missing"},
-        )
-        axes[1].set_title(f"{service}: unmet demand (demand_without)", fontsize=11)
+    prov_hist = pd.to_numeric(gdf[provision_col], errors="coerce").dropna().clip(lower=0.0, upper=1.0)
+    if not prov_hist.empty:
+        bins = np.linspace(0.0, 1.0, 21)
+        hist_ax.hist(prov_hist.to_numpy(dtype=float), bins=bins, color="#94a3b8", edgecolor="#334155", alpha=0.95)
+        hist_ax.axvline(1.0, color="#16a34a", linestyle="--", linewidth=1.6, label="target=1.0")
+        hist_ax.set_xlim(0.0, 1.0)
+        hist_ax.set_xlabel("provision")
+        hist_ax.set_ylabel("blocks")
+        hist_ax.set_title("Provision histogram", fontsize=10)
+        hist_ax.grid(alpha=0.25, axis="y")
+        hist_ax.legend(loc="upper left", fontsize=8, frameon=True)
     else:
-        axes[1].text(0.5, 0.5, "no demand_without column", ha="center", va="center")
-    axes[1].set_axis_off()
+        hist_ax.text(0.5, 0.5, "no provision values", ha="center", va="center")
+        hist_ax.set_axis_off()
 
-    fig.suptitle(f"LP results preview: {service}", fontsize=13)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=180, bbox_inches="tight")
     plt.close(fig)
