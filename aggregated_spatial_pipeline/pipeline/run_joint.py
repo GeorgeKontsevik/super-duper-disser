@@ -18,6 +18,7 @@ from shapely.geometry import Point, box
 from tqdm.auto import tqdm
 
 from aggregated_spatial_pipeline.geodata_io import (
+    prepare_geodata_for_parquet,
     read_geodata,
 )
 from aggregated_spatial_pipeline.spec import CONFIG_DIR, PipelineSpec
@@ -568,7 +569,7 @@ def _ensure_shared_drive_roads(
             else (json.dumps(v, ensure_ascii=False) if isinstance(v, dict) else v)
         )
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    edges.to_parquet(output_path)
+    prepare_geodata_for_parquet(edges).to_parquet(output_path)
     edges.to_file(compat_geojson, driver="GeoJSON")
     return output_path, int(len(edges)), True
 

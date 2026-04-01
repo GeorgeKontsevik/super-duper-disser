@@ -30,6 +30,11 @@ def prepare_geodata_for_parquet(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     for col in [c for c in safe.columns if c != "geometry"]:
         if pd.api.types.is_object_dtype(safe[col]):
             safe[col] = safe[col].map(_normalize)
+            non_null = safe[col].dropna()
+            if not non_null.empty:
+                python_types = {type(value) for value in non_null}
+                if len(python_types) > 1:
+                    safe[col] = safe[col].map(lambda value: None if pd.isna(value) else str(value))
     return safe
 
 
