@@ -95,6 +95,14 @@ def parse_args() -> argparse.Namespace:
         help="Enable OSMnx console logs via OSMnx settings.",
     )
     parser.add_argument(
+        "--intermodal-python",
+        default=None,
+        help=(
+            "Optional path to dedicated python executable used only for intermodal graph collection "
+            "(e.g. .venv-iduedu121/bin/python)."
+        ),
+    )
+    parser.add_argument(
         "--buffer-m",
         type=float,
         default=20000.0,
@@ -1622,6 +1630,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         slugify_place,
     )
     from aggregated_spatial_pipeline.connectpt_data_pipeline.pipeline import build_connectpt_osm_bundle, parse_modalities
+    from aggregated_spatial_pipeline.intermodal_graph_data_pipeline.pipeline import build_intermodal_graph_bundle
 
     # Some imported modules may reconfigure loguru on import; enforce compact format again.
     _configure_logging()
@@ -1637,11 +1646,13 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
     blocks_raw_dir = data_root / "blocksnet_raw_osm"
     blocks_dir = data_root / "blocksnet"
     connectpt_dir = data_root / "connectpt_osm"
+    intermodal_dir = data_root / "intermodal_graph_iduedu"
     derived_dir = data_root / "derived_layers"
 
     blocks_raw_manifest_path = blocks_raw_dir / "manifest.json"
     blocks_manifest_path = blocks_dir / "manifest.json"
     connectpt_manifest_path = connectpt_dir / "manifest.json"
+    intermodal_manifest_path = intermodal_dir / "manifest.json"
     derived_manifest_path = derived_dir / "manifest.json"
 
     downloaded_in_this_run = False
@@ -1738,6 +1749,30 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         downloaded_in_this_run = True
     else:
         _log("Using cached connectpt bundle.")
+
+    if args.no_cache or not intermodal_manifest_path.exists():
+        _log("Collecting intermodal transport graph bundle...")
+        _log(
+            "IduEdu download (intermodal): "
+            "requesting one city-scale intermodal transport graph with all supported PT modalities "
+            "(tram, bus, trolleybus, subway) for the same fixed analysis buffer via dedicated iduedu 1.2.1 runtime; "
+            "this bundle is cached and intended for quarter-to-quarter accessibility in pipeline_2."
+        )
+        started = time.time()
+        build_intermodal_graph_bundle(
+            place=place,
+            output_dir=intermodal_dir,
+            boundary_path=buffer_path,
+            python_executable=args.intermodal_python,
+            repo_root=repo_root,
+        )
+        _log(
+            "Intermodal graph bundle collected in "
+            f"{time.time() - started:.1f}s: {intermodal_manifest_path}"
+        )
+        downloaded_in_this_run = True
+    else:
+        _log("Using cached intermodal transport graph bundle.")
 
     blocks_raw_manifest = _try_load_json(blocks_raw_manifest_path)
     if blocks_raw_manifest is None:
@@ -1897,6 +1932,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             "blocksnet_raw_manifest": str(blocks_raw_manifest_path),
             "blocksnet_manifest": str(blocks_manifest_path),
             "connectpt_manifest": str(connectpt_manifest_path),
+            "intermodal_graph_manifest": str(intermodal_manifest_path),
             "street_pattern_summary": str(street_summary_path),
             "street_pattern_buffer": str(buffer_path),
             "shared_drive_roads": str(shared_roads_path),
