@@ -83,10 +83,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--joint-input-dir",
-        required=True,
+        default=None,
         help=(
             "Path to pipeline_1 city bundle, e.g. "
             "/.../aggregated_spatial_pipeline/outputs/joint_inputs/barcelona_spain"
+        ),
+    )
+    parser.add_argument(
+        "--place",
+        default=None,
+        help=(
+            "Optional place name used to auto-resolve "
+            "aggregated_spatial_pipeline/outputs/joint_inputs/<place_slug>."
         ),
     )
     parser.add_argument(
@@ -144,6 +152,26 @@ def parse_args() -> argparse.Namespace:
         help="Enable verbose OSMnx logs.",
     )
     return parser.parse_args()
+
+
+def _slugify(value: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "_", value.strip().lower()).strip("_")
+    return slug or "city"
+
+
+def _resolve_city_dir(args: argparse.Namespace) -> Path:
+    if args.joint_input_dir:
+        return Path(args.joint_input_dir).resolve()
+    if args.place:
+        slug = _slugify(str(args.place))
+        return (
+            Path(__file__).resolve().parents[2]
+            / "aggregated_spatial_pipeline"
+            / "outputs"
+            / "joint_inputs"
+            / slug
+        ).resolve()
+    raise ValueError("Provide either --joint-input-dir or --place.")
 
 
 def _log(message: str) -> None:
@@ -569,7 +597,7 @@ def main() -> None:
     _configure_osmnx(args)
 
     services = _ensure_services_valid(args.services)
-    city_dir = Path(args.joint_input_dir).resolve()
+    city_dir = _resolve_city_dir(args)
 
     boundary_path = city_dir / "analysis_territory" / "buffer.parquet"
     quarters_path = city_dir / "derived_layers" / "quarters_clipped.parquet"
