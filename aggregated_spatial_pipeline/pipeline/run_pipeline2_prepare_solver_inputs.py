@@ -344,7 +344,13 @@ def _try_load_json(path: Path) -> dict | None:
         return None
 
 
-def _plot_accessibility_previews(units: gpd.GeoDataFrame, matrix_union: pd.DataFrame, out_dir: Path) -> dict[str, str]:
+def _plot_accessibility_previews(
+    units: gpd.GeoDataFrame,
+    matrix_union: pd.DataFrame,
+    out_dir: Path,
+    *,
+    use_cache: bool = True,
+) -> dict[str, str]:
     import matplotlib
 
     matplotlib.use("Agg")
@@ -352,6 +358,12 @@ def _plot_accessibility_previews(units: gpd.GeoDataFrame, matrix_union: pd.DataF
 
     out_dir.mkdir(parents=True, exist_ok=True)
     out: dict[str, str] = {}
+    access_map_path = out_dir / "01_accessibility_mean_time_map.png"
+    matrix_png = out_dir / "02_accessibility_matrix_sample_heatmap.png"
+    if use_cache and access_map_path.exists() and matrix_png.exists():
+        out["accessibility_mean_time_map"] = str(access_map_path)
+        out["accessibility_matrix_sample_heatmap"] = str(matrix_png)
+        return out
 
     matrix_numeric = matrix_union.apply(pd.to_numeric, errors="coerce").astype(np.float32, copy=False)
     matrix_numeric = matrix_numeric.where(np.isfinite(matrix_numeric), np.nan)
@@ -379,7 +391,6 @@ def _plot_accessibility_previews(units: gpd.GeoDataFrame, matrix_union: pd.DataF
         )
         ax.set_title("Accessibility: mean travel time per quarter", fontsize=12)
         ax.set_axis_off()
-        access_map_path = out_dir / "01_accessibility_mean_time_map.png"
         fig.savefig(access_map_path, dpi=180, bbox_inches="tight")
         plt.close(fig)
         out["accessibility_mean_time_map"] = str(access_map_path)
@@ -398,7 +409,6 @@ def _plot_accessibility_previews(units: gpd.GeoDataFrame, matrix_union: pd.DataF
         ax.set_ylabel("origin index (sampled)")
         cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
         cbar.set_label("travel time (min)")
-        matrix_png = out_dir / "02_accessibility_matrix_sample_heatmap.png"
         fig.savefig(matrix_png, dpi=180, bbox_inches="tight")
         plt.close(fig)
         out["accessibility_matrix_sample_heatmap"] = str(matrix_png)
@@ -632,7 +642,9 @@ def main() -> None:
     # 4) Per-service solver-ready tables (demand_within/demand_without/capacity_left/provision).
     service_outputs: dict[str, dict] = {}
     preview_outputs: dict[str, object] = {}
-    preview_outputs.update(_plot_accessibility_previews(units, matrix_union, preview_dir))
+    preview_outputs.update(
+        _plot_accessibility_previews(units, matrix_union, preview_dir, use_cache=(not args.no_cache))
+    )
     for service in services:
         service_dir = solver_dir / service
         blocks_path = service_dir / "blocks_solver.parquet"
@@ -701,12 +713,15 @@ def main() -> None:
         _save_dataframe(sub_mx, matrix_service_path)
         links_path.parent.mkdir(parents=True, exist_ok=True)
         links_df.reset_index().to_csv(links_path, index=False)
-        lp_preview_path = _plot_service_lp_preview(
-            solver_blocks,
-            service,
-            lp_preview_target,
-            quarters_ref=quarters,
-        )
+        if (not args.no_cache) and lp_preview_target.exists():
+            lp_preview_path = str(lp_preview_target)
+        else:
+            lp_preview_path = _plot_service_lp_preview(
+                solver_blocks,
+                service,
+                lp_preview_target,
+                quarters_ref=quarters,
+            )
 
         summary = {
             "service": service,
