@@ -55,10 +55,11 @@ def main() -> None:
     transport_types = ["tram", "bus", "trolleybus", "subway"]
     print(
         "[intermodal-builder] Building intermodal graph with iduedu 1.2.1 "
-        f"for modes={','.join(transport_types)}"
+        f"for modes={','.join(transport_types)} (clip_by_territory=True)"
     )
     graph = iduedu.get_intermodal_graph(
         territory=territory_gdf,
+        clip_by_territory=True,
         pt_kwargs={"transport_types": transport_types},
     )
 
@@ -81,6 +82,7 @@ def main() -> None:
         "graph_type": "intermodal",
         "graph_provider": "iduedu",
         "iduedu_version": "1.2.1",
+        "clip_by_territory": True,
         "transport_types": transport_types,
         "boundary_source": str(boundary_path),
         "files": {

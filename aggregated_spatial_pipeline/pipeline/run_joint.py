@@ -1057,6 +1057,36 @@ def _save_collection_previews(
         except Exception:
             return None
 
+    def _build_buffer_circle_and_center(buffer_layer: gpd.GeoDataFrame | None) -> tuple[gpd.GeoDataFrame | None, gpd.GeoDataFrame | None]:
+        if buffer_layer is None or buffer_layer.empty:
+            return None, None
+        lon_col = "centre_lon" if "centre_lon" in buffer_layer.columns else "center_lon" if "center_lon" in buffer_layer.columns else None
+        lat_col = "centre_lat" if "centre_lat" in buffer_layer.columns else "center_lat" if "center_lat" in buffer_layer.columns else None
+        if lon_col is None or lat_col is None or "buffer_m" not in buffer_layer.columns:
+            return None, None
+        row = buffer_layer.iloc[0]
+        try:
+            lon = float(row[lon_col])
+            lat = float(row[lat_col])
+            radius_m = float(row["buffer_m"])
+        except Exception:
+            return None, None
+        if pd.isna(lon) or pd.isna(lat) or pd.isna(radius_m):
+            return None, None
+
+        center = gpd.GeoDataFrame(
+            [{"geometry": Point(lon, lat)}],
+            geometry="geometry",
+            crs=4326,
+        )
+        try:
+            local = center.to_crs(3857)
+            circle_geom = gpd.GeoSeries(local.geometry.buffer(radius_m), crs=3857).to_crs(4326).iloc[0]
+            circle = gpd.GeoDataFrame([{"geometry": circle_geom}], geometry="geometry", crs=4326)
+            return circle, center
+        except Exception:
+            return None, center
+
     def _legend_bottom(ax, handles: list) -> None:
         if not handles:
             return
@@ -1219,8 +1249,9 @@ def _save_collection_previews(
         return name
 
     saved: list[Path] = []
-    buffer_gdf = _read(buffer_path)
-    buffer_gdf = _visual_only_shrink_buffer(buffer_gdf, shrink_m=5.0)
+    buffer_gdf_full = _read(buffer_path)
+    buffer_circle_gdf, center_point_gdf = _build_buffer_circle_and_center(buffer_gdf_full)
+    buffer_gdf = _visual_only_shrink_buffer(buffer_gdf_full, shrink_m=5.0)
     water_gdf = _read(Path(raw_files["water"]))
     roads_gdf = _read(Path(raw_files["roads"]))
     railways_gdf = _read(Path(raw_files["railways"]))
@@ -1263,12 +1294,17 @@ def _save_collection_previews(
     intermodal_manifest = _try_load_json(intermodal_manifest_path) if intermodal_manifest_path else None
     if isinstance(intermodal_manifest, dict):
         intermodal_files = intermodal_manifest.get("files") or {}
+        intermodal_boundary = _read(Path(intermodal_files["boundary"])) if intermodal_files.get("boundary") else None
         intermodal_nodes = _read(Path(intermodal_files["graph_nodes"])) if intermodal_files.get("graph_nodes") else None
         intermodal_edges = _read(Path(intermodal_files["graph_edges"])) if intermodal_files.get("graph_edges") else None
         if (intermodal_nodes is not None and not intermodal_nodes.empty) or (intermodal_edges is not None and not intermodal_edges.empty):
             edges_plot = intermodal_edges.copy() if intermodal_edges is not None and not intermodal_edges.empty else None
             nodes_plot = intermodal_nodes.copy() if intermodal_nodes is not None and not intermodal_nodes.empty else None
-            buffer_plot = buffer_gdf
+            territory_plot = intermodal_boundary.copy() if intermodal_boundary is not None and not intermodal_boundary.empty else None
+            if territory_plot is None:
+                territory_plot = buffer_gdf_full.copy() if buffer_gdf_full is not None and not buffer_gdf_full.empty else None
+            circle_plot = buffer_circle_gdf.copy() if buffer_circle_gdf is not None and not buffer_circle_gdf.empty else None
+            center_plot = center_point_gdf.copy() if center_point_gdf is not None and not center_point_gdf.empty else None
 
             if edges_plot is not None and edges_plot.crs is not None:
                 try:
@@ -1280,14 +1316,27 @@ def _save_collection_previews(
                     nodes_plot = nodes_plot.to_crs("EPSG:3857")
                 except Exception:
                     pass
-            if buffer_plot is not None and not buffer_plot.empty and buffer_plot.crs is not None:
+            if territory_plot is not None and not territory_plot.empty and territory_plot.crs is not None:
                 try:
-                    buffer_plot = buffer_plot.to_crs("EPSG:3857")
+                    territory_plot = territory_plot.to_crs("EPSG:3857")
+                except Exception:
+                    pass
+            if circle_plot is not None and not circle_plot.empty and circle_plot.crs is not None:
+                try:
+                    circle_plot = circle_plot.to_crs("EPSG:3857")
+                except Exception:
+                    pass
+            if center_plot is not None and not center_plot.empty and center_plot.crs is not None:
+                try:
+                    center_plot = center_plot.to_crs("EPSG:3857")
                 except Exception:
                     pass
 
             fig, ax = plt.subplots(figsize=(12, 12))
             legend_handles = []
+            footer_lines: list[str] = []
+
+            territory_union = territory_plot.union_all() if territory_plot is not None and not territory_plot.empty else None
 
             if edges_plot is not None and not edges_plot.empty:
                 mode_col = next((c for c in ("type", "transport_type", "mode", "route_type") if c in edges_plot.columns), None)
@@ -1309,22 +1358,128 @@ def _save_collection_previews(
                     if not other.empty:
                         other.plot(ax=ax, color="#9ca3af", linewidth=0.5, alpha=0.5)
                         legend_handles.append(Line2D([0], [0], color="#9ca3af", linewidth=2, label="other"))
+                if territory_union is not None:
+                    try:
+                        outside_edges = int((~edges_plot.geometry.intersects(territory_union)).sum())
+                        footer_lines.append(f"edges outside territory: {outside_edges}")
+                    except Exception:
+                        pass
 
             if nodes_plot is not None and not nodes_plot.empty:
                 nodes_plot.plot(ax=ax, color="#111827", markersize=5, alpha=0.7)
                 legend_handles.append(Line2D([0], [0], marker="o", color="none", markerfacecolor="#111827", markersize=6, label="nodes"))
+                if territory_union is not None:
+                    try:
+                        outside_nodes = int((~nodes_plot.geometry.within(territory_union)).sum())
+                        footer_lines.append(f"nodes outside territory: {outside_nodes}")
+                    except Exception:
+                        pass
 
-            if buffer_plot is not None and not buffer_plot.empty:
-                buffer_plot.plot(ax=ax, facecolor="none", edgecolor="#111111", linewidth=1.1)
-                legend_handles.append(Line2D([0], [0], color="#111111", linewidth=2, label="analysis buffer"))
+            if territory_plot is not None and not territory_plot.empty:
+                territory_plot.plot(ax=ax, facecolor="none", edgecolor="#111111", linewidth=1.5)
+                legend_handles.append(Line2D([0], [0], color="#111111", linewidth=2.2, label="analysis territory boundary"))
+            if circle_plot is not None and not circle_plot.empty:
+                circle_plot.plot(ax=ax, facecolor="none", edgecolor="#dc2626", linewidth=1.3, linestyle="--")
+                legend_handles.append(Line2D([0], [0], color="#dc2626", linestyle="--", linewidth=2, label="buffer circle"))
+            if center_plot is not None and not center_plot.empty:
+                center_plot.plot(ax=ax, color="#dc2626", markersize=28, marker="*")
+                legend_handles.append(Line2D([0], [0], marker="*", color="none", markerfacecolor="#dc2626", markersize=10, label="buffer center"))
 
             _legend_bottom(ax, legend_handles)
             ax.set_title("Intermodal Transport Graph (all PT modes)", fontsize=12)
             ax.set_axis_off()
+            _footer_text(fig, footer_lines)
             intermodal_png = all_together_dir / _next_name("intermodal_graph_modes")
             fig.savefig(intermodal_png, dpi=180, bbox_inches="tight")
             plt.close(fig)
             saved.append(intermodal_png)
+
+    # Pipeline_2 raw services preview (single combined map).
+    services_raw_dir = data_root / "pipeline_2" / "services_raw"
+    if services_raw_dir.exists():
+        service_order = ["health", "post", "culture", "port", "airport", "marina"]
+        service_colors = {
+            "health": "#dc2626",
+            "post": "#2563eb",
+            "culture": "#7c3aed",
+            "port": "#0f766e",
+            "airport": "#d97706",
+            "marina": "#0891b2",
+        }
+        service_layers: list[tuple[str, gpd.GeoDataFrame, str]] = []
+        for service_name in service_order:
+            service_path = services_raw_dir / f"{service_name}.parquet"
+            service_gdf = _read(service_path)
+            if service_gdf is None or service_gdf.empty:
+                continue
+            service_plot = service_gdf.copy()
+            # Render services as points for a unified, readable map.
+            non_point_mask = ~service_plot.geometry.geom_type.isin(["Point", "MultiPoint"])
+            if non_point_mask.any():
+                service_plot.loc[non_point_mask, "geometry"] = service_plot.loc[non_point_mask, "geometry"].representative_point()
+            if service_plot.crs is not None:
+                try:
+                    service_plot = service_plot.to_crs("EPSG:3857")
+                except Exception:
+                    pass
+            service_layers.append((service_name, service_plot, service_colors.get(service_name, "#334155")))
+
+        if service_layers:
+            fig, ax = plt.subplots(figsize=(12, 12))
+            legend_handles = []
+
+            roads_plot = roads_gdf
+            if roads_plot is not None and not roads_plot.empty and roads_plot.crs is not None:
+                try:
+                    roads_plot = roads_plot.to_crs("EPSG:3857")
+                except Exception:
+                    pass
+            if roads_plot is not None and not roads_plot.empty:
+                roads_plot.plot(ax=ax, color="#d1d5db", linewidth=0.35, alpha=0.6)
+                legend_handles.append(Line2D([0], [0], color="#9ca3af", linewidth=2, label="roads"))
+
+            for service_name, service_plot, color in service_layers:
+                service_plot.plot(ax=ax, color=color, markersize=10, alpha=0.9)
+                legend_handles.append(
+                    Line2D([0], [0], marker="o", color="none", markerfacecolor=color, markersize=7, label=service_name)
+                )
+
+            territory_for_services = buffer_gdf_full
+            if territory_for_services is not None and not territory_for_services.empty and territory_for_services.crs is not None:
+                try:
+                    territory_for_services = territory_for_services.to_crs("EPSG:3857")
+                except Exception:
+                    pass
+            circle_for_services = buffer_circle_gdf
+            if circle_for_services is not None and not circle_for_services.empty and circle_for_services.crs is not None:
+                try:
+                    circle_for_services = circle_for_services.to_crs("EPSG:3857")
+                except Exception:
+                    pass
+            center_for_services = center_point_gdf
+            if center_for_services is not None and not center_for_services.empty and center_for_services.crs is not None:
+                try:
+                    center_for_services = center_for_services.to_crs("EPSG:3857")
+                except Exception:
+                    pass
+
+            if territory_for_services is not None and not territory_for_services.empty:
+                territory_for_services.plot(ax=ax, facecolor="none", edgecolor="#111111", linewidth=1.4)
+                legend_handles.append(Line2D([0], [0], color="#111111", linewidth=2, label="analysis territory boundary"))
+            if circle_for_services is not None and not circle_for_services.empty:
+                circle_for_services.plot(ax=ax, facecolor="none", edgecolor="#dc2626", linewidth=1.2, linestyle="--")
+                legend_handles.append(Line2D([0], [0], color="#dc2626", linestyle="--", linewidth=2, label="buffer circle"))
+            if center_for_services is not None and not center_for_services.empty:
+                center_for_services.plot(ax=ax, color="#dc2626", markersize=28, marker="*")
+                legend_handles.append(Line2D([0], [0], marker="*", color="none", markerfacecolor="#dc2626", markersize=10, label="buffer center"))
+
+            _legend_bottom(ax, legend_handles)
+            ax.set_title("Pipeline_2 Raw Services (all categories)", fontsize=12)
+            ax.set_axis_off()
+            services_png = all_together_dir / _next_name("pipeline2_services_raw_all")
+            fig.savefig(services_png, dpi=180, bbox_inches="tight")
+            plt.close(fig)
+            saved.append(services_png)
 
     if street_grid_gdf is not None and not street_grid_gdf.empty:
         street_plot = street_grid_gdf.copy()
