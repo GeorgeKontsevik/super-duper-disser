@@ -204,6 +204,87 @@ def _save_previews(
     return outputs
 
 
+def _build_quarter_enriched_layer(city_dir: Path, transferred):
+    units_path = city_dir / "pipeline_2" / "prepared" / "units_union.parquet"
+    matrix_path = city_dir / "pipeline_2" / "prepared" / "adj_matrix_time_min_union.parquet"
+    solver_root = city_dir / "pipeline_2" / "solver_inputs"
+
+    enriched = transferred.copy()
+    if units_path.exists():
+        units = read_geodata(units_path)
+        unit_columns = [
+            column
+            for column in (
+                "population",
+                "residential",
+                "living_area",
+                "living_area_proxy",
+                "has_living_buildings",
+                "capacity_health",
+                "capacity_post",
+                "capacity_culture",
+                "capacity_port",
+                "capacity_airport",
+                "capacity_marina",
+                "demand_base",
+            )
+            if column in units.columns
+        ]
+        if unit_columns:
+            enriched = enriched.join(units[unit_columns], how="left", rsuffix="_units")
+
+    if matrix_path.exists():
+        matrix_union = pd.read_parquet(matrix_path)
+        matrix_numeric = matrix_union.apply(pd.to_numeric, errors="coerce").astype(np.float32, copy=False)
+        matrix_numeric = matrix_numeric.where(np.isfinite(matrix_numeric), np.nan)
+        accessibility_mean = matrix_numeric.mean(axis=1, skipna=True)
+        enriched["accessibility_time_mean_pt"] = accessibility_mean.reindex(enriched.index).astype(float)
+
+    service_outputs: dict[str, list[str]] = {}
+    if solver_root.exists():
+        for blocks_path in sorted(solver_root.glob("*/blocks_solver.parquet")):
+            service = blocks_path.parent.name
+            solver_blocks = pd.read_parquet(blocks_path)
+            service_columns = [
+                column
+                for column in (
+                    "capacity",
+                    "demand",
+                    "demand_within",
+                    "demand_without",
+                    "capacity_left",
+                    "provision",
+                    "provision_strong",
+                    "provision_weak",
+                )
+                if column in solver_blocks.columns
+            ]
+            if not service_columns:
+                continue
+            renamed = solver_blocks[service_columns].rename(
+                columns={column: f"{service}_{column}" for column in service_columns}
+            )
+            enriched = enriched.join(renamed, how="left")
+            service_outputs[service] = list(renamed.columns)
+    if "has_living_buildings" in enriched.columns:
+        enriched["has_living_buildings"] = (
+            enriched["has_living_buildings"].astype("boolean").fillna(False).astype(bool)
+        )
+    zero_fill_prefixes = (
+        "capacity_",
+        "airport_",
+        "culture_",
+        "health_",
+        "marina_",
+        "port_",
+        "post_",
+    )
+    for column in enriched.columns:
+        if column == "population" or column.startswith(zero_fill_prefixes):
+            enriched[column] = pd.to_numeric(enriched[column], errors="coerce").fillna(0.0)
+    return enriched, service_outputs
+
+
 def main() -> None:
     args = parse_args()
     city_dir = Path(args.joint_input_dir).resolve()
@@ -212,6 +293,7 @@ def main() -> None:
     preview_dir = city_dir / "preview_png" / "all_together"
     manifest_path = output_dir / "manifest_street_pattern_to_quarters.json"
     transferred_path = prepared_dir / "quarters_with_street_pattern_probs.parquet"
+    enriched_path = prepared_dir / "quarters_enriched_pipeline3.parquet"
     crosswalk_path = prepared_dir / "crosswalk_street_grid_to_quarters.parquet"
     dominant_path = preview_dir / "20_quarters_street_pattern_dominant_class.png"
     mass_path = preview_dir / "21_quarters_street_pattern_covered_mass.png"
@@ -225,6 +307,7 @@ def main() -> None:
 
     if (
         transferred_path.exists()
+        and enriched_path.exists()
         and manifest_path.exists()
         and dominant_path.exists()
         and mass_path.exists()
@@ -282,6 +365,9 @@ def main() -> None:
 
     prepare_geodata_for_parquet(transferred).to_parquet(transferred_path)
     row_sum = transferred[prob_columns].sum(axis=1)
+    _log("Joining pipeline_2 quarter-level indicators into one enriched quarter layer...")
+    enriched, service_output_columns = _build_quarter_enriched_layer(city_dir, transferred)
+    prepare_geodata_for_parquet(enriched).to_parquet(enriched_path)
     _log("Generating preview PNGs for quarter-level street-pattern mix...")
     preview_outputs = _save_previews(transferred, prob_columns, preview_dir, use_cache=(not args.no_cache))
     manifest = {
@@ -291,7 +377,9 @@ def main() -> None:
         "quarters": str(quarters_path),
         "crosswalk": str(crosswalk_path),
         "output": str(transferred_path),
+        "quarters_enriched": str(enriched_path),
         "probability_columns": prob_columns,
+        "pipeline_2_service_columns": service_output_columns,
         "previews": preview_outputs,
         "crosswalk_intersections": int(len(crosswalk)),
         "street_cells": int(len(street)),
