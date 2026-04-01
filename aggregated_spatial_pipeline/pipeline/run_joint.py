@@ -167,8 +167,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output-dir",
-        required=True,
-        help="Directory where joint outputs will be written.",
+        default=None,
+        help=(
+            "Directory where joint outputs will be written. "
+            "Default: aggregated_spatial_pipeline/outputs/joint/<place_slug>."
+        ),
     )
     args = parser.parse_args()
     _validate_args(args)
@@ -323,6 +326,19 @@ def _validate_layer_input_path(path: Path, layer_id: str) -> None:
 def _slugify(value: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9]+", "_", value.strip().lower()).strip("_")
     return slug or "city"
+
+
+def _resolve_joint_output_dir(args: argparse.Namespace) -> Path:
+    if args.output_dir:
+        return Path(args.output_dir).resolve()
+    repo_root = Path(__file__).resolve().parents[2]
+    if args.place:
+        slug = _slugify(str(args.place))
+    elif args.center_node_id is not None:
+        slug = f"osm_node_{int(args.center_node_id)}"
+    else:
+        raise ValueError("Provide --output-dir explicitly when running run_joint without --place/--center-node-id.")
+    return (repo_root / "aggregated_spatial_pipeline" / "outputs" / "joint" / slug).resolve()
 
 
 def _collect_required_scenarios(spec: PipelineSpec, scenario_id: str) -> list[str]:
@@ -2274,7 +2290,7 @@ def main() -> None:
     _configure_logging()
     args = parse_args()
     _configure_osm_requests(args.osm_timeout_s, debug=args.osmnx_debug, overpass_url=args.overpass_url)
-    output_dir = Path(args.output_dir).resolve()
+    output_dir = _resolve_joint_output_dir(args)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     _log("Starting joint pipeline.")
