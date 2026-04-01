@@ -61,8 +61,21 @@ def _get_osm_graph(boundary_wgs84, simplify: bool = True, buffer_m: float = OSM_
 
 
 def _get_drive_graph(boundary_wgs84):
+    import inspect
     from iduedu import get_drive_graph
-    return get_drive_graph(territory=boundary_wgs84)
+
+    # iduedu API differs by version; keep a strict, signature-based call.
+    params = inspect.signature(get_drive_graph).parameters
+    if "polygon" in params:
+        return get_drive_graph(polygon=boundary_wgs84)
+    if "territory" in params:
+        return get_drive_graph(territory=boundary_wgs84)
+    if "territory_name" in params:
+        raise TypeError(
+            "iduedu.get_drive_graph in current runtime accepts territory_name/osm_id, "
+            "but run_base_osm provides geometry. Update iduedu or pass a compatible runtime."
+        )
+    return get_drive_graph(boundary_wgs84)
 
 
 def run(
