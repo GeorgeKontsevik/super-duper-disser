@@ -348,6 +348,9 @@ def main() -> None:
     _log(f"Quarters features: {len(quarters)}")
     _log(f"Intermodal graph: nodes={graph.number_of_nodes()}, edges={graph.number_of_edges()}")
 
+    _log("STEP data_collection: downloading/caching raw OSM service layers inside analysis territory.")
+    _log("STEP capacity_aggregation: converting raw service objects to per-quarter capacities.")
+
     # 1) Download/cache raw service layers and aggregate capacities to quarters.
     capacity_columns: dict[str, pd.Series] = {}
     raw_stats: dict[str, dict] = {}
@@ -381,6 +384,8 @@ def main() -> None:
             "capacity_total": float(aggregated.sum()),
             "raw_path": str(raw_path),
         }
+
+    _log("STEP matrix_build: preparing unified spatial units for accessibility matrix.")
 
     # 2) Build a unified spatial-units layer for matrix + solver prep.
     if population_col is None:
@@ -425,6 +430,8 @@ def main() -> None:
             f"Saved accessibility matrix: {matrix_path} "
             f"({matrix_union.shape[0]}x{matrix_union.shape[1]}), elapsed={elapsed:.1f}s"
         )
+
+    _log("STEP solver_prep: building per-service solver-ready blocks and links.")
 
     # 4) Per-service solver-ready tables (demand_within/demand_without/capacity_left/provision).
     service_outputs: dict[str, dict] = {}
