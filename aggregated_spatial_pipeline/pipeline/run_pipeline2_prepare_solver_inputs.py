@@ -443,11 +443,11 @@ def _plot_accessibility_previews(
             res_plot.plot(
                 ax=ax,
                 column="access_time_mean_min",
-                cmap="viridis",
+                cmap="RdYlGn_r",
                 linewidth=0.05,
                 edgecolor="#d1d5db",
                 legend=True,
-                legend_kwds={"label": "mean travel time (min), residential quarters only"},
+                legend_kwds={"label": "mean travel time (min), higher = worse"},
                 missing_kwds={"color": "#9ca3af", "label": "residential with no path"},
             )
         ax.set_title("Accessibility: mean travel time (residential quarters only)", fontsize=12)
