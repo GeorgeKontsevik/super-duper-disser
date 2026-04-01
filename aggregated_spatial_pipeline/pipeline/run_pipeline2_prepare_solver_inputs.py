@@ -5,6 +5,7 @@ import json
 import math
 import os
 import re
+import threading
 import time
 from pathlib import Path
 from typing import Iterable
@@ -304,6 +305,30 @@ def _calc_demand(population: pd.Series, demand_per_1000: float) -> pd.Series:
     return scaled.astype(int)
 
 
+def _run_with_heartbeat(label: str, func, interval_s: float = 20.0):
+    done = threading.Event()
+    box: dict[str, object] = {}
+
+    def _worker() -> None:
+        try:
+            box["result"] = func()
+        except Exception as exc:  # noqa: BLE001
+            box["error"] = exc
+        finally:
+            done.set()
+
+    thread = threading.Thread(target=_worker, daemon=True)
+    thread.start()
+    started = time.time()
+    pulse = 0
+    while not done.wait(float(interval_s)):
+        pulse += 1
+        _log(f"{label}: still running... elapsed={time.time() - started:.1f}s, pulse={pulse}")
+    if "error" in box:
+        raise box["error"]  # type: ignore[misc]
+    return box.get("result")
+
+
 def _ensure_services_valid(services: Iterable[str]) -> list[str]:
     normalized = [str(s).strip().lower() for s in services]
     unknown = [s for s in normalized if s not in SUPPORTED_SERVICES]
@@ -423,7 +448,11 @@ def main() -> None:
             f"for n_units={n_units} (~{approx_pairs:,} pair entries). This can take time."
         )
         started = time.time()
-        matrix_union = calculate_accessibility_matrix(units[["geometry"]].copy(), graph, weight_key="time_min")
+        matrix_union = _run_with_heartbeat(
+            "Matrix build",
+            lambda: calculate_accessibility_matrix(units[["geometry"]].copy(), graph, weight_key="time_min"),
+            interval_s=20.0,
+        )
         _save_dataframe(matrix_union, matrix_path)
         elapsed = time.time() - started
         _log(
