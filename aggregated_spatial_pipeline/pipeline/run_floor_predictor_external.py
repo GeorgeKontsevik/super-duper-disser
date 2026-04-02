@@ -2,9 +2,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
-from aggregated_spatial_pipeline.pipeline.run_joint import _run_floor_predictor_preprocessing
+from loguru import logger
+
+
+LOG_FORMAT = (
+    "<green>{time:DD MMM HH:mm}</green> | "
+    "<level>{level: <7}</level> | "
+    "<magenta>{extra[tag]}</magenta> "
+    "{message}"
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -18,8 +27,31 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _configure_logging() -> None:
+    logger.remove()
+    logger.configure(extra={"tag": "[floor-predictor]"})
+    logger.add(
+        sys.stderr,
+        level="INFO",
+        format=LOG_FORMAT,
+        colorize=sys.stderr.isatty(),
+    )
+
+
 def main() -> None:
+    _configure_logging()
     args = parse_args()
+    logger.info(
+        "Starting dedicated floor preprocessing: buildings={}, land_use={}, output={}",
+        Path(args.buildings_path).name,
+        Path(args.land_use_path).name,
+        Path(args.output_path).name,
+    )
+    from aggregated_spatial_pipeline.pipeline.run_joint import _run_floor_predictor_preprocessing
+
+    # Some imported modules reconfigure loguru on import; enforce compact format again.
+    _configure_logging()
+
     metrics = _run_floor_predictor_preprocessing(
         repo_root=Path(args.repo_root).resolve(),
         buildings_path=Path(args.buildings_path).resolve(),

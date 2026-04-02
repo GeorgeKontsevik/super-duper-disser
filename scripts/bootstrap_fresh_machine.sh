@@ -220,6 +220,8 @@ uv pip install --python .venv/bin/python \
 echo "Creating dedicated blocksnet environment..."
 create_repo_venv "$ROOT/blocksnet"
 uv pip install --python "$ROOT/blocksnet/.venv/bin/python" -e "$ROOT/blocksnet"
+uv pip install --python "$ROOT/blocksnet/.venv/bin/python" \
+  torch torchvision torch-geometric pandas scipy shapely pyarrow loguru networkx geopandas
 
 echo "Creating dedicated connectpt environment..."
 create_repo_venv "$ROOT/connectpt"

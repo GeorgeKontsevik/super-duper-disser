@@ -961,6 +961,7 @@ def _run_floor_predictor_preprocessing(
     floor_ignore_missing_below_pct: float = 2.0,
 ) -> dict:
     started_total = time.time()
+    _log("Floor step: initializing dedicated floor-predictor runtime...")
     floor_repo = repo_root / "floor-predictor"
     floor_pkg = floor_repo / "floor_predictior"
     if not floor_pkg.exists():
@@ -974,6 +975,7 @@ def _run_floor_predictor_preprocessing(
         SpatialNeighborhoodAnalyzer,
         StoreyModelTrainer,
     )
+    _log("Floor step: floor-predictor modules imported.")
 
     _log(f"Floor step: reading buildings layer: {_log_name(buildings_path)}")
     t0 = time.time()
@@ -1087,20 +1089,25 @@ def _run_floor_predictor_preprocessing(
             model = StoreyModelTrainer.load_model(str(model_path))
             storey_model_info = getattr(model, "info", None)
             _log("Floor step: computing geometry features for storey model...")
+            t0 = time.time()
             features_df = GeometryFeatureGenerator(gdf.copy()).compute_geometry_features()
+            _log(f"Floor step: geometry features ready in {time.time() - t0:.1f}s")
             analyzer = SpatialNeighborhoodAnalyzer(features_df, radius=500)
             _log("Floor step: computing neighborhood metrics (this can be slow on large areas)...")
+            t0 = time.time()
             features_df, _ = analyzer.compute_neighborhood_metrics(plot=False, show_progress=True)
+            _log(f"Floor step: neighborhood metrics ready in {time.time() - t0:.1f}s")
 
             if target_missing_count > 0:
                 _log(f"Floor step: predicting missing storey for {target_missing_count} buildings...")
+                t0 = time.time()
                 pred_values = model.predict(features_df.loc[target_mask].copy())
                 pred_series = pd.Series(pred_values, index=gdf.index[target_mask], dtype="float64")
                 pred_series = pred_series.round().clip(lower=1)
                 gdf.loc[target_mask, "storey"] = pred_series
                 gdf.loc[target_mask, "storey_source"] = "model_predicted"
                 predicted_storey_count = target_missing_count
-                _log("Floor step: storey prediction complete.")
+                _log(f"Floor step: storey prediction complete in {time.time() - t0:.1f}s")
     else:
         _warn(f"Floor step: storey model not found, skipping prediction: {_log_name(model_path)}")
 
