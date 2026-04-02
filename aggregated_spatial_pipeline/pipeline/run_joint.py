@@ -1339,6 +1339,13 @@ def _save_collection_previews(
         return name
 
     saved: list[Path] = []
+
+    def _remember_preview(path: Path | None, label: str) -> None:
+        if path is None:
+            return
+        saved.append(path)
+        _log(f"Preview step: saved {label}: {path.name}")
+
     buffer_gdf_full = _read(buffer_path)
     buffer_circle_gdf, center_point_gdf = _build_buffer_circle_and_center(buffer_gdf_full)
     buffer_gdf = _visual_only_shrink_buffer(buffer_gdf_full, shrink_m=5.0)
@@ -1360,8 +1367,7 @@ def _save_collection_previews(
         ],
         title="Raw OSM Layers",
     )
-    if raw_png is not None:
-        saved.append(raw_png)
+    _remember_preview(raw_png, "raw OSM composite")
 
     blocks_manifest = _try_load_json(blocks_manifest_path) or {}
     blocks_files = blocks_manifest.get("files", {})
@@ -1378,8 +1384,7 @@ def _save_collection_previews(
         ],
         title="Prepared Quarters + Street Grid",
     )
-    if prep_png is not None:
-        saved.append(prep_png)
+    _remember_preview(prep_png, "prepared quarters + street grid")
 
     intermodal_manifest = _try_load_json(intermodal_manifest_path) if intermodal_manifest_path else None
     if isinstance(intermodal_manifest, dict):
@@ -1482,7 +1487,7 @@ def _save_collection_previews(
             intermodal_png = all_together_dir / _next_name("intermodal_graph_modes")
             fig.savefig(intermodal_png, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
             plt.close(fig)
-            saved.append(intermodal_png)
+            _remember_preview(intermodal_png, "intermodal graph modes")
 
     # Pipeline_2 raw services preview (single combined map).
     services_raw_dir = data_root / "pipeline_2" / "services_raw"
@@ -1569,7 +1574,7 @@ def _save_collection_previews(
             services_png = all_together_dir / _next_name("pipeline2_services_raw_all")
             fig.savefig(services_png, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
             plt.close(fig)
-            saved.append(services_png)
+            _remember_preview(services_png, "pipeline_2 raw services")
 
     if street_grid_gdf is not None and not street_grid_gdf.empty:
         street_plot = street_grid_gdf.copy()
@@ -1616,7 +1621,7 @@ def _save_collection_previews(
             street_top1_png = all_together_dir / _next_name("street_pattern_top1")
             fig.savefig(street_top1_png, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
             plt.close(fig)
-            saved.append(street_top1_png)
+            _remember_preview(street_top1_png, "street-pattern top1")
 
         if "multivariate_color" in street_plot.columns:
             fig, ax = plt.subplots(figsize=(12, 12))
@@ -1642,7 +1647,7 @@ def _save_collection_previews(
             street_multi_png = all_together_dir / _next_name("street_pattern_multivariate")
             fig.savefig(street_multi_png, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
             plt.close(fig)
-            saved.append(street_multi_png)
+            _remember_preview(street_multi_png, "street-pattern multivariate")
 
     connectpt_manifest = _try_load_json(connectpt_manifest_path) or {}
     for modality in connectpt_manifest.get("modalities", []):
@@ -1703,7 +1708,7 @@ def _save_collection_previews(
             modality_png = all_together_dir / _next_name(f"connectpt_{modality_name}")
             fig.savefig(modality_png, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
             plt.close(fig)
-            saved.append(modality_png)
+            _remember_preview(modality_png, f"connectpt {modality_name}")
 
         graph_nodes = _read(Path(files["graph_nodes"])) if files.get("graph_nodes") else None
         graph_edges = _read(Path(files["graph_edges"])) if files.get("graph_edges") else None
@@ -1718,8 +1723,7 @@ def _save_collection_previews(
             ],
             title=f"ConnectPT Graph {modality_name}",
         )
-        if graph_png is not None:
-            saved.append(graph_png)
+        _remember_preview(graph_png, f"connectpt graph {modality_name}")
 
     for item in [
         _single_layer("raw_water", water_gdf, color="#0284c7", linewidth=0.5, alpha=0.8, title="Raw Water"),
@@ -1730,8 +1734,7 @@ def _save_collection_previews(
         _single_layer("blocksnet_blocks", blocks_gdf, color="#334155", linewidth=0.2, alpha=0.75, title="BlocksNet Blocks"),
         _single_layer("quarters_clipped", quarters_gdf, color="#2563eb", linewidth=0.15, alpha=0.45, title="Quarters Clipped To Analysis Buffer"),
     ]:
-        if item is not None:
-            saved.append(item)
+        _remember_preview(item, item.stem if item is not None else "")
 
     # Land-use categorical legend preview.
     if land_use_gdf is not None and not land_use_gdf.empty:
@@ -1779,7 +1782,7 @@ def _save_collection_previews(
             landuse_png = all_together_dir / _next_name("raw_land_use_categorical")
             fig.savefig(landuse_png, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
             plt.close(fig)
-            saved.append(landuse_png)
+            _remember_preview(landuse_png, "raw land-use categorical")
 
     floor_enriched_gdf = _read(floor_enriched_path)
     storey_model_footer_lines: list[str] = []
@@ -1817,8 +1820,7 @@ def _save_collection_previews(
                         (floor_base[floor_base["is_living"].isna()], "#6b7280", "missing"),
                     ],
                 )
-                if living_distribution_png is not None:
-                    saved.append(living_distribution_png)
+                _remember_preview(living_distribution_png, "buildings is_living distribution")
 
             if "is_living_source" in floor_base.columns:
                 living_status_png = _plot_status(
@@ -1831,8 +1833,7 @@ def _save_collection_previews(
                         (floor_base[floor_base["is_living"].isna()], "#dc2626", "missing"),
                     ],
                 )
-                if living_status_png is not None:
-                    saved.append(living_status_png)
+                _remember_preview(living_status_png, "buildings is_living status")
 
             floor_base["storey"] = pd.to_numeric(floor_base.get("storey"), errors="coerce")
             known_storey = floor_base[floor_base["storey"].notna()]
@@ -1873,7 +1874,7 @@ def _save_collection_previews(
                 storey_png_all = all_together_dir / _next_name("buildings_storey_quantiles_all")
                 fig.savefig(storey_png_all, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
                 plt.close(fig)
-                saved.append(storey_png_all)
+                _remember_preview(storey_png_all, "buildings storey quantiles all")
 
                 # Storey quantiles only for model-predicted buildings.
                 predicted_known = known_storey_plot[known_storey_plot["storey_source"] == "model_predicted"].copy()
@@ -1901,7 +1902,7 @@ def _save_collection_previews(
                     storey_png_restored = all_together_dir / _next_name("buildings_storey_quantiles_model_predicted")
                     fig.savefig(storey_png_restored, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
                     plt.close(fig)
-                    saved.append(storey_png_restored)
+                    _remember_preview(storey_png_restored, "buildings storey quantiles model predicted")
 
             if "storey_source" in floor_base.columns:
                 known_non_living = floor_base["is_living"].notna() & (floor_base["is_living"] < 0.5)
@@ -1926,8 +1927,7 @@ def _save_collection_previews(
                     ],
                     footer_lines=storey_model_footer_lines,
                 )
-                if storey_status_png is not None:
-                    saved.append(storey_status_png)
+                _remember_preview(storey_status_png, "buildings storey restoration status")
         except Exception:
             pass
 

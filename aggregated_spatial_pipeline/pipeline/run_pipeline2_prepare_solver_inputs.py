@@ -474,6 +474,7 @@ def _plot_accessibility_previews(
     if legacy_matrix_png.exists():
         legacy_matrix_png.unlink(missing_ok=True)
     if use_cache and access_map_path.exists():
+        _log(f"Preview step: using cached accessibility map: {access_map_path.name}")
         out["accessibility_mean_time_map"] = str(access_map_path)
         return out
 
@@ -515,6 +516,7 @@ def _plot_accessibility_previews(
     units_plot["is_residential"] = residential_mask.reindex(units_plot.index).fillna(False).astype(bool)
     units_plot = units_plot[units_plot.geometry.notna() & ~units_plot.geometry.is_empty].copy()
     if not units_plot.empty:
+        _log("Preview step: rendering accessibility mean-time map...")
         if units_plot.crs is not None:
             try:
                 units_plot = units_plot.to_crs("EPSG:3857")
@@ -565,6 +567,7 @@ def _plot_accessibility_previews(
         fig.savefig(access_map_path, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
         plt.close(fig)
         out["accessibility_mean_time_map"] = str(access_map_path)
+        _log(f"Preview step: saved accessibility map: {access_map_path.name}")
 
     return out
 
@@ -603,6 +606,7 @@ def _plot_service_lp_preview(
 
     if solver_blocks is None or solver_blocks.empty:
         return None
+    _log(f"Preview step: rendering LP map for service [{service}]...")
 
     gdf = _coerce_solver_blocks_geodataframe(solver_blocks, quarters_ref=quarters_ref)
     if gdf is None:
@@ -706,6 +710,7 @@ def _plot_service_lp_preview(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
+    _log(f"Preview step: saved LP map for service [{service}]: {out_path.name}")
     return str(out_path)
 
 

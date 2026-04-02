@@ -135,6 +135,10 @@ def _save_previews(
     outputs: dict[str, str] = {}
 
     if use_cache and dominant_path.exists() and multivariate_path.exists():
+        _log(
+            "Preview step: using cached quarter-level street-pattern previews: "
+            f"{dominant_path.name}, {multivariate_path.name}"
+        )
         outputs["dominant_class_png"] = str(dominant_path)
         outputs["multivariate_png"] = str(multivariate_path)
         return outputs
@@ -203,6 +207,7 @@ def _save_previews(
         for r, g, b in rgb
     ]
 
+    _log("Preview step: rendering quarter-level street-pattern dominant-class map...")
     fig, ax = plt.subplots(figsize=(12, 12))
     fig.patch.set_facecolor("#6b6b6b")
     ax.set_facecolor("#6b6b6b")
@@ -239,7 +244,9 @@ def _save_previews(
     fig.savefig(dominant_path, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     outputs["dominant_class_png"] = str(dominant_path)
+    _log(f"Preview step: saved quarter-level street-pattern dominant-class map: {dominant_path.name}")
 
+    _log("Preview step: rendering quarter-level street-pattern multivariate map...")
     fig, ax = plt.subplots(figsize=(12, 12))
     fig.patch.set_facecolor("#6b6b6b")
     ax.set_facecolor("#6b6b6b")
@@ -278,6 +285,7 @@ def _save_previews(
     fig.savefig(multivariate_path, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     outputs["multivariate_png"] = str(multivariate_path)
+    _log(f"Preview step: saved quarter-level street-pattern multivariate map: {multivariate_path.name}")
     return outputs
 
 
