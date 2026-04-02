@@ -198,8 +198,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--analysis-margin-m",
         type=float,
-        default=0.0,
-        help="Deprecated: ignored. Kept for backward compatibility; clipping uses only --buffer-m.",
+        default=None,
+        help=(
+            "Outer collection margin in meters around the main --buffer-m circle. "
+            "Default: 20%% of --buffer-m. Final quarter/street-pattern clipping still uses --buffer-m."
+        ),
     )
     parser.add_argument(
         "--floor-min-buffer-m",
@@ -802,6 +805,12 @@ def _analysis_buffer_matches(path: Path, expected_buffer_m: float) -> bool:
         return abs(float(value.iloc[0]) - float(expected_buffer_m)) <= 1e-6
     except Exception:
         return False
+
+
+def _effective_analysis_margin_m(args: argparse.Namespace) -> float:
+    if args.analysis_margin_m is None:
+        return float(args.buffer_m) * 0.2
+    return max(0.0, float(args.analysis_margin_m))
 
 
 def _build_climate_grid(
@@ -2039,14 +2048,11 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
     _log(f"Auto-collection enabled for place: {place}")
     _log(f"Cache mode: {'disabled (--no-cache)' if args.no_cache else 'enabled'}")
     effective_buffer_m = float(args.buffer_m)
-    if float(args.analysis_margin_m) != 0.0:
-        _warn(
-            f"--analysis-margin-m={float(args.analysis_margin_m)} is ignored. "
-            "Pipeline now clips strictly by --buffer-m."
-        )
+    analysis_margin_m = _effective_analysis_margin_m(args)
+    collection_buffer_m = float(effective_buffer_m + analysis_margin_m)
     _log(
-        "Analysis territory policy: single clipping buffer for all stages "
-        f"(radius={effective_buffer_m}m from --buffer-m)."
+        "Analysis territory policy: main circle + outer collection margin "
+        f"(core={effective_buffer_m}m, margin={analysis_margin_m}m, collection={collection_buffer_m}m)."
     )
     if effective_buffer_m < float(args.floor_min_buffer_m):
         _warn(
@@ -2057,14 +2063,21 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
 
     analysis_dir = data_root / "analysis_territory"
     analysis_buffer_path = analysis_dir / "buffer.parquet"
+    collection_buffer_path = analysis_dir / "buffer_collection.parquet"
     buffer_matches = _analysis_buffer_matches(analysis_buffer_path, effective_buffer_m)
+    collection_buffer_matches = _analysis_buffer_matches(collection_buffer_path, collection_buffer_m)
     if (not args.no_cache) and analysis_buffer_path.exists() and (not buffer_matches):
         _warn(
             "Cached analysis buffer radius does not match current --buffer-m "
             f"(requested={effective_buffer_m}m). Rebuilding analysis buffer."
         )
+    if (not args.no_cache) and collection_buffer_path.exists() and (not collection_buffer_matches):
+        _warn(
+            "Cached outer collection buffer radius does not match current buffer+margin "
+            f"(requested={collection_buffer_m}m). Rebuilding collection buffer."
+        )
     if args.no_cache or not analysis_buffer_path.exists() or (not buffer_matches):
-        _log("OSM territory step: resolving city centre and building fixed analysis buffer.")
+        _log("OSM territory step: resolving city centre and building main analysis buffer.")
         started = time.time()
         _resolve_analysis_buffer_from_osm(
             place=args.place,
@@ -2076,10 +2089,37 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         downloaded_in_this_run = True
     else:
         _log(f"Using cached analysis buffer: {analysis_buffer_path.name}")
+    if args.no_cache or not collection_buffer_path.exists() or (not collection_buffer_matches):
+        _log("OSM territory step: building outer collection buffer with margin.")
+        started = time.time()
+        center_node_id = args.center_node_id
+        if center_node_id is None:
+            core_buffer_gdf = read_geodata(analysis_buffer_path)
+            if core_buffer_gdf.empty or "centre_node_id" not in core_buffer_gdf.columns:
+                raise RuntimeError(
+                    f"Cannot derive centre node id from main analysis buffer: {analysis_buffer_path}"
+                )
+            center_values = pd.to_numeric(core_buffer_gdf["centre_node_id"], errors="coerce").dropna()
+            if center_values.empty:
+                raise RuntimeError(
+                    f"Main analysis buffer does not contain a valid centre node id: {analysis_buffer_path}"
+                )
+            center_node_id = int(center_values.iloc[0])
+        _resolve_analysis_buffer_from_osm(
+            place=args.place,
+            buffer_m=collection_buffer_m,
+            output_path=collection_buffer_path,
+            center_node_id=center_node_id,
+        )
+        _log(f"Collection buffer built in {time.time() - started:.1f}s: {collection_buffer_path.name}")
+        downloaded_in_this_run = True
+    else:
+        _log(f"Using cached outer collection buffer: {collection_buffer_path.name}")
     buffer_path = analysis_buffer_path
+    collection_boundary_path = collection_buffer_path
     shared_roads_path = derived_dir / "roads_drive_osmnx.parquet"
     shared_roads_path, shared_roads_count, shared_roads_rebuilt = _ensure_shared_drive_roads(
-        buffer_path=buffer_path,
+        buffer_path=collection_boundary_path,
         output_path=shared_roads_path,
         no_cache=args.no_cache,
     )
@@ -2097,10 +2137,10 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         _log(
             "OSM download (raw): "
             "requesting urban objects (water/roads/railways/landuse/buildings) via Overpass "
-            f"directly inside the fixed {effective_buffer_m}m analysis buffer."
+            f"inside the outer {collection_buffer_m}m collection buffer."
         )
         started = time.time()
-        collect_blocksnet_raw_osm_bundle(place, output_dir=blocks_raw_dir, boundary_path=buffer_path)
+        collect_blocksnet_raw_osm_bundle(place, output_dir=blocks_raw_dir, boundary_path=collection_boundary_path)
         _log(f"Raw OSM bundle collected in {time.time() - started:.1f}s: {_log_name(blocks_raw_manifest_path)}")
         downloaded_in_this_run = True
     else:
@@ -2119,7 +2159,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         build_intermodal_graph_bundle(
             place=place,
             output_dir=intermodal_dir,
-            boundary_path=buffer_path,
+            boundary_path=collection_boundary_path,
             python_executable=args.intermodal_python,
             repo_root=repo_root,
         )
@@ -2155,7 +2195,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
                 "--speed-kmh",
                 str(float(args.speed_kmh)),
                 "--boundary-path",
-                str(buffer_path),
+                str(collection_boundary_path),
                 "--drive-roads-path",
                 str(shared_roads_path),
                 "--buildings-path",
@@ -2285,7 +2325,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
                 "--output-dir",
                 str(blocks_dir),
                 "--boundary-path",
-                str(buffer_path),
+                str(collection_boundary_path),
                 "--prefetched-layers-json",
                 json.dumps({k: str(v) for k, v in raw_files.items()}, ensure_ascii=False),
                 "--buildings-override-path",
@@ -2324,7 +2364,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         repo_root=repo_root,
         data_root=data_root,
         no_cache=args.no_cache,
-        buffer_m=effective_buffer_m,
+        buffer_m=collection_buffer_m,
         grid_step=float(args.street_grid_step),
         center_node_id=args.center_node_id,
         roads_path=shared_roads_path,
@@ -2369,12 +2409,14 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         "generated_by": "aggregated_spatial_pipeline.pipeline.run_joint",
         "buffer_m": args.buffer_m,
         "street_grid_step": args.street_grid_step,
-        "analysis_margin_m": 0.0,
+        "analysis_margin_m": analysis_margin_m,
         "effective_buffer_m": effective_buffer_m,
+        "collection_buffer_m": collection_buffer_m,
         "climate_grid_step_m": args.climate_grid_step_m,
         "files": {
             "quarters": str(buffered_quarters_path),
             "cities": str(buffer_path),
+            "cities_collection": str(collection_boundary_path),
             "blocks_processed": str(blocks_path),
             "city_boundary_raw": str(boundary_path),
             "buildings_raw": str(buildings_path),
@@ -2388,7 +2430,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             "connectpt_manifest": str(connectpt_manifest_path),
             "intermodal_graph_manifest": str(intermodal_manifest_path),
             "street_pattern_summary": str(street_summary_path),
-            "street_pattern_buffer": str(buffer_path),
+            "street_pattern_buffer": str(collection_boundary_path),
             "shared_drive_roads": str(shared_roads_path),
         },
         "floor_predictor": floor_metrics,
@@ -2444,7 +2486,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             "cached": (not args.no_cache and clipped_street_grid_path.exists()),
             "origin": (
                 "segregation-by-design-experiments predicted_cells.geojson "
-                f"clipped to {effective_buffer_m}m analysis buffer"
+                f"built on {collection_buffer_m}m collection buffer and clipped to {effective_buffer_m}m analysis buffer"
             ),
         },
         **(
@@ -2468,7 +2510,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             "slug": slug,
             "downloaded_in_this_run": downloaded_in_this_run,
             "cached": (not args.no_cache and buffer_path.exists()),
-            "origin": f"street-pattern buffer polygon ({effective_buffer_m}m)",
+            "origin": f"main analysis buffer polygon ({effective_buffer_m}m) with collection margin {analysis_margin_m}m",
         },
     }
     return PreparedInputs(
