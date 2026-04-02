@@ -2158,6 +2158,8 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
                 str(buffer_path),
                 "--drive-roads-path",
                 str(shared_roads_path),
+                "--buildings-path",
+                str(buildings_path),
                 "--intermodal-nodes-path",
                 str(intermodal_nodes_path),
             ],

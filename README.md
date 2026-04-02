@@ -17,7 +17,7 @@ What the script does:
 - creates root orchestration env: `.venv`
 - creates dedicated per-repo envs:
   - `blocksnet/.venv`
-  - `connectpt/.venv`
+  - `connectpt/.venv` with forked `iduedu` available for preprocessing imports
   - `floor-predictor/.venv`
   - `segregation-by-design-experiments/.venv`
   - `iduedu-fork/.venv` from forked `GeorgeKontsevik/IduEdu`

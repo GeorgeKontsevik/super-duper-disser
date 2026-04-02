@@ -248,6 +248,7 @@ def build_connectpt_osm_bundle(
     speed_kmh: float = DEFAULT_SPEED_KMH,
     boundary_path: str | Path | None = None,
     drive_roads_path: str | Path | None = None,
+    buildings_path: str | Path | None = None,
     intermodal_nodes_path: str | Path | None = None,
 ) -> dict:
     output_path = Path(output_dir)
@@ -277,6 +278,7 @@ def build_connectpt_osm_bundle(
     raw_stops_by_modality: dict[Modality, gpd.GeoDataFrame] = {}
     lines_by_modality: dict[Modality, gpd.GeoDataFrame] = {}
     preloaded_drive_lines: gpd.GeoDataFrame | None = None
+    preloaded_buildings: gpd.GeoDataFrame | None = None
     intermodal_nodes_file = Path(intermodal_nodes_path).resolve() if intermodal_nodes_path is not None else None
 
     if drive_roads_path is not None and Modality.BUS in modalities:
@@ -313,6 +315,33 @@ def build_connectpt_osm_bundle(
                 exc,
             )
             preloaded_drive_lines = None
+
+    if buildings_path is not None and Modality.BUS in modalities:
+        try:
+            preloaded_buildings = read_geodata(Path(buildings_path))
+            if preloaded_buildings.empty:
+                logger.warning(
+                    "ConnectPT preloaded buildings are empty ({}); fallback to OSM building mask for bus line preprocessing.",
+                    buildings_path,
+                )
+                preloaded_buildings = None
+            else:
+                preloaded_buildings = preloaded_buildings[
+                    preloaded_buildings.geometry.notna() & ~preloaded_buildings.geometry.is_empty
+                ].copy()
+                logger.info(
+                    "ConnectPT will reuse preloaded buildings for bus line preprocessing: {} (features={})",
+                    buildings_path,
+                    len(preloaded_buildings),
+                )
+        except Exception as exc:
+            logger.warning(
+                "ConnectPT failed to read preloaded buildings ({}): {}. "
+                "Fallback to OSM building mask for bus line preprocessing.",
+                buildings_path,
+                exc,
+            )
+            preloaded_buildings = None
 
     for modality in modalities:
         if intermodal_nodes_file is not None and intermodal_nodes_file.exists():
@@ -353,6 +382,7 @@ def build_connectpt_osm_bundle(
                     boundary,
                     [modality],
                     preloaded_drive_lines=preloaded_drive_lines if modality == Modality.BUS else None,
+                    preloaded_buildings=preloaded_buildings if modality == Modality.BUS else None,
                 )
             )
         except Exception as exc:

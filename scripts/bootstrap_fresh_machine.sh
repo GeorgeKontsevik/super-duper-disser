@@ -224,6 +224,7 @@ uv pip install --python "$ROOT/blocksnet/.venv/bin/python" -e "$ROOT/blocksnet"
 echo "Creating dedicated connectpt environment..."
 create_repo_venv "$ROOT/connectpt"
 uv pip install --python "$ROOT/connectpt/.venv/bin/python" -e "$ROOT/connectpt"
+uv pip install --python "$ROOT/connectpt/.venv/bin/python" -e "$ROOT/iduedu-fork"
 uv pip install --python "$ROOT/connectpt/.venv/bin/python" \
   osmnx momepy neatnet pygeoops pandas scipy shapely networkx loguru pyarrow
 

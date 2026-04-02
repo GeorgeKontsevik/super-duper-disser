@@ -15,6 +15,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--speed-kmh", type=float, required=True)
     parser.add_argument("--boundary-path")
     parser.add_argument("--drive-roads-path")
+    parser.add_argument("--buildings-path")
     parser.add_argument("--intermodal-nodes-path")
     return parser.parse_args()
 
@@ -28,6 +29,7 @@ def main() -> None:
         speed_kmh=float(args.speed_kmh),
         boundary_path=args.boundary_path,
         drive_roads_path=args.drive_roads_path,
+        buildings_path=args.buildings_path,
         intermodal_nodes_path=args.intermodal_nodes_path,
     )
     print(json.dumps(manifest, ensure_ascii=False))
