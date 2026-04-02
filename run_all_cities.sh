@@ -23,6 +23,8 @@ while IFS= read -r PLACE || [[ -n "$PLACE" ]]; do
   [[ -z "$PLACE" ]] && continue
   [[ "$PLACE" =~ ^# ]] && continue
 
+  CITY_STARTED_AT=$(date +%s)
+
   echo
   echo "============================================================"
   echo "RUNNING: $PLACE"
@@ -55,6 +57,18 @@ while IFS= read -r PLACE || [[ -n "$PLACE" ]]; do
     echo "  note: if city centre node/place resolution failed, script just skips to the next city"
     FAILED+=("$PLACE :: pipeline_1")
   fi
+
+  CITY_FINISHED_AT=$(date +%s)
+  CITY_ELAPSED_S=$((CITY_FINISHED_AT - CITY_STARTED_AT))
+  CITY_ELAPSED_H=$((CITY_ELAPSED_S / 3600))
+  CITY_ELAPSED_M=$(((CITY_ELAPSED_S % 3600) / 60))
+  CITY_ELAPSED_SEC=$((CITY_ELAPSED_S % 60))
+
+  echo
+  echo "############################################################"
+  echo "### CITY FINISHED: $PLACE"
+  printf "### ELAPSED: %02dh %02dm %02ds\n" "$CITY_ELAPSED_H" "$CITY_ELAPSED_M" "$CITY_ELAPSED_SEC"
+  echo "############################################################"
 done < "$CITY_LIST_FILE"
 
 echo
