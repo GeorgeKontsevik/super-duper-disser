@@ -169,6 +169,15 @@ def _plot_points(ax, gdf: gpd.GeoDataFrame, *, color: str, size: float, alpha: f
     gdf.plot(ax=ax, color=color, markersize=size, alpha=alpha, label=label, zorder=zorder)
 
 
+def _plot_lines(ax, gdf: gpd.GeoDataFrame | None, *, color: str, linewidth: float, alpha: float, label: str | None, zorder: int) -> None:
+    if gdf is None or gdf.empty:
+        return
+    kwargs = {'color': color, 'linewidth': linewidth, 'alpha': alpha, 'zorder': zorder}
+    if label is not None:
+        kwargs['label'] = label
+    gdf.plot(ax=ax, **kwargs)
+
+
 def _align_to_crs(gdf: gpd.GeoDataFrame | None, target_crs) -> gpd.GeoDataFrame | None:
     if gdf is None or gdf.empty or target_crs is None:
         return gdf
@@ -271,6 +280,42 @@ def _save_preview_hist(mapping: pd.DataFrame, simplified: gpd.GeoDataFrame, path
     plt.close(fig)
 
 
+def _save_preview_network_comparison(
+    boundary: gpd.GeoDataFrame | None,
+    roads: gpd.GeoDataFrame | None,
+    routes: gpd.GeoDataFrame | None,
+    iduedu_nodes: gpd.GeoDataFrame,
+    connectpt_stops: gpd.GeoDataFrame | None,
+    path: Path,
+) -> None:
+    boundary, roads, routes, iduedu_nodes, connectpt_stops = _normalize_render_layers(
+        boundary, roads, routes, iduedu_nodes, connectpt_stops
+    )
+    fig, ax = plt.subplots(figsize=(10, 10))
+    _plot_boundary_background(ax, boundary, iduedu_nodes.crs)
+    _plot_lines(ax, roads, color='#7d7d7d', linewidth=0.45, alpha=0.35, label='roads', zorder=1)
+    _plot_lines(ax, routes, color='#6baed6', linewidth=1.2, alpha=0.45, label='bus routes', zorder=2)
+    _plot_points(ax, iduedu_nodes, color='#2b8cbe', size=52, alpha=0.42, label=f'iduedu bus nodes ({len(iduedu_nodes)})', zorder=4)
+    if connectpt_stops is not None and not connectpt_stops.empty:
+        _plot_points(
+            ax,
+            connectpt_stops,
+            color='#d7301f',
+            size=74,
+            alpha=0.42,
+            label=f'connectpt bus stops ({len(connectpt_stops)})',
+            zorder=5,
+        )
+    ax.set_title('Bus Stops: iduedu vs connectpt', fontsize=22, fontweight='bold', color='white')
+    ax.set_facecolor('#3a3a3a')
+    ax.legend(loc='lower left', facecolor='white', framealpha=0.95)
+    ax.set_axis_off()
+    fig.tight_layout()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=180, facecolor='#3a3a3a')
+    plt.close(fig)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description='Prototype bridge between iduedu PT nodes and ConnectPT simplified stops.')
     parser.add_argument('--place')
@@ -322,6 +367,19 @@ def main() -> None:
     else:
         _warn(f'No ConnectPT reference aggregated stops found for modality={modality}.')
 
+    roads = None
+    roads_path = city_dir / 'derived_layers' / 'roads_drive_osmnx.parquet'
+    if roads_path.exists():
+        roads = read_geodata(roads_path)
+
+    routes = None
+    if modality_entry:
+        projected_lines_path = modality_entry.get('files', {}).get('projected_lines')
+        lines_path = modality_entry.get('files', {}).get('lines')
+        route_path = Path(projected_lines_path) if projected_lines_path else (Path(lines_path) if lines_path else None)
+        if route_path and route_path.exists():
+            routes = read_geodata(route_path)
+
     raw_path = prepared_dir / 'raw_iduedu_pt_nodes.parquet'
     simplified_path = prepared_dir / 'simplified_stops.parquet'
     mapping_path = prepared_dir / 'raw_to_simplified_mapping.parquet'
@@ -337,6 +395,7 @@ def main() -> None:
     _save_preview_simplified(raw_nodes, simplified, boundary, preview_dir / '02_simplified_stops.png')
     _save_preview_comparison(simplified_vs_ref, reference, boundary, preview_dir / '03_bridge_vs_connectpt_reference.png')
     _save_preview_hist(mapping, simplified, preview_dir / '04_bridge_diagnostics.png')
+    _save_preview_network_comparison(boundary, roads, routes, raw_nodes, reference, preview_dir / '05_iduedu_vs_connectpt_bus_stops.png')
 
     manifest = {
         'city_bundle': str(city_dir),
