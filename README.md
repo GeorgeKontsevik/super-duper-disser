@@ -20,7 +20,7 @@ What the script does:
   - `connectpt/.venv`
   - `floor-predictor/.venv`
   - `segregation-by-design-experiments/.venv`
-  - sibling `../iduedu-fork/.venv` from forked `GeorgeKontsevik/IduEdu`
+  - `iduedu-fork/.venv` from forked `GeorgeKontsevik/IduEdu`
 
 ## Run One City
 

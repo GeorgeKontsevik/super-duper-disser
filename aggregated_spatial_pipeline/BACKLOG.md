@@ -7,7 +7,7 @@
   - Why deferred: this is not blocking the main joint pipeline flow and is treated as cleanup rather than product work.
 
 - Finish polishing the per-repository runtime split.
-  - Current state: bootstrap now creates dedicated envs for `blocksnet`, `connectpt`, `floor-predictor`, `segregation-by-design-experiments`, and sibling `iduedu-fork`; `run_joint` already calls the heavy sibling stages through their own runtimes.
+  - Current state: bootstrap now creates dedicated envs for `blocksnet`, `connectpt`, `floor-predictor`, `segregation-by-design-experiments`, and submodule `iduedu-fork`; `run_joint` already calls the heavy sibling stages through their own runtimes.
   - Remaining work: add the same runtime-resolver discipline to every ad hoc script/notebook entrypoint and tighten Windows path handling for non-bash launchers.
   - Why deferred: the main production pipeline is already isolated enough to avoid cross-repo dependency conflicts; the rest is cleanup and ergonomics.
 

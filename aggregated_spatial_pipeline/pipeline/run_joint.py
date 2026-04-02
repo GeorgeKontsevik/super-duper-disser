@@ -180,7 +180,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Optional path to dedicated python executable used only for intermodal graph collection "
-            "(e.g. .venv-iduedu121/bin/python)."
+            "(e.g. iduedu-fork/.venv/bin/python)."
         ),
     )
     parser.add_argument(

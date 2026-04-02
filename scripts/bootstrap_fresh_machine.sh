@@ -237,8 +237,7 @@ uv pip install --python "$ROOT/segregation-by-design-experiments/.venv/bin/pytho
   geopandas pandas osmnx networkx shapely pyarrow loguru matplotlib \
   torch torchvision torch-geometric huggingface-hub scikit-learn tqdm osmapi momepy
 
-IDUEDU_FORK_DIR="${IDUEDU_FORK_DIR:-$(cd "$ROOT/.." && pwd)/iduedu-fork}"
-ensure_repo_clone "https://github.com/GeorgeKontsevik/IduEdu.git" "$IDUEDU_FORK_DIR"
+IDUEDU_FORK_DIR="${IDUEDU_FORK_DIR:-$ROOT/iduedu-fork}"
 echo "Creating dedicated iduedu-fork environment..."
 create_repo_venv "$IDUEDU_FORK_DIR"
 uv pip install --python "$IDUEDU_FORK_DIR/.venv/bin/python" -e "$IDUEDU_FORK_DIR"

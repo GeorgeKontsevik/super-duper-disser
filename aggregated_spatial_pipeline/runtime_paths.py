@@ -41,9 +41,8 @@ def street_pattern_python(root: Path | None = None) -> Path:
 
 def intermodal_python(root: Path | None = None) -> Path:
     root = root or repo_root()
-    sibling_fork = root.parent / "iduedu-fork"
-    sibling_python = _venv_python(sibling_fork / ".venv")
-    if sibling_python.exists():
-        return sibling_python
+    submodule_python = _venv_python(root / "iduedu-fork" / ".venv")
+    if submodule_python.exists():
+        return submodule_python
     legacy_python = _venv_python(root / ".venv-iduedu121")
     return legacy_python

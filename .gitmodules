@@ -22,3 +22,6 @@
 [submodule "floor-predictor"]
 	path = floor-predictor
 	url = https://github.com/GeorgeKontsevik/floor-predictor.git
+[submodule "iduedu-fork"]
+	path = iduedu-fork
+	url = https://github.com/GeorgeKontsevik/IduEdu.git
