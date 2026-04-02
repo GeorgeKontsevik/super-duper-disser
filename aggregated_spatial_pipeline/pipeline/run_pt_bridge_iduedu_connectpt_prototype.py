@@ -169,15 +169,34 @@ def _plot_points(ax, gdf: gpd.GeoDataFrame, *, color: str, size: float, alpha: f
     gdf.plot(ax=ax, color=color, markersize=size, alpha=alpha, label=label, zorder=zorder)
 
 
-def _plot_boundary_background(ax, boundary: gpd.GeoDataFrame | None) -> None:
+def _align_to_crs(gdf: gpd.GeoDataFrame | None, target_crs) -> gpd.GeoDataFrame | None:
+    if gdf is None or gdf.empty or target_crs is None:
+        return gdf
+    if gdf.crs is None or str(gdf.crs) == str(target_crs):
+        return gdf
+    return gdf.to_crs(target_crs)
+
+
+def _normalize_render_layers(*layers: gpd.GeoDataFrame | None) -> tuple[gpd.GeoDataFrame | None, ...]:
+    target_crs = None
+    for layer in layers:
+        if layer is not None and not layer.empty and layer.crs is not None:
+            target_crs = layer.crs
+            break
+    return tuple(_align_to_crs(layer, target_crs) for layer in layers)
+
+
+def _plot_boundary_background(ax, boundary: gpd.GeoDataFrame | None, target_crs=None) -> None:
     if boundary is None or boundary.empty:
         return
+    boundary = _align_to_crs(boundary, target_crs)
     boundary.plot(ax=ax, color='#f6f0df', edgecolor='white', linewidth=1.2, zorder=-10)
 
 
 def _save_preview_raw(raw_nodes: gpd.GeoDataFrame, boundary: gpd.GeoDataFrame | None, path: Path) -> None:
+    raw_nodes, boundary = _normalize_render_layers(raw_nodes, boundary)
     fig, ax = plt.subplots(figsize=(10, 10))
-    _plot_boundary_background(ax, boundary)
+    _plot_boundary_background(ax, boundary, raw_nodes.crs)
     for node_type, color in [('platform', '#1f77b4'), ('bus', '#ff7f0e'), ('tram', '#2ca02c'), ('trolleybus', '#d62728'), ('subway', '#9467bd')]:
         subset = raw_nodes[raw_nodes['type'].astype(str) == node_type]
         if not subset.empty:
@@ -193,8 +212,9 @@ def _save_preview_raw(raw_nodes: gpd.GeoDataFrame, boundary: gpd.GeoDataFrame | 
 
 
 def _save_preview_simplified(raw_nodes: gpd.GeoDataFrame, simplified: gpd.GeoDataFrame, boundary: gpd.GeoDataFrame | None, path: Path) -> None:
+    raw_nodes, simplified, boundary = _normalize_render_layers(raw_nodes, simplified, boundary)
     fig, ax = plt.subplots(figsize=(10, 10))
-    _plot_boundary_background(ax, boundary)
+    _plot_boundary_background(ax, boundary, raw_nodes.crs)
     _plot_points(ax, raw_nodes, color='#9aa0a6', size=5, alpha=0.35, label='raw iduedu nodes', zorder=3)
     _plot_points(ax, simplified, color='#d62728', size=22, alpha=0.95, label='simplified stops', zorder=6)
     ax.set_title('Simplified PT stops for ConnectPT', fontsize=18, fontweight='bold', color='white')
@@ -210,8 +230,9 @@ def _save_preview_simplified(raw_nodes: gpd.GeoDataFrame, simplified: gpd.GeoDat
 def _save_preview_comparison(simplified_vs_ref: gpd.GeoDataFrame | None, reference: gpd.GeoDataFrame | None, boundary: gpd.GeoDataFrame | None, path: Path) -> None:
     if simplified_vs_ref is None or reference is None or reference.empty:
         return
+    simplified_vs_ref, reference, boundary = _normalize_render_layers(simplified_vs_ref, reference, boundary)
     fig, ax = plt.subplots(figsize=(10, 10))
-    _plot_boundary_background(ax, boundary)
+    _plot_boundary_background(ax, boundary, reference.crs)
     _plot_points(ax, reference, color='#1f77b4', size=20, alpha=0.8, label='connectpt aggregated stops', zorder=4)
     _plot_points(ax, simplified_vs_ref, color='#d62728', size=18, alpha=0.9, label='iduedu simplified stops', zorder=5)
     if {'geometry', 'index_right'}.issubset(set(simplified_vs_ref.columns)):
