@@ -1073,6 +1073,7 @@ def _save_collection_previews(
     street_grid_path: Path,
     floor_enriched_path: Path,
     floor_metrics: dict | None = None,
+    clear_existing: bool = False,
 ) -> list[Path]:
     import matplotlib
     matplotlib.use("Agg")
@@ -1321,16 +1322,17 @@ def _save_collection_previews(
     all_together_dir = preview_dir / "all_together"
     preview_dir.mkdir(parents=True, exist_ok=True)
     all_together_dir.mkdir(parents=True, exist_ok=True)
-    for stale in preview_dir.glob("*.png"):
-        try:
-            stale.unlink()
-        except Exception:
-            pass
-    for stale in all_together_dir.glob("*.png"):
-        try:
-            stale.unlink()
-        except Exception:
-            pass
+    if clear_existing:
+        for stale in preview_dir.glob("*.png"):
+            try:
+                stale.unlink()
+            except Exception:
+                pass
+        for stale in all_together_dir.glob("*.png"):
+            try:
+                stale.unlink()
+            except Exception:
+                pass
     index_counter = [1]
 
     def _next_name(stem: str) -> str:
@@ -2111,6 +2113,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             street_grid_path=clipped_street_grid_path,
             floor_enriched_path=floor_output_path,
             floor_metrics=floor_metrics_for_preview,
+            clear_existing=(stage_label == "raw_collection"),
         )
         if preview_paths:
             _log(
@@ -2298,6 +2301,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         buffered_quarters_path=buffered_quarters_path,
         street_grid_path=clipped_street_grid_path,
         floor_enriched_path=floor_output_path,
+        clear_existing=False,
     )
     _log(f"Preview generation finished in {time.time() - preview_started:.1f}s.")
     if preview_paths:

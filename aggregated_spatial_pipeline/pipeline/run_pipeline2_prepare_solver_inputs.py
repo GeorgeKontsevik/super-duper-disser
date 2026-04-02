@@ -409,6 +409,14 @@ def _save_dataframe(df: pd.DataFrame, path: Path) -> None:
     df.to_parquet(path)
 
 
+PIPELINE2_GALLERY_FILENAMES = {
+    "accessibility_mean_time_map": "30_accessibility_mean_time_map.png",
+    "hospital": "31_lp_hospital_provision_unmet.png",
+    "polyclinic": "32_lp_polyclinic_provision_unmet.png",
+    "school": "33_lp_school_provision_unmet.png",
+}
+
+
 def _calc_demand(population: pd.Series, demand_per_1000: float) -> pd.Series:
     scaled = np.ceil((population.fillna(0.0).astype(float) / 1000.0) * float(demand_per_1000))
     return scaled.astype(int)
@@ -469,7 +477,7 @@ def _plot_accessibility_previews(
 
     out_dir.mkdir(parents=True, exist_ok=True)
     out: dict[str, str] = {}
-    access_map_path = out_dir / "01_accessibility_mean_time_map.png"
+    access_map_path = out_dir / PIPELINE2_GALLERY_FILENAMES["accessibility_mean_time_map"]
     legacy_matrix_png = out_dir / "02_accessibility_matrix_sample_heatmap.png"
     if legacy_matrix_png.exists():
         legacy_matrix_png.unlink(missing_ok=True)
@@ -730,7 +738,7 @@ def main() -> None:
     raw_dir = output_root / "services_raw"
     prepared_dir = output_root / "prepared"
     solver_dir = output_root / "solver_inputs"
-    preview_dir = output_root / "previews"
+    preview_dir = city_dir / "preview_png" / "all_together"
     manifest_path = output_root / "manifest_prepare_solver_inputs.json"
 
     _log(f"Starting preparation for services={services}")
@@ -882,7 +890,7 @@ def main() -> None:
         matrix_service_path = service_dir / "adj_matrix_time_min.parquet"
         links_path = service_dir / "provision_links.csv"
         summary_path = service_dir / "summary.json"
-        lp_preview_target = preview_dir / f"lp_{service}_provision_unmet.png"
+        lp_preview_target = preview_dir / PIPELINE2_GALLERY_FILENAMES[service]
 
         if (not args.no_cache) and blocks_path.exists() and matrix_service_path.exists() and summary_path.exists():
             cached_summary = _try_load_json(summary_path) or {}
