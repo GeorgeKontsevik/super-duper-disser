@@ -292,8 +292,9 @@ def _add_population_proxy(
     result["living_area_proxy"] = living_area
     result["population_proxy"] = (living_area / float(area_per_person_sqm)).fillna(0.0)
     site_area = _series_or_default("site_area", 0.0)
-    site_area = site_area.replace(0, pd.NA)
-    result["density_proxy"] = (result["population_proxy"] / site_area).fillna(0.0)
+    site_area = site_area.replace(0, np.nan)
+    density_proxy = pd.to_numeric(result["population_proxy"] / site_area, errors="coerce")
+    result["density_proxy"] = density_proxy.fillna(0.0)
     return result
 
 
