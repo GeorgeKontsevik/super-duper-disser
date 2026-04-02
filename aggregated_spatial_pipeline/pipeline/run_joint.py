@@ -561,8 +561,9 @@ def _ensure_street_grid_from_repo(
     _log("Classification module start: segregation-by-design street-pattern inference.")
     _log(
         "Classification config: "
-        f"place={place}, road_source={road_source}, buffer_m={buffer_m:.1f}, grid_step={grid_step:.1f}, "
-        f"output={summary_output_path.name}, roads={roads_input_path.name if roads_input_path is not None else 'osm'}"
+        f"place={place}, road_source={'local' if roads_path is not None and roads_path.exists() else 'osm'}, "
+        f"buffer_m={buffer_m:.1f}, grid_step={grid_step:.1f}, "
+        f"output={summary_output.name}, roads={_log_name(roads_for_street_pattern) if roads_path is not None and roads_path.exists() else 'osm'}"
     )
     started = time.time()
     subprocess.run(command, check=True, cwd=str(repo_root))
