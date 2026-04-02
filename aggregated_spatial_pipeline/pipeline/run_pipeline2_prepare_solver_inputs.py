@@ -5,6 +5,7 @@ import json
 import math
 import os
 import re
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -196,6 +197,16 @@ def _log(message: str) -> None:
 
 def _warn(message: str) -> None:
     logger.warning(f"[pipeline_2_prepare] {message}")
+
+
+def _configure_logging() -> None:
+    logger.remove()
+    logger.add(
+        sys.stderr,
+        level="INFO",
+        format="<green>{time:DD MMM HH:mm}</green> | <level>{level}</level> | <level>{message}</level>",
+        colorize=True,
+    )
 
 
 def _configure_osmnx(args: argparse.Namespace) -> None:
@@ -699,6 +710,7 @@ def _plot_service_lp_preview(
 
 
 def main() -> None:
+    _configure_logging()
     args = parse_args()
     _configure_osmnx(args)
 
@@ -1013,8 +1025,8 @@ def main() -> None:
         "quarters": str(quarters_path),
         "graph": str(graph_path),
         "services": services,
-        "service_radius_min": float(args.service_radius_min),
-        "demand_per_1000": float(args.demand_per_1000),
+        "service_radius_min": float(args.service_radius_min) if args.service_radius_min is not None else None,
+        "demand_per_1000": float(args.demand_per_1000) if args.demand_per_1000 is not None else None,
         "units_union": str(units_path),
         "adj_matrix_union": str(matrix_path),
         "previews_dir": str(preview_dir),

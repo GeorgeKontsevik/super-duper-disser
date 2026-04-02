@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import re
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -101,6 +102,16 @@ def _log(message: str) -> None:
 
 def _warn(message: str) -> None:
     logger.warning(f"[pipeline_3_street_pattern] {message}")
+
+
+def _configure_logging() -> None:
+    logger.remove()
+    logger.add(
+        sys.stderr,
+        level="INFO",
+        format="<green>{time:DD MMM HH:mm}</green> | <level>{level}</level> | <level>{message}</level>",
+        colorize=True,
+    )
 
 
 def _save_previews(
@@ -384,6 +395,7 @@ def _build_quarter_enriched_layer(city_dir: Path, transferred):
 
 
 def main() -> None:
+    _configure_logging()
     args = parse_args()
     city_dir = _resolve_city_dir(args)
     output_dir = Path(args.output_dir).resolve() if args.output_dir else city_dir / "pipeline_3"

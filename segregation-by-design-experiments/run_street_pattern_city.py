@@ -11,10 +11,12 @@ from pathlib import Path
 
 import geopandas as gpd
 from huggingface_hub import hf_hub_download
+from loguru import logger
 import networkx as nx
 import numpy as np
 import osmnx as ox
 import osmapi as osm
+import pandas as pd
 from rtree import index
 from shapely.geometry import LineString, Point, Polygon
 from shapely.ops import unary_union
@@ -60,8 +62,26 @@ COMPARISON_COLOR_PALETTE = [
 ]
 
 
+def _configure_logging() -> None:
+    logger.remove()
+    logger.add(
+        sys.stderr,
+        level="INFO",
+        format="<green>{time:DD MMM HH:mm}</green> | <level>{level}</level> | <level>{message}</level>",
+        colorize=True,
+    )
+
+
 def _progress_log(message: str) -> None:
-    tqdm.write(f"[street-pattern] {message}")
+    logger.info(f"[street-pattern] {message}")
+
+
+def _log(message: str) -> None:
+    logger.info(f"[street-pattern] {message}")
+
+
+def _success(message: str) -> None:
+    logger.success(f"[street-pattern] {message}")
 COUNTRY_ROADS_PATHS = {
     "canada": REPO_ROOT / "data_all_cities" / "hotosm_can_roads_lines_gpkg" / "hotosm_can_roads_lines_gpkg.gpkg",
     "usa": REPO_ROOT / "data_all_cities" / "hotosm_usa_roads_lines_gpkg" / "hotosm_usa_roads_lines_gpkg.gpkg",
@@ -73,6 +93,23 @@ COUNTRY_ROADS_PATHS = {
 
 def _round_probabilities(values, digits: int = 3) -> list[float]:
     return [round(float(value), digits) for value in values]
+
+
+def _prepare_geojson_export(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    export_gdf = gdf.copy()
+    for column in export_gdf.columns:
+        if column == export_gdf.geometry.name:
+            continue
+        if str(export_gdf[column].dtype) != "object":
+            continue
+        sample = next((value for value in export_gdf[column] if value is not None), None)
+        if isinstance(sample, (list, tuple, set, dict, np.ndarray)):
+            export_gdf[column] = export_gdf[column].map(
+                lambda value: json.dumps(value, ensure_ascii=False)
+                if isinstance(value, (list, tuple, set, dict, np.ndarray))
+                else value
+            )
+    return export_gdf
 
 
 def _slugify(value: str) -> str:
@@ -387,7 +424,14 @@ def split_graph_by_grid_for_polygon(
         node_cell_bounds[i] = (key, cell_data)
 
     node_to_cell = {}
-    for node_id, data in tqdm(graph.nodes(data=True), desc="Assigning nodes to cells"):
+    for node_id, data in tqdm(
+        graph.nodes(data=True),
+        desc="Assigning nodes to cells",
+        leave=False,
+        ascii=True,
+        dynamic_ncols=True,
+        mininterval=0.5,
+    ):
         point = Point(data["x"], data["y"])
         potential_cells = list(
             node_cell_idx.intersection((data["x"], data["y"], data["x"], data["y"]))
@@ -425,7 +469,14 @@ def split_graph_by_grid_for_polygon(
             line = LineString([(graph.nodes[u]["x"], graph.nodes[u]["y"]), (graph.nodes[v]["x"], graph.nodes[v]["y"])])
         edges_with_geometry.append((u, v, key, data, line))
 
-    for u, v, key, data, line in tqdm(edges_with_geometry, desc="Assigning edges to cells"):
+    for u, v, key, data, line in tqdm(
+        edges_with_geometry,
+        desc="Assigning edges to cells",
+        leave=False,
+        ascii=True,
+        dynamic_ncols=True,
+        mininterval=0.5,
+    ):
         u_cell = node_to_cell.get(u)
         v_cell = node_to_cell.get(v)
         line_bounds = line.bounds
@@ -956,11 +1007,11 @@ def save_city_outputs(
     centre_gdf = build_centre_gdf(place=place, relation=relation, centre_node=centre_node)
 
     (city_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2))
-    roads_wgs84.to_file(city_dir / "roads.geojson", driver="GeoJSON")
-    buffer_gdf.to_file(city_dir / "buffer.geojson", driver="GeoJSON")
-    centre_gdf.to_file(city_dir / "centre.geojson", driver="GeoJSON")
+    _prepare_geojson_export(roads_wgs84).to_file(city_dir / "roads.geojson", driver="GeoJSON")
+    _prepare_geojson_export(buffer_gdf).to_file(city_dir / "buffer.geojson", driver="GeoJSON")
+    _prepare_geojson_export(centre_gdf).to_file(city_dir / "centre.geojson", driver="GeoJSON")
     if not prediction_gdf.empty:
-        prediction_gdf.to_file(city_dir / "predicted_cells.geojson", driver="GeoJSON")
+        _prepare_geojson_export(prediction_gdf).to_file(city_dir / "predicted_cells.geojson", driver="GeoJSON")
         prediction_gdf.drop(columns="geometry").to_csv(city_dir / "predicted_cells.csv", index=False)
 
     render_city_map(
@@ -1411,6 +1462,7 @@ def save_comparison_outputs(
 
 
 def main() -> None:
+    _configure_logging()
     args = parse_args()
     if args.no_cache and hasattr(ox.settings, "use_cache"):
         ox.settings.use_cache = False
@@ -1444,7 +1496,15 @@ def main() -> None:
     buffer_gdf = None
 
     total_stages = 4 if args.compare_year is None else 6
-    stage_bar = tqdm(total=total_stages, desc="Street-pattern pipeline", unit="stage")
+    stage_bar = tqdm(
+        total=total_stages,
+        desc="Street-pattern pipeline",
+        unit="stage",
+        leave=False,
+        ascii=True,
+        dynamic_ncols=True,
+        mininterval=0.5,
+    )
 
     stage_bar.set_postfix_str("resolve model")
     stage_bar.update(1)
@@ -1619,26 +1679,22 @@ def main() -> None:
     stage_bar.close()
     output_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2))
 
-    print("Classification complete.")
-    print(f"Saved summary to {output_path}")
-    print(f"Saved city artifacts to {primary_dir}")
-    print(f"Saved map to {primary_dir / f'map_{args.map_coloring}.png'}")
-    print(f"Road source: {resolved_road_source}")
+    _success("Classification complete.")
+    _log(f"Saved summary to {output_path}")
+    _log(f"Saved city artifacts to {primary_dir}")
+    _log(f"Saved map to {primary_dir / f'map_{args.map_coloring}.png'}")
+    _log(f"Road source: {resolved_road_source}")
     if resolved_roads_path is not None:
-        print(f"Roads file: {resolved_roads_path}")
+        _log(f"Roads file: {resolved_roads_path}")
     if args.compare_year is not None:
-        print(f"Saved comparison artifacts to {city_root_dir / f'comparison_{args.year}_vs_{args.compare_year}'}")
-    print(
-        f"Used relation {relation.get('id')} and centre node {centre_node.get('id')}"
-    )
+        _log(f"Saved comparison artifacts to {city_root_dir / f'comparison_{args.year}_vs_{args.compare_year}'}")
+    _log(f"Used relation {relation.get('id')} and centre node {centre_node.get('id')}")
     if args.compare_year is None:
-        print("Class counts:")
+        _log("Class counts:")
         for class_name, count in summary["class_counts"].items():
-            print(f"  {class_name}: {count}")
+            _log(f"  {class_name}: {count}")
     else:
-        print(
-            f"Changed cells: {summary['cells_changed']} / {summary['cells_compared']}"
-        )
+        _log(f"Changed cells: {summary['cells_changed']} / {summary['cells_compared']}")
 
 
 if __name__ == "__main__":
