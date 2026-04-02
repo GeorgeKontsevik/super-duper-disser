@@ -197,6 +197,15 @@ LOG_FORMAT = (
 )
 
 
+def _log_name(path: Path | str | None) -> str:
+    if path is None:
+        return "none"
+    try:
+        return Path(path).name
+    except Exception:
+        return str(path)
+
+
 def _log(message: str) -> None:
     logger.bind(tag="[pipeline_2_prepare]").info(message)
 
@@ -749,8 +758,8 @@ def main() -> None:
     manifest_path = output_root / "manifest_prepare_solver_inputs.json"
 
     _log(f"Starting preparation for services={services}")
-    _log(f"Using city bundle: {city_dir}")
-    _log(f"Territory boundary: {boundary_path}")
+    _log(f"Using city bundle: {city_dir.name}")
+    _log(f"Territory boundary: {_log_name(boundary_path)}")
     if args.no_cache:
         _warn(
             "Cache mode: disabled (--no-cache). "
@@ -784,7 +793,7 @@ def main() -> None:
         raw_path = raw_dir / f"{service}.parquet"
         if raw_path.exists() and (not args.no_cache):
             raw = read_geodata(raw_path)
-            _log(f"Using cached raw service layer [{service}]: {raw_path} ({len(raw)} features)")
+            _log(f"Using cached raw service layer [{service}]: {_log_name(raw_path)} ({len(raw)} features)")
         else:
             raw = _download_service_raw(boundary, service)
             if raw.empty:
@@ -792,7 +801,7 @@ def main() -> None:
             else:
                 raw["capacity_est"] = raw.apply(lambda row: _capacity_from_row(row, service), axis=1)
             _save_geodata(raw, raw_path)
-            _log(f"Saved raw service layer [{service}]: {raw_path} ({len(raw)} features)")
+            _log(f"Saved raw service layer [{service}]: {_log_name(raw_path)} ({len(raw)} features)")
 
         if "capacity_est" not in raw.columns:
             raw = raw.copy()
@@ -853,7 +862,7 @@ def main() -> None:
     matrix_path = prepared_dir / "adj_matrix_time_min_union.parquet"
     if matrix_path.exists() and (not args.no_cache):
         matrix_union = pd.read_parquet(matrix_path)
-        _log(f"Using cached accessibility matrix: {matrix_path} ({matrix_union.shape[0]}x{matrix_union.shape[1]})")
+        _log(f"Using cached accessibility matrix: {_log_name(matrix_path)} ({matrix_union.shape[0]}x{matrix_union.shape[1]})")
     else:
         n_units = int(len(units))
         approx_pairs = n_units * n_units
@@ -870,7 +879,7 @@ def main() -> None:
         _save_dataframe(matrix_union, matrix_path)
         elapsed = time.time() - started
         _log(
-            f"Saved accessibility matrix: {matrix_path} "
+            f"Saved accessibility matrix: {_log_name(matrix_path)} "
             f"({matrix_union.shape[0]}x{matrix_union.shape[1]}), elapsed={elapsed:.1f}s"
         )
 
@@ -919,7 +928,7 @@ def main() -> None:
                     f"({cached_summary.get('service_demand_per_1000')} != {expected_demand}). Rebuilding."
                 )
             else:
-                _log(f"Using cached solver input [{service}]: {summary_path}")
+                _log(f"Using cached solver input [{service}]: {_log_name(summary_path)}")
                 lp_preview_path = str(lp_preview_target) if lp_preview_target.exists() else None
                 if lp_preview_path is None:
                     try:
@@ -1056,7 +1065,7 @@ def main() -> None:
     }
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-    _log(f"Done. Manifest: {manifest_path}")
+    _log(f"Done. Manifest: {_log_name(manifest_path)}")
 
 
 if __name__ == "__main__":

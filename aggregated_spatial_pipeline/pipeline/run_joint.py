@@ -62,6 +62,15 @@ def _format_crs_for_log(crs) -> str:
     return str(crs)
 
 
+def _log_name(path: Path | str | None) -> str:
+    if path is None:
+        return "none"
+    try:
+        return Path(path).name
+    except Exception:
+        return str(path)
+
+
 def _tqdm_kwargs(*, leave: bool = False) -> dict:
     return {
         "disable": TQDM_DISABLE,
@@ -507,7 +516,7 @@ def _ensure_street_grid_from_repo(
         buffer_matches = cached_buffer is not None and abs(float(cached_buffer) - float(buffer_m)) <= 1e-6
         grid_matches = cached_grid_step is not None and abs(float(cached_grid_step) - float(grid_step)) <= 1e-6
         if buffer_matches and grid_matches:
-            _log(f"Using cached street grid from repo outputs: {predicted_cells_path}")
+            _log(f"Using cached street grid from repo outputs: {_log_name(predicted_cells_path)}")
             return predicted_cells_path, summary_output, False
         _warn(
             "Cached street-grid summary does not match current request "
@@ -541,7 +550,7 @@ def _ensure_street_grid_from_repo(
                 roads_local.to_file(roads_for_street_pattern, driver="GeoJSON")
             _log(
                 "Street-pattern compatibility export prepared: "
-                f"{roads_for_street_pattern} (source parquet: {roads_path})"
+                f"{_log_name(roads_for_street_pattern)} (source parquet: {_log_name(roads_path)})"
             )
         command.extend(["--road-source", "local", "--roads", str(roads_for_street_pattern)])
     if center_node_id is not None:
@@ -559,7 +568,7 @@ def _ensure_street_grid_from_repo(
     subprocess.run(command, check=True, cwd=str(repo_root))
     _log(
         "Classification module finished in "
-        f"{time.time() - started:.1f}s. Summary: {summary_output}"
+        f"{time.time() - started:.1f}s. Summary: {_log_name(summary_output)}"
     )
 
     if not predicted_cells_path.exists():
@@ -567,7 +576,7 @@ def _ensure_street_grid_from_repo(
             "Street-pattern pipeline finished, but predicted_cells.geojson was not found at "
             f"{predicted_cells_path}"
         )
-    _log(f"Classification artifact: {predicted_cells_path}")
+    _log(f"Classification artifact: {_log_name(predicted_cells_path)}")
     return predicted_cells_path, summary_output, True
 
 
@@ -911,11 +920,11 @@ def _run_floor_predictor_preprocessing(
         StoreyModelTrainer,
     )
 
-    _log(f"Floor step: reading buildings layer: {buildings_path}")
+    _log(f"Floor step: reading buildings layer: {_log_name(buildings_path)}")
     t0 = time.time()
     buildings = read_geodata(buildings_path)
     _log(f"Floor step: buildings loaded ({len(buildings)} rows) in {time.time() - t0:.1f}s")
-    _log(f"Floor step: reading land-use layer: {land_use_path}")
+    _log(f"Floor step: reading land-use layer: {_log_name(land_use_path)}")
     t0 = time.time()
     land_use = read_geodata(land_use_path)
     _log(f"Floor step: land-use loaded ({len(land_use)} rows) in {time.time() - t0:.1f}s")
@@ -1019,7 +1028,7 @@ def _run_floor_predictor_preprocessing(
 
     if model_path.exists():
         if not prediction_skipped_by_threshold:
-            _log(f"Floor step: loading storey model: {model_path}")
+            _log(f"Floor step: loading storey model: {_log_name(model_path)}")
             model = StoreyModelTrainer.load_model(str(model_path))
             storey_model_info = getattr(model, "info", None)
             _log("Floor step: computing geometry features for storey model...")
@@ -1038,13 +1047,13 @@ def _run_floor_predictor_preprocessing(
                 predicted_storey_count = target_missing_count
                 _log("Floor step: storey prediction complete.")
     else:
-        _warn(f"Floor step: storey model not found, skipping prediction: {model_path}")
+        _warn(f"Floor step: storey model not found, skipping prediction: {_log_name(model_path)}")
 
     missing_storey_after_model = int(gdf["storey"].isna().sum())
     gdf["storey_restored"] = (gdf["storey_source"] == "model_predicted").astype(int)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    _log(f"Floor step: writing enriched buildings layer: {output_path}")
+    _log(f"Floor step: writing enriched buildings layer: {_log_name(output_path)}")
     gdf.to_parquet(output_path)
     _log(f"Floor step: preprocessing finished in {time.time() - started_total:.1f}s")
 
@@ -2047,7 +2056,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         )
         started = time.time()
         collect_blocksnet_raw_osm_bundle(place, output_dir=blocks_raw_dir, boundary_path=buffer_path)
-        _log(f"Raw OSM bundle collected in {time.time() - started:.1f}s: {blocks_raw_manifest_path}")
+        _log(f"Raw OSM bundle collected in {time.time() - started:.1f}s: {_log_name(blocks_raw_manifest_path)}")
         downloaded_in_this_run = True
     else:
         _log("Using cached raw OSM bundle.")
@@ -2070,7 +2079,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             boundary_path=buffer_path,
             drive_roads_path=shared_roads_path,
         )
-        _log(f"ConnectPT bundle collected in {time.time() - started:.1f}s: {connectpt_manifest_path}")
+        _log(f"ConnectPT bundle collected in {time.time() - started:.1f}s: {_log_name(connectpt_manifest_path)}")
         downloaded_in_this_run = True
     else:
         _log("Using cached connectpt bundle.")
@@ -2093,7 +2102,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         )
         _log(
             "Intermodal graph bundle collected in "
-            f"{time.time() - started:.1f}s: {intermodal_manifest_path}"
+            f"{time.time() - started:.1f}s: {_log_name(intermodal_manifest_path)}"
         )
         downloaded_in_this_run = True
     else:
@@ -2173,7 +2182,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         _log("Refreshing previews after floor/building enrichment...")
         _refresh_collection_previews("floor_enrichment", floor_metrics_for_preview=floor_metrics)
     else:
-        _log(f"Using cached floor-preprocessing output: {floor_output_path}")
+        _log(f"Using cached floor-preprocessing output: {_log_name(floor_output_path)}")
         floor_enriched = read_geodata(floor_output_path)
         floor_is_living_missing = int(pd.to_numeric(floor_enriched.get("is_living"), errors="coerce").isna().sum())
         floor_storey_missing = int(pd.to_numeric(floor_enriched.get("storey"), errors="coerce").isna().sum())
@@ -2198,7 +2207,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             prefetched_layers={k: str(v) for k, v in raw_files.items()},
             buildings_override_path=floor_output_path,
         )
-        _log(f"BlocksNet bundle built in {time.time() - started:.1f}s: {blocks_manifest_path}")
+        _log(f"BlocksNet bundle built in {time.time() - started:.1f}s: {_log_name(blocks_manifest_path)}")
         downloaded_in_this_run = True
     else:
         _log("Using cached BlocksNet processed bundle.")
@@ -2218,7 +2227,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         _log(f"Clipped quarters ready: {buffered_quarters_count} features")
     else:
         buffered_quarters_count = len(read_geodata(buffered_quarters_path))
-        _log(f"Using cached clipped quarters: {buffered_quarters_path} ({buffered_quarters_count} features)")
+        _log(f"Using cached clipped quarters: {_log_name(buffered_quarters_path)} ({buffered_quarters_count} features)")
 
     _log("Refreshing previews after quarter preparation...")
     _refresh_collection_previews("quarters_ready", floor_metrics_for_preview=floor_metrics)
@@ -2245,7 +2254,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
     else:
         clipped_street_grid_count = len(read_geodata(clipped_street_grid_path))
         _log(
-            f"Using cached clipped street-grid: {clipped_street_grid_path} "
+            f"Using cached clipped street-grid: {_log_name(clipped_street_grid_path)} "
             f"({clipped_street_grid_count} features)"
         )
     downloaded_in_this_run = downloaded_in_this_run or street_rebuilt
@@ -2263,7 +2272,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
                 step_m=args.climate_grid_step_m,
             )
         else:
-            _log(f"Using cached climate-grid layer: {climate_grid_path}")
+            _log(f"Using cached climate-grid layer: {_log_name(climate_grid_path)}")
     else:
         _log("Climate layer is disabled for this run (no --climate-grid was requested).")
 
@@ -2318,7 +2327,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
     if preview_paths:
         preview_dir = preview_paths[0].parent if preview_paths else None
         if preview_dir is not None:
-            _log(f"Preview PNG files: {len(preview_paths)} saved to {preview_dir}")
+            _log(f"Preview PNG files: {len(preview_paths)} saved to {_log_name(preview_dir)}")
         else:
             _log(f"Preview PNG files: {len(preview_paths)} generated")
     else:
@@ -2461,7 +2470,7 @@ def main() -> None:
                 json.dumps(collect_manifest, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
-            _log(f"Collection phase complete. Saved manifest: {collect_manifest_path}")
+            _log(f"Collection phase complete. Saved manifest: {_log_name(collect_manifest_path)}")
             _log("Stopping after phase 1 (--collect-only).")
             return
 
@@ -2542,7 +2551,7 @@ def main() -> None:
 
         manifest_path = output_dir / "manifest_joint.json"
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-        _log(f"Finished. Manifest: {manifest_path}")
+        _log(f"Finished. Manifest: {_log_name(manifest_path)}")
         steps.update(1)
 
 

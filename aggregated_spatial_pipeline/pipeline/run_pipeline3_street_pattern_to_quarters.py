@@ -46,6 +46,15 @@ LOG_FORMAT = (
 )
 
 
+def _log_name(path: Path | str | None) -> str:
+    if path is None:
+        return "none"
+    try:
+        return Path(path).name
+    except Exception:
+        return str(path)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -392,7 +401,7 @@ def main() -> None:
     multivariate_path = preview_dir / "22_quarters_street_pattern_multivariate.png"
     legacy_mass_path = preview_dir / "21_quarters_street_pattern_covered_mass.png"
 
-    _log(f"Using city bundle: {city_dir}")
+    _log(f"Using city bundle: {city_dir.name}")
     if args.no_cache:
         _warn("Cache mode: disabled (--no-cache). Street-pattern transfer will be rebuilt.")
     else:
@@ -412,8 +421,8 @@ def main() -> None:
         and multivariate_path.exists()
         and (not args.no_cache)
     ):
-        _log(f"Using cached street-pattern-to-quarters transfer: {transferred_path}")
-        _log(f"Done. Manifest: {manifest_path}")
+        _log(f"Using cached street-pattern-to-quarters transfer: {_log_name(transferred_path)}")
+        _log(f"Done. Manifest: {_log_name(manifest_path)}")
         return
 
     street_grid_path = city_dir / "derived_layers" / "street_grid_buffered.parquet"
@@ -443,7 +452,7 @@ def main() -> None:
     crosswalk = build_crosswalk(street, quarters, "street_grid", "quarters")
     prepared_dir.mkdir(parents=True, exist_ok=True)
     prepare_geodata_for_parquet(crosswalk).to_parquet(crosswalk_path)
-    _log(f"Crosswalk ready: {crosswalk_path} ({len(crosswalk)} intersections)")
+    _log(f"Crosswalk ready: {_log_name(crosswalk_path)} ({len(crosswalk)} intersections)")
 
     _log(
         "Transferring street-pattern probability distribution to quarters "
@@ -501,10 +510,10 @@ def main() -> None:
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
     _log(
-        f"Transfer ready: {transferred_path} "
+        f"Transfer ready: {_log_name(transferred_path)} "
         f"(prob cols={len(prob_columns)}, mean covered probability mass={row_sum.mean():.4f})"
     )
-    _log(f"Done. Manifest: {manifest_path}")
+    _log(f"Done. Manifest: {_log_name(manifest_path)}")
 
 
 if __name__ == "__main__":
