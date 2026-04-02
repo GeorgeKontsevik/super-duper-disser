@@ -285,8 +285,8 @@ def build_connectpt_osm_bundle(
         try:
             preloaded_drive_lines = read_geodata(Path(drive_roads_path))
             if preloaded_drive_lines.empty:
-                logger.warning(
-                    "ConnectPT preloaded drive roads are empty ({}); fallback to OSM download for bus lines.",
+                logger.critical(
+                    "ConnectPT preloaded drive roads are empty ({}); FALLBACK to OSM download for bus lines is active.",
                     drive_roads_path,
                 )
                 preloaded_drive_lines = None
@@ -308,9 +308,9 @@ def build_connectpt_osm_bundle(
                     len(preloaded_drive_lines),
                 )
         except Exception as exc:
-            logger.warning(
+            logger.critical(
                 "ConnectPT failed to read preloaded drive roads ({}): {}. "
-                "Fallback to OSM download for bus lines.",
+                "FALLBACK to OSM download for bus lines is active.",
                 drive_roads_path,
                 exc,
             )
@@ -320,8 +320,8 @@ def build_connectpt_osm_bundle(
         try:
             preloaded_buildings = read_geodata(Path(buildings_path))
             if preloaded_buildings.empty:
-                logger.warning(
-                    "ConnectPT preloaded buildings are empty ({}); fallback to OSM building mask for bus line preprocessing.",
+                logger.critical(
+                    "ConnectPT preloaded buildings are empty ({}); FALLBACK to OSM building mask for bus line preprocessing is active.",
                     buildings_path,
                 )
                 preloaded_buildings = None
@@ -335,9 +335,9 @@ def build_connectpt_osm_bundle(
                     len(preloaded_buildings),
                 )
         except Exception as exc:
-            logger.warning(
+            logger.critical(
                 "ConnectPT failed to read preloaded buildings ({}): {}. "
-                "Fallback to OSM building mask for bus line preprocessing.",
+                "FALLBACK to OSM building mask for bus line preprocessing is active.",
                 buildings_path,
                 exc,
             )
@@ -358,13 +358,17 @@ def build_connectpt_osm_bundle(
                 )
             except Exception as exc:
                 logger.warning(
-                    "ConnectPT failed to derive modality '{}' stops from intermodal graph ({}). "
-                    "Falling back to direct OSM stop collection.",
+                    "ConnectPT found no reusable intermodal-derived stops for modality '{}' ({}). "
+                    "Skipping stop fallback because stop collection is pinned to iduedu bundle.",
                     modality.value,
                     exc,
                 )
 
-        if modality not in stops_by_modality:
+        if modality not in stops_by_modality and intermodal_nodes_file is None:
+            logger.critical(
+                "ConnectPT intermodal stop source is unavailable; FALLBACK to direct OSM stop collection is active for modality '{}'.",
+                modality.value,
+            )
             try:
                 direct = get_agg_stops(boundary, [modality])
                 if modality in direct:
@@ -467,7 +471,7 @@ def build_connectpt_osm_bundle(
         modality_artifacts.append(
             ModalityArtifacts(
                 modality=modality.value,
-                raw_stop_count=len(agg_stops),
+                raw_stop_count=len(raw_stops) if raw_stops is not None else len(agg_stops),
                 projected_stop_count=len(filtered_stops),
                 graph_node_count=len(graph_nodes),
                 graph_edge_count=len(graph_edges),
@@ -491,7 +495,7 @@ def build_connectpt_osm_bundle(
         "boundary_source": str(Path(boundary_path).resolve()) if boundary_path is not None else "osmnx_geocode",
         "speed_kmh": speed_kmh,
         "stop_source_policy": (
-            "intermodal_iduedu_bridge_then_connectpt_fallback"
+            "intermodal_iduedu_only"
             if intermodal_nodes_file is not None
             else "connectpt_direct_osm"
         ),
