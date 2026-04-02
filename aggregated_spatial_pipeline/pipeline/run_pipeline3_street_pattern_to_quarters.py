@@ -38,6 +38,12 @@ CLASS_COLORS = {
     "Broken Grid": "#dc2626",
     "unknown": "#d1d5db",
 }
+LOG_FORMAT = (
+    "<green>{time:DD MMM HH:mm}</green> | "
+    "<level>{level: <7}</level> | "
+    "<magenta>{extra[tag]}</magenta> "
+    "{message}"
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -97,19 +103,20 @@ def _resolve_city_dir(args: argparse.Namespace) -> Path:
 
 
 def _log(message: str) -> None:
-    logger.info(f"[pipeline_3_street_pattern] {message}")
+    logger.bind(tag="[pipeline_3_street_pattern]").info(message)
 
 
 def _warn(message: str) -> None:
-    logger.warning(f"[pipeline_3_street_pattern] {message}")
+    logger.bind(tag="[pipeline_3_street_pattern]").warning(message)
 
 
 def _configure_logging() -> None:
     logger.remove()
+    logger.configure(patcher=lambda record: record["extra"].setdefault("tag", "[log]"))
     logger.add(
         sys.stderr,
         level="INFO",
-        format="<green>{time:DD MMM HH:mm}</green> | <level>{level}</level> | <level>{message}</level>",
+        format=LOG_FORMAT,
         colorize=True,
     )
 

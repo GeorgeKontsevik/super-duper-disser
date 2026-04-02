@@ -12,6 +12,12 @@ import iduedu
 from loguru import logger
 
 from aggregated_spatial_pipeline.geodata_io import prepare_geodata_for_parquet, read_geodata
+LOG_FORMAT = (
+    "<green>{time:DD MMM HH:mm}</green> | "
+    "<level>{level: <7}</level> | "
+    "<magenta>{extra[tag]}</magenta> "
+    "{message}"
+)
 
 
 def slugify_place(place: str) -> str:
@@ -45,18 +51,20 @@ def parse_args() -> argparse.Namespace:
 
 def _configure_logging() -> None:
     logger.remove()
+    logger.configure(patcher=lambda record: record["extra"].setdefault("tag", "[log]"))
     logger.add(
         sys.stderr,
         level="INFO",
-        format="<green>{time:DD MMM HH:mm}</green> | <level>{level}</level> | <level>{message}</level>",
+        format=LOG_FORMAT,
         colorize=True,
     )
     try:
+        iduedu.config.logger.configure(patcher=lambda record: record["extra"].setdefault("tag", "[iduedu]"))
         iduedu.config.logger.remove()
         iduedu.config.logger.add(
             sys.stderr,
             level="INFO",
-            format="<green>{time:DD MMM HH:mm}</green> | <level>{level}</level> | <level>{message}</level>",
+            format=LOG_FORMAT,
             colorize=True,
             backtrace=True,
             diagnose=False,
@@ -67,7 +75,7 @@ def _configure_logging() -> None:
 
 
 def _log(message: str) -> None:
-    logger.info(f"[intermodal-builder] {message}")
+    logger.bind(tag="[intermodal-builder]").info(message)
 
 
 def main() -> None:

@@ -189,22 +189,29 @@ def _load_blocksnet_service_defaults() -> dict[str, dict]:
 
 
 BLOCKSNET_SERVICE_DEFAULTS = _load_blocksnet_service_defaults()
+LOG_FORMAT = (
+    "<green>{time:DD MMM HH:mm}</green> | "
+    "<level>{level: <7}</level> | "
+    "<magenta>{extra[tag]}</magenta> "
+    "{message}"
+)
 
 
 def _log(message: str) -> None:
-    logger.info(f"[pipeline_2_prepare] {message}")
+    logger.bind(tag="[pipeline_2_prepare]").info(message)
 
 
 def _warn(message: str) -> None:
-    logger.warning(f"[pipeline_2_prepare] {message}")
+    logger.bind(tag="[pipeline_2_prepare]").warning(message)
 
 
 def _configure_logging() -> None:
     logger.remove()
+    logger.configure(patcher=lambda record: record["extra"].setdefault("tag", "[log]"))
     logger.add(
         sys.stderr,
         level="INFO",
-        format="<green>{time:DD MMM HH:mm}</green> | <level>{level}</level> | <level>{message}</level>",
+        format=LOG_FORMAT,
         colorize=True,
     )
 

@@ -31,6 +31,12 @@ from .scenarios import run_scenarios
 JOINT_SCENARIO_ID = "joint_optimization"
 ORIGINAL_LIVING_BUILDING_TAGS = {"residential", "house", "apartments", "detached", "terrace", "dormitory"}
 TQDM_DISABLE = not sys.stderr.isatty()
+LOG_FORMAT = (
+    "<green>{time:DD MMM HH:mm}</green> | "
+    "<level>{level: <7}</level> | "
+    "<magenta>{extra[tag]}</magenta> "
+    "{message}"
+)
 
 
 @dataclass(frozen=True)
@@ -268,11 +274,11 @@ def _prune_climate_from_spec(spec: PipelineSpec) -> tuple[PipelineSpec, dict]:
 
 
 def _log(message: str) -> None:
-    logger.info(f"[joint-pipeline] {message}")
+    logger.bind(tag="[joint-pipeline]").info(message)
 
 
 def _warn(message: str) -> None:
-    logger.warning(f"[joint-pipeline] {message}")
+    logger.bind(tag="[joint-pipeline]").warning(message)
 
 
 def _log_data_sources_summary(source_details: dict[str, dict]) -> None:
@@ -302,10 +308,11 @@ def _log_data_sources_summary(source_details: dict[str, dict]) -> None:
 
 def _configure_logging() -> None:
     logger.remove()
+    logger.configure(patcher=lambda record: record["extra"].setdefault("tag", "[log]"))
     logger.add(
         sys.stderr,
         level="INFO",
-        format="<green>{time:DD MMM HH:mm}</green> | <level>{level}</level> | <level>{message}</level>",
+        format=LOG_FORMAT,
         colorize=True,
     )
 
