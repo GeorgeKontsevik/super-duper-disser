@@ -11,9 +11,9 @@
   - Current state: only intermodal graph building is isolated in `.venv-iduedu121`; the rest still shares the main root environment.
   - Why deferred: current setup works for the active pipeline flow, but runtime isolation is still an architectural cleanup task.
 
-## Deferred PT Bridge Integration
+## Deferred PT Bridge Follow-Up
 
-- Integrate the tested `iduedu -> simplified ConnectPT stop` bridge into the main pipeline after prototype validation.
-  - Current prototype state: `run_pt_bridge_iduedu_connectpt_prototype.py` extracts raw `iduedu` PT nodes, simplifies them with ConnectPT stop aggregation, saves `raw_iduedu_node_id -> simplified_stop_id` mapping, and renders QA previews on a small city.
-  - Integration direction: keep `iduedu` as the intermodal accessibility graph, keep `connectpt` as the simplified stop graph for route generation/optimization, and connect them via explicit mapping artifacts rather than forcing both into one graph representation.
-  - Why deferred: we first want to validate the simplification rules, mapping quality, and QA visuals on small-city cases before wiring this into the production pipeline.
+- Extend the new `iduedu -> ConnectPT` stop bridge from ingestion to downstream route optimization / regeneration workflows.
+  - Current state: `run_joint` now builds `iduedu` first, `connectpt` reuses modality stops derived from intermodal graph nodes, aggregates them with `connectpt` logic, and stores `raw_stop_id -> aggregated_stop_id` mapping artifacts per modality.
+  - Remaining work: use the saved mapping to project optimized or regenerated routes back onto the richer `iduedu` stop layer when route editing/generation is introduced.
+  - Why deferred: the ingestion bridge is now in place; the next step depends on route-optimization product decisions rather than collection correctness.

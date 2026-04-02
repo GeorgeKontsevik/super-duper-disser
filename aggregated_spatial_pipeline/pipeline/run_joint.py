@@ -2063,28 +2063,6 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         _log("Using cached raw OSM bundle.")
 
     parsed_modalities = parse_modalities(args.modalities)
-    if args.no_cache or not connectpt_manifest_path.exists():
-        _log("Collecting connectpt bundle (OSM download)...")
-        _log(
-            "OSM download (connectpt): "
-            "requesting PT stops/lines via Overpass for selected modalities; "
-            "bus road geometry is reused from pre-collected shared drive graph "
-            f"directly inside the same fixed {effective_buffer_m}m analysis buffer."
-        )
-        started = time.time()
-        build_connectpt_osm_bundle(
-            place=place,
-            modalities=parsed_modalities,
-            output_dir=connectpt_dir,
-            speed_kmh=args.speed_kmh,
-            boundary_path=buffer_path,
-            drive_roads_path=shared_roads_path,
-        )
-        _log(f"ConnectPT bundle collected in {time.time() - started:.1f}s: {_log_name(connectpt_manifest_path)}")
-        downloaded_in_this_run = True
-    else:
-        _log("Using cached connectpt bundle.")
-
     if args.no_cache or not intermodal_manifest_path.exists():
         _log("Collecting intermodal transport graph bundle...")
         _log(
@@ -2108,6 +2086,30 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         downloaded_in_this_run = True
     else:
         _log("Using cached intermodal transport graph bundle.")
+
+    intermodal_nodes_path = intermodal_dir / "graph_nodes.parquet"
+    if args.no_cache or not connectpt_manifest_path.exists():
+        _log("Collecting connectpt bundle...")
+        _log(
+            "ConnectPT stop policy: derive modality stops from intermodal iduedu graph first, "
+            "aggregate them with connectpt logic, store raw->aggregated mapping, "
+            "and fall back to direct OSM stop collection only if derivation fails. "
+            "PT lines are still collected per modality; bus road geometry reuses the shared drive graph."
+        )
+        started = time.time()
+        build_connectpt_osm_bundle(
+            place=place,
+            modalities=parsed_modalities,
+            output_dir=connectpt_dir,
+            speed_kmh=args.speed_kmh,
+            boundary_path=buffer_path,
+            drive_roads_path=shared_roads_path,
+            intermodal_nodes_path=intermodal_nodes_path,
+        )
+        _log(f"ConnectPT bundle collected in {time.time() - started:.1f}s: {_log_name(connectpt_manifest_path)}")
+        downloaded_in_this_run = True
+    else:
+        _log("Using cached connectpt bundle.")
 
     blocks_raw_manifest = _try_load_json(blocks_raw_manifest_path)
     if blocks_raw_manifest is None:

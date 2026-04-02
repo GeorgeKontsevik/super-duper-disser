@@ -17,7 +17,7 @@ What the script does:
 - creates `.venv`
 - installs main project dependencies
 - installs local editable packages: `blocksnet`, `connectpt`, `floor-predictor`
-- creates dedicated `.venv-iduedu121` for intermodal graph building
+- creates dedicated `.venv-iduedu121` for intermodal graph building from forked `GeorgeKontsevik/IduEdu`
 
 ## Run One City
 

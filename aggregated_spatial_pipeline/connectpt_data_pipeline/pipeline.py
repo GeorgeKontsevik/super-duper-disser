@@ -12,6 +12,7 @@ import geopandas as gpd
 import momepy as mp
 import networkx as nx
 import osmnx as ox
+import pandas as pd
 from loguru import logger
 
 from aggregated_spatial_pipeline.geodata_io import prepare_geodata_for_parquet, read_geodata
@@ -27,11 +28,12 @@ from preprocess.network import (
     stop_complete_then_prune,
 )
 from preprocess.projection import project_stops_on_roads
-from preprocess.stops import get_agg_stops
+from preprocess.stops import aggregate_stops, get_agg_stops
 from preprocess.types import Modality
 
 
 DEFAULT_SPEED_KMH = 20.0
+IDUEDU_CONNECTPT_BRIDGE_DISTANCE_M = 30.0
 
 
 @dataclass(frozen=True)
@@ -121,6 +123,11 @@ def _save_pickle(obj, path: Path) -> None:
         pickle.dump(obj, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 
+def _save_json(data: dict | list, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
 def _prepare_graph_outputs(graph: nx.Graph, modality: Modality) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
     nodes_gdf, edges_gdf = mp.nx_to_gdf(graph)
     nodes = nodes_gdf.copy()
@@ -132,6 +139,108 @@ def _prepare_graph_outputs(graph: nx.Graph, modality: Modality) -> tuple[gpd.Geo
     return nodes, edges
 
 
+def _extract_iduedu_connectpt_candidate_stops(
+    intermodal_nodes_path: Path,
+    modality: Modality,
+) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
+    nodes = read_geodata(intermodal_nodes_path)
+    if nodes.empty:
+        raise ValueError(f"Intermodal graph nodes are empty: {intermodal_nodes_path}")
+    if "index" not in nodes.columns:
+        raise ValueError(f"Intermodal graph nodes do not contain stable 'index': {intermodal_nodes_path}")
+
+    node_type = nodes.get("type", pd.Series(index=nodes.index, dtype="object")).astype("string")
+    stop_transport_type = nodes.get("stop_transport_type", pd.Series(index=nodes.index, dtype="object")).astype("string")
+    source = nodes.get("source", pd.Series(index=nodes.index, dtype="object")).astype("string")
+    name = nodes.get("name", pd.Series(index=nodes.index, dtype="object")).astype("string")
+    ref = nodes.get("ref", pd.Series(index=nodes.index, dtype="object")).astype("string")
+
+    # Keep raw modality stop nodes from the graph, plus only the extra tag-derived platforms
+    # injected to mirror connectpt-compatible stop tags.
+    modality_mask = node_type == modality.value
+    extra_platform_mask = (
+        (source == "osm_extra_stop_tag")
+        & (stop_transport_type == modality.value)
+    )
+    raw = nodes[modality_mask | extra_platform_mask].copy()
+    raw = raw[raw.geometry.notna() & ~raw.geometry.is_empty].copy()
+    if raw.empty:
+        raise ValueError(
+            f"No intermodal stop candidates found for modality '{modality.value}' in {intermodal_nodes_path}"
+        )
+
+    raw["raw_stop_id"] = raw["index"].astype(str)
+    raw["name"] = raw.get("name", pd.Series(index=raw.index, dtype="object")).astype("string")
+    raw["ref"] = raw.get("ref", pd.Series(index=raw.index, dtype="object")).astype("string")
+    raw["name"] = raw["name"].where(raw["name"].notna(), raw["ref"])
+    raw["stop_origin"] = pd.Series("iduedu_graph_stop", index=raw.index, dtype="string")
+    raw.loc[extra_platform_mask.loc[raw.index], "stop_origin"] = "iduedu_extra_stop_tag"
+    raw["modality"] = modality.value
+    raw["group_name"] = raw["raw_stop_id"]
+    raw["original_stops"] = 1
+    raw["original_ids"] = raw["raw_stop_id"].map(lambda value: [str(value)])
+    raw_stops = raw[
+        [
+            "raw_stop_id",
+            "index",
+            "type",
+            "source",
+            "stop_transport_type",
+            "stop_origin",
+            "name",
+            "modality",
+            "group_name",
+            "original_stops",
+            "original_ids",
+            "geometry",
+        ]
+    ].copy().reset_index(drop=True)
+
+    aggregate_input = raw_stops[["geometry", "name"]].copy()
+    aggregate_input["name"] = [
+        None if pd.isna(value) else str(value)
+        for value in aggregate_input["name"].tolist()
+    ]
+    aggregate_input.index = raw_stops["raw_stop_id"].astype(str)
+    simplified = aggregate_stops(
+        aggregate_input,
+        distance_threshold=IDUEDU_CONNECTPT_BRIDGE_DISTANCE_M,
+        progress_desc=f"Stops aggregation [{modality.value}]",
+    ).reset_index(drop=True)
+    simplified["modality"] = modality.value
+    simplified["stop_source"] = "iduedu_bridge"
+    simplified["aggregated_stop_id"] = [f"{modality.value}_{i}" for i in range(len(simplified))]
+    return raw_stops, simplified
+
+
+def _build_raw_to_aggregated_mapping(
+    raw_stops: gpd.GeoDataFrame,
+    aggregated_stops: gpd.GeoDataFrame,
+    modality: Modality,
+) -> gpd.GeoDataFrame:
+    raw_lookup = raw_stops.set_index("raw_stop_id", drop=False)
+    records: list[dict] = []
+    for _, row in aggregated_stops.iterrows():
+        aggregated_stop_id = str(row["aggregated_stop_id"])
+        centroid = row.geometry
+        for raw_id in row.get("original_ids", []):
+            raw_id = str(raw_id)
+            raw_row = raw_lookup.loc[raw_id]
+            records.append(
+                {
+                    "modality": modality.value,
+                    "aggregated_stop_id": aggregated_stop_id,
+                    "raw_stop_id": raw_id,
+                    "raw_node_index": str(raw_row.get("index")),
+                    "stop_origin": raw_row.get("stop_origin"),
+                    "raw_type": raw_row.get("type"),
+                    "distance_to_aggregated_centroid_m": float(raw_row.geometry.distance(centroid)),
+                    "geometry": raw_row.geometry,
+                }
+            )
+    return gpd.GeoDataFrame(records, geometry="geometry", crs=raw_stops.crs)
+
+
 def build_connectpt_osm_bundle(
     place: str,
     modalities: list[Modality],
@@ -139,6 +248,7 @@ def build_connectpt_osm_bundle(
     speed_kmh: float = DEFAULT_SPEED_KMH,
     boundary_path: str | Path | None = None,
     drive_roads_path: str | Path | None = None,
+    intermodal_nodes_path: str | Path | None = None,
 ) -> dict:
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -164,8 +274,10 @@ def build_connectpt_osm_bundle(
     _save_geodata(centre_gdf, centre_path)
 
     stops_by_modality: dict[Modality, gpd.GeoDataFrame] = {}
+    raw_stops_by_modality: dict[Modality, gpd.GeoDataFrame] = {}
     lines_by_modality: dict[Modality, gpd.GeoDataFrame] = {}
     preloaded_drive_lines: gpd.GeoDataFrame | None = None
+    intermodal_nodes_file = Path(intermodal_nodes_path).resolve() if intermodal_nodes_path is not None else None
 
     if drive_roads_path is not None and Modality.BUS in modalities:
         try:
@@ -203,14 +315,37 @@ def build_connectpt_osm_bundle(
             preloaded_drive_lines = None
 
     for modality in modalities:
-        try:
-            stops_by_modality.update(get_agg_stops(boundary, [modality]))
-        except Exception as exc:
-            logger.warning(
-                "ConnectPT stops collection skipped for modality '{}' due to OSM/processing error: {}",
-                modality.value,
-                exc,
-            )
+        if intermodal_nodes_file is not None and intermodal_nodes_file.exists():
+            try:
+                raw_stops, aggregated_stops = _extract_iduedu_connectpt_candidate_stops(intermodal_nodes_file, modality)
+                raw_stops_by_modality[modality] = raw_stops
+                stops_by_modality[modality] = aggregated_stops
+                logger.info(
+                    "ConnectPT modality '{}' will reuse intermodal graph stops (raw={}, aggregated={}, source={})",
+                    modality.value,
+                    len(raw_stops),
+                    len(aggregated_stops),
+                    intermodal_nodes_file.name,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "ConnectPT failed to derive modality '{}' stops from intermodal graph ({}). "
+                    "Falling back to direct OSM stop collection.",
+                    modality.value,
+                    exc,
+                )
+
+        if modality not in stops_by_modality:
+            try:
+                direct = get_agg_stops(boundary, [modality])
+                if modality in direct:
+                    stops_by_modality[modality] = direct[modality]
+            except Exception as exc:
+                logger.warning(
+                    "ConnectPT stops collection skipped for modality '{}' due to OSM/processing error: {}",
+                    modality.value,
+                    exc,
+                )
 
         try:
             lines_by_modality.update(
@@ -254,12 +389,21 @@ def build_connectpt_osm_bundle(
 
         agg_stops = stops_by_modality[modality].copy()
         lines = lines_by_modality[modality].copy()
+        raw_stops = raw_stops_by_modality.get(modality)
         agg_stops = _clip_to_boundary(agg_stops, boundary, crs=place_gdf.crs)
         lines = _clip_to_boundary(lines, boundary, crs=place_gdf.crs)
+        if raw_stops is not None:
+            raw_stops = _clip_to_boundary(raw_stops, boundary, crs=place_gdf.crs)
 
         agg_stops_path = modality_dir / "aggregated_stops.parquet"
+        raw_stops_path = modality_dir / "raw_stops.parquet"
+        mapping_path = modality_dir / "raw_to_aggregated_stop_map.parquet"
         lines_path = modality_dir / "lines.parquet"
         _save_geodata(agg_stops, agg_stops_path)
+        if raw_stops is not None:
+            _save_geodata(raw_stops, raw_stops_path)
+            raw_to_aggregated = _build_raw_to_aggregated_mapping(raw_stops, agg_stops, modality)
+            _save_geodata(raw_to_aggregated, mapping_path)
         _save_geodata(lines, lines_path)
 
         roads_with_stops, filtered_stops = project_stops_on_roads(lines, agg_stops)
@@ -299,6 +443,7 @@ def build_connectpt_osm_bundle(
                 graph_edge_count=len(graph_edges),
                 files={
                     "aggregated_stops": str(agg_stops_path),
+                    **({"raw_stops": str(raw_stops_path), "raw_to_aggregated_stop_map": str(mapping_path)} if raw_stops is not None else {}),
                     "lines": str(lines_path),
                     "projected_lines": str(projected_lines_path),
                     "projected_stops": str(projected_stops_path),
@@ -315,6 +460,13 @@ def build_connectpt_osm_bundle(
         "slug": slugify_place(place),
         "boundary_source": str(Path(boundary_path).resolve()) if boundary_path is not None else "osmnx_geocode",
         "speed_kmh": speed_kmh,
+        "stop_source_policy": (
+            "intermodal_iduedu_bridge_then_connectpt_fallback"
+            if intermodal_nodes_file is not None
+            else "connectpt_direct_osm"
+        ),
+        "intermodal_nodes_source": str(intermodal_nodes_file) if intermodal_nodes_file is not None else None,
+        "bridge_distance_threshold_m": IDUEDU_CONNECTPT_BRIDGE_DISTANCE_M if intermodal_nodes_file is not None else None,
         "boundary": str(boundary_path),
         "centre": str(centre_path),
         "modalities": [artifact.__dict__ for artifact in modality_artifacts],

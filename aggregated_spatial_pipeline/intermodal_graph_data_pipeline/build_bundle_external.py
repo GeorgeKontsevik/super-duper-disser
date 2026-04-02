@@ -19,6 +19,12 @@ LOG_FORMAT = (
     "{message}"
 )
 
+CONNECTPT_COMPAT_EXTRA_STOP_TAGS = {
+    "bus": [{"highway": "bus_stop"}],
+    "tram": [{"railway": "tram_stop"}],
+    "trolleybus": [{"highway": "bus_stop", "trolleybus": "yes"}],
+}
+
 
 def slugify_place(place: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "_", place.lower()).strip("_")
@@ -98,7 +104,10 @@ def main() -> None:
     graph = iduedu.get_intermodal_graph(
         territory=territory_gdf,
         clip_by_territory=True,
-        pt_kwargs={"transport_types": transport_types},
+        pt_kwargs={
+            "transport_types": transport_types,
+            "extra_stop_tags": CONNECTPT_COMPAT_EXTRA_STOP_TAGS,
+        },
     )
 
     nodes_gdf = iduedu.graph_to_gdf(graph, nodes=True, edges=False)
@@ -122,6 +131,8 @@ def main() -> None:
         "iduedu_version": "1.2.1",
         "clip_by_territory": True,
         "transport_types": transport_types,
+        "extra_stop_tags": CONNECTPT_COMPAT_EXTRA_STOP_TAGS,
+        "extra_stop_stats": graph.graph.get("extra_stop_stats", {}),
         "boundary_source": str(boundary_path),
         "files": {
             "boundary": str(boundary_copy_path),

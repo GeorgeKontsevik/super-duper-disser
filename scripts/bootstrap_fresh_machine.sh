@@ -207,7 +207,7 @@ uv pip install --python .venv/bin/python \
 echo "Creating dedicated iduedu 1.2.1 environment..."
 uv venv .venv-iduedu121 --python 3.11
 uv pip install --python .venv-iduedu121/bin/python \
-  iduedu==1.2.1 \
+  "git+https://github.com/GeorgeKontsevik/IduEdu.git@main" \
   geopandas \
   pyarrow \
   loguru \
