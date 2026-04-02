@@ -62,28 +62,35 @@ COMPARISON_COLOR_PALETTE = [
 ]
 
 TQDM_DISABLE = not sys.stderr.isatty()
+LOG_FORMAT = (
+    "<green>{time:DD MMM HH:mm}</green> | "
+    "<level>{level: <7}</level> | "
+    "<magenta>{extra[tag]}</magenta> "
+    "{message}"
+)
 
 
 def _configure_logging() -> None:
     logger.remove()
+    logger.configure(patcher=lambda record: record["extra"].setdefault("tag", "[log]"))
     logger.add(
         sys.stderr,
         level="INFO",
-        format="<green>{time:DD MMM HH:mm}</green> | <level>{level}</level> | <level>{message}</level>",
+        format=LOG_FORMAT,
         colorize=True,
     )
 
 
 def _progress_log(message: str) -> None:
-    logger.info(f"[street-pattern] {message}")
+    logger.bind(tag="[street-pattern]").info(message)
 
 
 def _log(message: str) -> None:
-    logger.info(f"[street-pattern] {message}")
+    logger.bind(tag="[street-pattern]").info(message)
 
 
 def _success(message: str) -> None:
-    logger.success(f"[street-pattern] {message}")
+    logger.bind(tag="[street-pattern]").success(message)
 COUNTRY_ROADS_PATHS = {
     "canada": REPO_ROOT / "data_all_cities" / "hotosm_can_roads_lines_gpkg" / "hotosm_can_roads_lines_gpkg.gpkg",
     "usa": REPO_ROOT / "data_all_cities" / "hotosm_usa_roads_lines_gpkg" / "hotosm_usa_roads_lines_gpkg.gpkg",
