@@ -2146,6 +2146,15 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
     else:
         _log("Using cached raw OSM bundle.")
 
+    blocks_raw_manifest = _try_load_json(blocks_raw_manifest_path)
+    if blocks_raw_manifest is None:
+        raise RuntimeError(f"Cannot read raw OSM manifest: {blocks_raw_manifest_path}")
+
+    raw_files = blocks_raw_manifest.get("files", {})
+    boundary_path = Path(raw_files["boundary"]).resolve()
+    buildings_path = Path(raw_files["buildings"]).resolve()
+    land_use_path = Path(raw_files["land_use"]).resolve()
+
     parsed_modalities = parse_modalities(args.modalities)
     if args.no_cache or not intermodal_manifest_path.exists():
         _log("Collecting intermodal transport graph bundle...")
@@ -2210,14 +2219,6 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
     else:
         _log("Using cached connectpt bundle.")
 
-    blocks_raw_manifest = _try_load_json(blocks_raw_manifest_path)
-    if blocks_raw_manifest is None:
-        raise RuntimeError(f"Cannot read raw OSM manifest: {blocks_raw_manifest_path}")
-
-    raw_files = blocks_raw_manifest.get("files", {})
-    boundary_path = Path(raw_files["boundary"]).resolve()
-    buildings_path = Path(raw_files["buildings"]).resolve()
-    land_use_path = Path(raw_files["land_use"]).resolve()
     floor_output_path = derived_dir / "buildings_floor_enriched.parquet"
     buffered_quarters_path = derived_dir / "quarters_clipped.parquet"
     clipped_street_grid_path = derived_dir / "street_grid_buffered.parquet"
