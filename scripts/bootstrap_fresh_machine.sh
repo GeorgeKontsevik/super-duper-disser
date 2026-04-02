@@ -231,6 +231,8 @@ uv pip install --python "$ROOT/connectpt/.venv/bin/python" \
 echo "Creating dedicated floor-predictor environment..."
 create_repo_venv "$ROOT/floor-predictor"
 uv pip install --python "$ROOT/floor-predictor/.venv/bin/python" -e "$ROOT/floor-predictor"
+uv pip install --python "$ROOT/floor-predictor/.venv/bin/python" \
+  geopandas pandas pyarrow shapely scipy networkx loguru tqdm matplotlib
 
 echo "Creating dedicated street-pattern environment..."
 create_repo_venv "$ROOT/segregation-by-design-experiments"

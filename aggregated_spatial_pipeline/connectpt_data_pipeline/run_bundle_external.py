@@ -2,9 +2,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
+from loguru import logger
+
 from aggregated_spatial_pipeline.connectpt_data_pipeline.pipeline import build_connectpt_osm_bundle, parse_modalities
+
+
+LOG_FORMAT = (
+    "<green>{time:DD MMM HH:mm}</green> | "
+    "<level>{level: <7}</level> | "
+    "<magenta>{extra[tag]}</magenta> "
+    "{message}"
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -20,7 +31,19 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _configure_logging() -> None:
+    logger.remove()
+    logger.configure(extra={"tag": "[connectpt]"})
+    logger.add(
+        sys.stderr,
+        level="INFO",
+        format=LOG_FORMAT,
+        colorize=sys.stderr.isatty(),
+    )
+
+
 def main() -> None:
+    _configure_logging()
     args = parse_args()
     manifest = build_connectpt_osm_bundle(
         place=args.place,
