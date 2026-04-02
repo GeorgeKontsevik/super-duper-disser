@@ -4,10 +4,12 @@ import argparse
 import json
 import pickle
 import re
+import sys
 from pathlib import Path
 
 import geopandas as gpd
 import iduedu
+from loguru import logger
 
 from aggregated_spatial_pipeline.geodata_io import prepare_geodata_for_parquet, read_geodata
 
@@ -41,7 +43,27 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _configure_logging() -> None:
+    logger.remove()
+    logger.add(
+        sys.stderr,
+        level="INFO",
+        format="<green>{time:DD MMM HH:mm}</green> | <level>{level}</level> | <level>{message}</level>",
+        colorize=True,
+    )
+    try:
+        iduedu.config.configure_logging(level="INFO")
+        iduedu.config.set_enable_tqdm(False)
+    except Exception:
+        pass
+
+
+def _log(message: str) -> None:
+    logger.info(f"[intermodal-builder] {message}")
+
+
 def main() -> None:
+    _configure_logging()
     args = parse_args()
     place = str(args.place)
     boundary_path = Path(args.boundary_path).resolve()
@@ -53,8 +75,8 @@ def main() -> None:
         raise ValueError(f"Intermodal graph territory is empty: {boundary_path}")
 
     transport_types = ["tram", "bus", "trolleybus", "subway"]
-    print(
-        "[intermodal-builder] Building intermodal graph with iduedu 1.2.1 "
+    _log(
+        "Building intermodal graph with iduedu 1.2.1 "
         f"for modes={','.join(transport_types)} (clip_by_territory=True)"
     )
     graph = iduedu.get_intermodal_graph(
@@ -98,7 +120,7 @@ def main() -> None:
     }
     manifest_path = output_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(f"[intermodal-builder] Bundle ready: {manifest_path}")
+    _log(f"Bundle ready: {manifest_path}")
 
 
 if __name__ == "__main__":

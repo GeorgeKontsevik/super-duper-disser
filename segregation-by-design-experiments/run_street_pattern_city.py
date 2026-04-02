@@ -61,6 +61,8 @@ COMPARISON_COLOR_PALETTE = [
     "#b2df8a",
 ]
 
+TQDM_DISABLE = not sys.stderr.isatty()
+
 
 def _configure_logging() -> None:
     logger.remove()
@@ -427,6 +429,7 @@ def split_graph_by_grid_for_polygon(
     for node_id, data in tqdm(
         graph.nodes(data=True),
         desc="Assigning nodes to cells",
+        disable=TQDM_DISABLE,
         leave=False,
         ascii=True,
         dynamic_ncols=True,
@@ -472,6 +475,7 @@ def split_graph_by_grid_for_polygon(
     for u, v, key, data, line in tqdm(
         edges_with_geometry,
         desc="Assigning edges to cells",
+        disable=TQDM_DISABLE,
         leave=False,
         ascii=True,
         dynamic_ncols=True,
@@ -1500,6 +1504,7 @@ def main() -> None:
         total=total_stages,
         desc="Street-pattern pipeline",
         unit="stage",
+        disable=TQDM_DISABLE,
         leave=False,
         ascii=True,
         dynamic_ncols=True,

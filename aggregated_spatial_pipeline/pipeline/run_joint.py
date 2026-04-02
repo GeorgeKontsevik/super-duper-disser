@@ -30,6 +30,7 @@ from .scenarios import run_scenarios
 
 JOINT_SCENARIO_ID = "joint_optimization"
 ORIGINAL_LIVING_BUILDING_TAGS = {"residential", "house", "apartments", "detached", "terrace", "dormitory"}
+TQDM_DISABLE = not sys.stderr.isatty()
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,16 @@ def _format_crs_for_log(crs) -> str:
     if name:
         return str(name)
     return str(crs)
+
+
+def _tqdm_kwargs(*, leave: bool = False) -> dict:
+    return {
+        "disable": TQDM_DISABLE,
+        "leave": leave,
+        "ascii": True,
+        "dynamic_ncols": True,
+        "mininterval": 0.5,
+    }
 
 
 def parse_args() -> argparse.Namespace:
@@ -269,13 +280,22 @@ def _log_data_sources_summary(source_details: dict[str, dict]) -> None:
         return
     lines = ["Data sources summary:"]
     for layer_id, detail in source_details.items():
-        parts = [f"{layer_id}={detail.get('input_path') or 'n/a'}"]
+        input_path = detail.get("input_path") or "n/a"
+        try:
+            input_label = Path(str(input_path)).name
+        except Exception:
+            input_label = str(input_path)
+        parts = [f"{layer_id}={input_label}"]
         origin = detail.get("origin")
         if origin:
             parts.append(f"origin={origin}")
         manifest_path = detail.get("manifest_path")
         if manifest_path:
-            parts.append(f"manifest={manifest_path}")
+            try:
+                manifest_label = Path(str(manifest_path)).name
+            except Exception:
+                manifest_label = str(manifest_path)
+            parts.append(f"manifest={manifest_label}")
         lines.append(" | ".join(parts))
     _log("\n".join(lines))
 
@@ -2248,9 +2268,11 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
     )
     _log(f"Preview generation finished in {time.time() - preview_started:.1f}s.")
     if preview_paths:
-        _log("Preview PNG files:")
-        for preview_path in preview_paths:
-            _log(f"  - {preview_path}")
+        preview_dir = preview_paths[0].parent if preview_paths else None
+        if preview_dir is not None:
+            _log(f"Preview PNG files: {len(preview_paths)} saved to {preview_dir}")
+        else:
+            _log(f"Preview PNG files: {len(preview_paths)} generated")
     else:
         _log("Preview PNG files were not generated (no readable non-empty layers).")
 
@@ -2349,7 +2371,7 @@ def main() -> None:
 
     _log("Starting joint pipeline.")
 
-    with tqdm(total=6, desc="Joint Pipeline", unit="step") as steps:
+    with tqdm(total=6, desc="Joint Pipeline", unit="step", **_tqdm_kwargs(leave=True)) as steps:
         steps.set_description("Joint Pipeline: validate spec")
         runtime_spec = PipelineSpec.load(Path(args.spec_dir))
         issues = runtime_spec.validate()
@@ -2398,7 +2420,7 @@ def main() -> None:
         steps.set_description("Joint Pipeline: load layers")
         _log("PHASE 2/2: JOINT CALCULATIONS")
         layers: dict[str, gpd.GeoDataFrame] = {}
-        for layer_id, path in tqdm(prepared.layer_inputs.items(), desc="Loading layers", unit="layer", leave=False):
+        for layer_id, path in tqdm(prepared.layer_inputs.items(), desc="Loading layers", unit="layer", **_tqdm_kwargs()):
             _validate_layer_input_path(path, layer_id)
             try:
                 gdf = load_layer(path, layer_id)
@@ -2414,7 +2436,7 @@ def main() -> None:
         steps.set_description("Joint Pipeline: build crosswalks")
         crosswalks = {}
         crosswalks_path = output_dir / "crosswalks.gpkg"
-        for crosswalk in tqdm(runtime_spec.crosswalks["crosswalks"], desc="Building crosswalks", unit="cw", leave=False):
+        for crosswalk in tqdm(runtime_spec.crosswalks["crosswalks"], desc="Building crosswalks", unit="cw", **_tqdm_kwargs()):
             crosswalk_id = crosswalk["crosswalk_id"]
             crosswalk_gdf = build_crosswalk(
                 source_gdf=layers[crosswalk["source_layer"]],
@@ -2445,7 +2467,7 @@ def main() -> None:
             "climate": climate_meta,
             "scenarios": {},
         }
-        for scenario_id in tqdm(required_scenarios, desc="Saving scenarios", unit="scenario", leave=False):
+        for scenario_id in tqdm(required_scenarios, desc="Saving scenarios", unit="scenario", **_tqdm_kwargs()):
             result = all_results[scenario_id]
             scenario_dir = output_dir / scenario_id
             scenario_dir.mkdir(parents=True, exist_ok=True)
