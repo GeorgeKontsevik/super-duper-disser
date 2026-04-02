@@ -550,7 +550,11 @@ def _ensure_street_grid_from_repo(
         command.append("--no-cache")
 
     _log("Classification module start: segregation-by-design street-pattern inference.")
-    _log(f"Classification command: {' '.join(command)}")
+    _log(
+        "Classification config: "
+        f"place={place}, road_source={road_source}, buffer_m={buffer_m:.1f}, grid_step={grid_step:.1f}, "
+        f"output={summary_output_path.name}, roads={roads_input_path.name if roads_input_path is not None else 'osm'}"
+    )
     started = time.time()
     subprocess.run(command, check=True, cwd=str(repo_root))
     _log(
