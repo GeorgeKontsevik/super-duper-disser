@@ -2,7 +2,8 @@
 set -u
 
 ROOT="/Users/gk/Code/super-duper-disser"
-PY="$ROOT/.venv/bin/python"
+ROOT_PY="$ROOT/.venv/bin/python"
+BLOCKSNET_PY="$ROOT/blocksnet/.venv/bin/python"
 export PYTHONPATH="$ROOT"
 
 BUFFER_M=5000
@@ -31,15 +32,15 @@ while IFS= read -r PLACE || [[ -n "$PLACE" ]]; do
   echo "buffer=$BUFFER_M m | street_grid_step=$STREET_GRID_STEP m"
   echo "============================================================"
 
-  if "$PY" -m aggregated_spatial_pipeline.pipeline.run_joint \
+  if "$ROOT_PY" -m aggregated_spatial_pipeline.pipeline.run_joint \
       --place "$PLACE" \
       --buffer-m "$BUFFER_M" \
       --street-grid-step "$STREET_GRID_STEP"
   then
-    if "$PY" -m aggregated_spatial_pipeline.pipeline.run_pipeline2_prepare_solver_inputs \
+    if "$BLOCKSNET_PY" -m aggregated_spatial_pipeline.pipeline.run_pipeline2_prepare_solver_inputs \
         --place "$PLACE"
     then
-      if "$PY" -m aggregated_spatial_pipeline.pipeline.run_pipeline3_street_pattern_to_quarters \
+      if "$ROOT_PY" -m aggregated_spatial_pipeline.pipeline.run_pipeline3_street_pattern_to_quarters \
           --place "$PLACE"
       then
         echo "OK: $PLACE"

@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-ENV_DIR="${REPO_ROOT}/aggregated_spatial_pipeline/.venv-floor-predictor"
+ENV_DIR="${REPO_ROOT}/floor-predictor/.venv"
 FLOOR_PREDICTOR_DIR="${FLOOR_PREDICTOR_DIR:-${REPO_ROOT}/floor-predictor}"
 
 if [[ ! -d "${FLOOR_PREDICTOR_DIR}/.git" && ! -f "${FLOOR_PREDICTOR_DIR}/pyproject.toml" ]]; then
@@ -14,7 +14,7 @@ if [[ ! -d "${FLOOR_PREDICTOR_DIR}/.git" && ! -f "${FLOOR_PREDICTOR_DIR}/pyproje
   exit 1
 fi
 
-uv venv "${ENV_DIR}"
+uv venv "${ENV_DIR}" --python 3.11
 uv pip install --python "${ENV_DIR}/bin/python" -e "${FLOOR_PREDICTOR_DIR}"
 uv pip install --python "${ENV_DIR}/bin/python" osmnx geopandas pandas scikit-learn shapely
 

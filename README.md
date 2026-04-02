@@ -14,10 +14,13 @@ What the script does:
 - installs `uv` if missing
 - tries to install `python3`, `curl`, and `git` automatically via available package manager (`brew`, `apt`, `dnf`, `yum`, `pacman`, `zypper`, `winget`, `choco`)
 - initializes git submodules
-- creates `.venv`
-- installs main project dependencies
-- installs local editable packages: `blocksnet`, `connectpt`, `floor-predictor`
-- creates dedicated `.venv-iduedu121` for intermodal graph building from forked `GeorgeKontsevik/IduEdu`
+- creates root orchestration env: `.venv`
+- creates dedicated per-repo envs:
+  - `blocksnet/.venv`
+  - `connectpt/.venv`
+  - `floor-predictor/.venv`
+  - `segregation-by-design-experiments/.venv`
+  - sibling `../iduedu-fork/.venv` from forked `GeorgeKontsevik/IduEdu`
 
 ## Run One City
 
@@ -25,7 +28,7 @@ What the script does:
 cd /Users/gk/Code/super-duper-disser
 PLACE="Saint Petersburg, Russia"
 PYTHONPATH=/Users/gk/Code/super-duper-disser .venv/bin/python -m aggregated_spatial_pipeline.pipeline.run_joint --place "$PLACE" --buffer-m 5000 --street-grid-step 500
-PYTHONPATH=/Users/gk/Code/super-duper-disser .venv/bin/python -m aggregated_spatial_pipeline.pipeline.run_pipeline2_prepare_solver_inputs --place "$PLACE"
+PYTHONPATH=/Users/gk/Code/super-duper-disser blocksnet/.venv/bin/python -m aggregated_spatial_pipeline.pipeline.run_pipeline2_prepare_solver_inputs --place "$PLACE"
 PYTHONPATH=/Users/gk/Code/super-duper-disser .venv/bin/python -m aggregated_spatial_pipeline.pipeline.run_pipeline3_street_pattern_to_quarters --place "$PLACE"
 ```
 

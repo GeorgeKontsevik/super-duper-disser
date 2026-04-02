@@ -6,6 +6,8 @@ import re
 import subprocess
 from pathlib import Path
 
+from aggregated_spatial_pipeline.runtime_paths import intermodal_python
+
 
 def slugify_place(place: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "_", place.lower()).strip("_")
@@ -13,7 +15,7 @@ def slugify_place(place: str) -> str:
 
 
 def default_intermodal_python(repo_root: Path) -> Path:
-    return repo_root / ".venv-iduedu121" / "bin" / "python"
+    return intermodal_python(repo_root)
 
 
 def build_intermodal_graph_bundle(

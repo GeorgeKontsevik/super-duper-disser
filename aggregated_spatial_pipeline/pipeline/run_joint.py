@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
 import re
 import subprocess
 import sys
@@ -20,6 +21,12 @@ from tqdm.auto import tqdm
 from aggregated_spatial_pipeline.geodata_io import (
     prepare_geodata_for_parquet,
     read_geodata,
+)
+from aggregated_spatial_pipeline.runtime_paths import (
+    blocksnet_python,
+    connectpt_python,
+    floor_predictor_python,
+    street_pattern_python,
 )
 from aggregated_spatial_pipeline.spec import CONFIG_DIR, PipelineSpec
 
@@ -79,6 +86,38 @@ def _tqdm_kwargs(*, leave: bool = False) -> dict:
         "dynamic_ncols": True,
         "mininterval": 0.5,
     }
+
+
+def _run_external_json_command(
+    *,
+    python_path: Path,
+    module: str,
+    repo_root: Path,
+    args: list[str],
+    mplconfigdir: str,
+) -> dict:
+    if not python_path.exists():
+        raise FileNotFoundError(
+            f"Required runtime was not found: {python_path}. "
+            "Create dedicated per-repository environments first via bootstrap."
+        )
+    env = dict(os.environ)
+    env["PYTHONPATH"] = f"{repo_root}{os.pathsep}{env['PYTHONPATH']}" if env.get("PYTHONPATH") else str(repo_root)
+    env.setdefault("MPLCONFIGDIR", mplconfigdir)
+    command = [str(python_path), "-m", module, *args]
+    completed = subprocess.run(
+        command,
+        check=True,
+        cwd=str(repo_root),
+        env=env,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    stdout = (completed.stdout or "").strip()
+    if not stdout:
+        return {}
+    last_line = stdout.splitlines()[-1]
+    return json.loads(last_line)
 
 
 def parse_args() -> argparse.Namespace:
@@ -526,8 +565,14 @@ def _ensure_street_grid_from_repo(
         )
 
     script_path = experiments_dir / "run_street_pattern_city.py"
+    street_python = street_pattern_python(repo_root)
+    if not street_python.exists():
+        raise FileNotFoundError(
+            f"Street-pattern runtime was not found: {street_python}. "
+            "Create the dedicated segregation-by-design-experiments environment first."
+        )
     command = [
-        sys.executable,
+        str(street_python),
         str(script_path),
         "--place",
         place,
@@ -1960,11 +2005,10 @@ def _save_collection_previews(
 def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
     # Lazy imports so explicit file mode does not require collection dependencies at import time.
     from aggregated_spatial_pipeline.blocksnet_data_pipeline.pipeline import (
-        build_blocksnet_bundle,
         collect_blocksnet_raw_osm_bundle,
         slugify_place,
     )
-    from aggregated_spatial_pipeline.connectpt_data_pipeline.pipeline import build_connectpt_osm_bundle, parse_modalities
+    from aggregated_spatial_pipeline.connectpt_data_pipeline.pipeline import parse_modalities
     from aggregated_spatial_pipeline.intermodal_graph_data_pipeline.pipeline import build_intermodal_graph_bundle
 
     # Some imported modules may reconfigure loguru on import; enforce compact format again.
@@ -2097,14 +2141,27 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             "PT lines are still collected per modality; bus road geometry reuses the shared drive graph."
         )
         started = time.time()
-        build_connectpt_osm_bundle(
-            place=place,
-            modalities=parsed_modalities,
-            output_dir=connectpt_dir,
-            speed_kmh=args.speed_kmh,
-            boundary_path=buffer_path,
-            drive_roads_path=shared_roads_path,
-            intermodal_nodes_path=intermodal_nodes_path,
+        _run_external_json_command(
+            python_path=connectpt_python(repo_root),
+            module="aggregated_spatial_pipeline.connectpt_data_pipeline.run_bundle_external",
+            repo_root=repo_root,
+            args=[
+                "--place",
+                place,
+                "--modalities",
+                *[m.value for m in parsed_modalities],
+                "--output-dir",
+                str(connectpt_dir),
+                "--speed-kmh",
+                str(float(args.speed_kmh)),
+                "--boundary-path",
+                str(buffer_path),
+                "--drive-roads-path",
+                str(shared_roads_path),
+                "--intermodal-nodes-path",
+                str(intermodal_nodes_path),
+            ],
+            mplconfigdir="/tmp/mpl-connectpt",
         )
         _log(f"ConnectPT bundle collected in {time.time() - started:.1f}s: {_log_name(connectpt_manifest_path)}")
         downloaded_in_this_run = True
@@ -2167,13 +2224,26 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             "filling missing is_living/storey using pre-collected blocksnet layers "
             "(buildings + land_use); no additional OSM download on this step."
         )
-        floor_metrics = _run_floor_predictor_preprocessing(
+        floor_args = [
+            "--repo-root",
+            str(repo_root),
+            "--buildings-path",
+            str(buildings_path),
+            "--land-use-path",
+            str(land_use_path),
+            "--output-path",
+            str(floor_output_path),
+            "--floor-ignore-missing-below-pct",
+            str(float(args.floor_ignore_missing_below_pct)),
+        ]
+        if bool(args.simple_bad_is_living_restore):
+            floor_args.append("--simple-bad-is-living-restore")
+        floor_metrics = _run_external_json_command(
+            python_path=floor_predictor_python(repo_root),
+            module="aggregated_spatial_pipeline.pipeline.run_floor_predictor_external",
             repo_root=repo_root,
-            buildings_path=buildings_path,
-            land_use_path=land_use_path,
-            output_path=floor_output_path,
-            simple_bad_is_living_restore=bool(args.simple_bad_is_living_restore),
-            floor_ignore_missing_below_pct=float(args.floor_ignore_missing_below_pct),
+            args=floor_args,
+            mplconfigdir="/tmp/mpl-floor-predictor",
         )
         _log(
             "Floor-predictor done: "
@@ -2203,12 +2273,23 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
     if args.no_cache or not blocks_manifest_path.exists():
         _log("BlocksNet processing step: building quarters from pre-collected OSM layers + enriched buildings.")
         started = time.time()
-        build_blocksnet_bundle(
-            place=place,
-            output_dir=blocks_dir,
-            boundary_path=buffer_path,
-            prefetched_layers={k: str(v) for k, v in raw_files.items()},
-            buildings_override_path=floor_output_path,
+        _run_external_json_command(
+            python_path=blocksnet_python(repo_root),
+            module="aggregated_spatial_pipeline.blocksnet_data_pipeline.run_bundle_external",
+            repo_root=repo_root,
+            args=[
+                "--place",
+                place,
+                "--output-dir",
+                str(blocks_dir),
+                "--boundary-path",
+                str(buffer_path),
+                "--prefetched-layers-json",
+                json.dumps({k: str(v) for k, v in raw_files.items()}, ensure_ascii=False),
+                "--buildings-override-path",
+                str(floor_output_path),
+            ],
+            mplconfigdir="/tmp/mpl-blocksnet",
         )
         _log(f"BlocksNet bundle built in {time.time() - started:.1f}s: {_log_name(blocks_manifest_path)}")
         downloaded_in_this_run = True

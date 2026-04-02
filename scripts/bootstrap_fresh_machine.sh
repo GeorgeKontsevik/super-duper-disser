@@ -186,13 +186,26 @@ fi
 echo "Updating git submodules..."
 git submodule update --init --recursive
 
+ensure_repo_clone() {
+  local repo_url="$1"
+  local repo_dir="$2"
+  if [[ -d "$repo_dir/.git" || -f "$repo_dir/pyproject.toml" ]]; then
+    return 0
+  fi
+  echo "Cloning missing repository: $repo_url -> $repo_dir"
+  git clone "$repo_url" "$repo_dir"
+}
+
+create_repo_venv() {
+  local repo_dir="$1"
+  echo "Creating env: $repo_dir/.venv"
+  uv venv "$repo_dir/.venv" --python 3.11
+}
+
 echo "Creating main environment..."
 uv python install 3.11
 uv venv .venv --python 3.11
 uv sync --python .venv/bin/python
-
-echo "Installing local packages into main environment..."
-uv pip install --python .venv/bin/python -e ./blocksnet -e ./connectpt -e ./floor-predictor
 
 echo "Installing extra runtime dependencies into main environment..."
 uv pip install --python .venv/bin/python \
@@ -204,21 +217,42 @@ uv pip install --python .venv/bin/python \
   torchvision \
   torch-geometric
 
-echo "Creating dedicated iduedu 1.2.1 environment..."
-uv venv .venv-iduedu121 --python 3.11
-uv pip install --python .venv-iduedu121/bin/python \
-  "git+https://github.com/GeorgeKontsevik/IduEdu.git@main" \
-  geopandas \
-  pyarrow \
-  loguru \
-  networkx \
-  shapely \
-  pandas
+echo "Creating dedicated blocksnet environment..."
+create_repo_venv "$ROOT/blocksnet"
+uv pip install --python "$ROOT/blocksnet/.venv/bin/python" -e "$ROOT/blocksnet"
+
+echo "Creating dedicated connectpt environment..."
+create_repo_venv "$ROOT/connectpt"
+uv pip install --python "$ROOT/connectpt/.venv/bin/python" -e "$ROOT/connectpt"
+uv pip install --python "$ROOT/connectpt/.venv/bin/python" \
+  osmnx momepy neatnet pygeoops pandas scipy shapely networkx loguru pyarrow
+
+echo "Creating dedicated floor-predictor environment..."
+create_repo_venv "$ROOT/floor-predictor"
+uv pip install --python "$ROOT/floor-predictor/.venv/bin/python" -e "$ROOT/floor-predictor"
+
+echo "Creating dedicated street-pattern environment..."
+create_repo_venv "$ROOT/segregation-by-design-experiments"
+uv pip install --python "$ROOT/segregation-by-design-experiments/.venv/bin/python" \
+  geopandas pandas osmnx networkx shapely pyarrow loguru matplotlib \
+  torch torchvision torch-geometric huggingface-hub scikit-learn tqdm osmapi momepy
+
+IDUEDU_FORK_DIR="${IDUEDU_FORK_DIR:-$(cd "$ROOT/.." && pwd)/iduedu-fork}"
+ensure_repo_clone "https://github.com/GeorgeKontsevik/IduEdu.git" "$IDUEDU_FORK_DIR"
+echo "Creating dedicated iduedu-fork environment..."
+create_repo_venv "$IDUEDU_FORK_DIR"
+uv pip install --python "$IDUEDU_FORK_DIR/.venv/bin/python" -e "$IDUEDU_FORK_DIR"
+uv pip install --python "$IDUEDU_FORK_DIR/.venv/bin/python" \
+  geopandas pyarrow loguru networkx shapely pandas scipy
 
 echo
 echo "Bootstrap finished."
 echo "Main env: $ROOT/.venv"
-echo "Intermodal env: $ROOT/.venv-iduedu121"
+echo "BlocksNet env: $ROOT/blocksnet/.venv"
+echo "ConnectPT env: $ROOT/connectpt/.venv"
+echo "Floor-predictor env: $ROOT/floor-predictor/.venv"
+echo "Street-pattern env: $ROOT/segregation-by-design-experiments/.venv"
+echo "Intermodal env: $IDUEDU_FORK_DIR/.venv"
 echo
 echo "Single-city example:"
 echo "cd $ROOT && PLACE=\"Saint Petersburg, Russia\" && PYTHONPATH=$ROOT .venv/bin/python -m aggregated_spatial_pipeline.pipeline.run_joint --place \"\$PLACE\" --buffer-m 5000 --street-grid-step 500 && PYTHONPATH=$ROOT .venv/bin/python -m aggregated_spatial_pipeline.pipeline.run_pipeline2_prepare_solver_inputs --place \"\$PLACE\" && PYTHONPATH=$ROOT .venv/bin/python -m aggregated_spatial_pipeline.pipeline.run_pipeline3_street_pattern_to_quarters --place \"\$PLACE\""
