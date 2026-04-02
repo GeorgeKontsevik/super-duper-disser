@@ -526,9 +526,9 @@ def _plot_accessibility_previews(
         fig.patch.set_facecolor("#6b6b6b")
         ax.set_facecolor("#6b6b6b")
         if outer_bg is not None and not outer_bg.empty:
-            outer_bg.plot(ax=ax, facecolor="#6b6b6b", edgecolor="none", alpha=1.0, zorder=0)
+            outer_bg.plot(ax=ax, facecolor="#6b6b6b", edgecolor="none", alpha=1.0, zorder=-20)
         if boundary_plot is not None and not boundary_plot.empty:
-            boundary_plot.plot(ax=ax, facecolor="#f7f0dd", edgecolor="none", linewidth=0.0, alpha=1.0, zorder=1)
+            boundary_plot.plot(ax=ax, facecolor="#f7f0dd", edgecolor="none", linewidth=0.0, alpha=1.0, zorder=-10)
         base_plot.plot(
             ax=ax,
             color="#f3f4f6",
@@ -656,9 +656,9 @@ def _plot_service_lp_preview(
     ax.set_facecolor("#6b6b6b")
     hist_ax.set_facecolor("#f7f0dd")
     if outer_bg is not None and not outer_bg.empty:
-        outer_bg.plot(ax=ax, facecolor="#6b6b6b", edgecolor="none", alpha=1.0, zorder=0)
+        outer_bg.plot(ax=ax, facecolor="#6b6b6b", edgecolor="none", alpha=1.0, zorder=-20)
     if boundary_plot is not None and not boundary_plot.empty:
-        boundary_plot.plot(ax=ax, facecolor="#f7f0dd", edgecolor="none", linewidth=0.0, alpha=1.0, zorder=1)
+        boundary_plot.plot(ax=ax, facecolor="#f7f0dd", edgecolor="none", linewidth=0.0, alpha=1.0, zorder=-10)
     for status in ("good", "bad", "missing"):
         part = gdf[gdf["provision_binary"] == status]
         if part.empty:

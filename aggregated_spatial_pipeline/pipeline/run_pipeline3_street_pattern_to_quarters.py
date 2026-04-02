@@ -131,13 +131,11 @@ def _save_previews(
 
     preview_dir.mkdir(parents=True, exist_ok=True)
     dominant_path = preview_dir / "20_quarters_street_pattern_dominant_class.png"
-    mass_path = preview_dir / "21_quarters_street_pattern_covered_mass.png"
     multivariate_path = preview_dir / "22_quarters_street_pattern_multivariate.png"
     outputs: dict[str, str] = {}
 
-    if use_cache and dominant_path.exists() and mass_path.exists() and multivariate_path.exists():
+    if use_cache and dominant_path.exists() and multivariate_path.exists():
         outputs["dominant_class_png"] = str(dominant_path)
-        outputs["covered_mass_png"] = str(mass_path)
         outputs["multivariate_png"] = str(multivariate_path)
         return outputs
 
@@ -209,9 +207,9 @@ def _save_previews(
     fig.patch.set_facecolor("#6b6b6b")
     ax.set_facecolor("#6b6b6b")
     if outer_bg is not None and not outer_bg.empty:
-        outer_bg.plot(ax=ax, facecolor="#6b6b6b", edgecolor="none", alpha=1.0, zorder=0)
+        outer_bg.plot(ax=ax, facecolor="#6b6b6b", edgecolor="none", alpha=1.0, zorder=-20)
     if boundary_plot is not None and not boundary_plot.empty:
-        boundary_plot.plot(ax=ax, facecolor="#f7f0dd", edgecolor="none", linewidth=0.0, alpha=1.0, zorder=1)
+        boundary_plot.plot(ax=ax, facecolor="#f7f0dd", edgecolor="none", linewidth=0.0, alpha=1.0, zorder=-10)
     legend_handles = []
     class_order = [label for label in CLASS_LABELS.values() if label in set(plot_gdf["dominant_class"])]
     if "unknown" in set(plot_gdf["dominant_class"]):
@@ -246,39 +244,9 @@ def _save_previews(
     fig.patch.set_facecolor("#6b6b6b")
     ax.set_facecolor("#6b6b6b")
     if outer_bg is not None and not outer_bg.empty:
-        outer_bg.plot(ax=ax, facecolor="#6b6b6b", edgecolor="none", alpha=1.0, zorder=0)
+        outer_bg.plot(ax=ax, facecolor="#6b6b6b", edgecolor="none", alpha=1.0, zorder=-20)
     if boundary_plot is not None and not boundary_plot.empty:
-        boundary_plot.plot(ax=ax, facecolor="#f7f0dd", edgecolor="none", linewidth=0.0, alpha=1.0, zorder=1)
-    plot_gdf.plot(
-        ax=ax,
-        column="covered_mass",
-        cmap="YlOrRd",
-        linewidth=0.05,
-        edgecolor="#f8fafc",
-        legend=True,
-        legend_kwds={"label": "covered probability mass", "location": "bottom"},
-        vmin=0.0,
-        vmax=max(1.0, float(np.nanmax(plot_gdf["covered_mass"]))),
-        zorder=2,
-    )
-    if boundary_plot is not None and not boundary_plot.empty:
-        boundary_plot.boundary.plot(ax=ax, color="#ffffff", linewidth=1.4, zorder=3)
-    if outer_bounds is not None:
-        ax.set_xlim(outer_bounds[0], outer_bounds[2])
-        ax.set_ylim(outer_bounds[1], outer_bounds[3])
-    ax.set_title("Street Pattern Coverage Mass On Quarters", fontsize=19, fontweight="bold", color="#ffffff", pad=18)
-    ax.set_axis_off()
-    fig.savefig(mass_path, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
-    plt.close(fig)
-    outputs["covered_mass_png"] = str(mass_path)
-
-    fig, ax = plt.subplots(figsize=(12, 12))
-    fig.patch.set_facecolor("#6b6b6b")
-    ax.set_facecolor("#6b6b6b")
-    if outer_bg is not None and not outer_bg.empty:
-        outer_bg.plot(ax=ax, facecolor="#6b6b6b", edgecolor="none", alpha=1.0, zorder=0)
-    if boundary_plot is not None and not boundary_plot.empty:
-        boundary_plot.plot(ax=ax, facecolor="#f7f0dd", edgecolor="none", linewidth=0.0, alpha=1.0, zorder=1)
+        boundary_plot.plot(ax=ax, facecolor="#f7f0dd", edgecolor="none", linewidth=0.0, alpha=1.0, zorder=-10)
     plot_gdf.plot(
         ax=ax,
         color=plot_gdf["multivariate_color"].astype(str),
@@ -406,8 +374,8 @@ def main() -> None:
     enriched_path = prepared_dir / "quarters_enriched_pipeline3.parquet"
     crosswalk_path = prepared_dir / "crosswalk_street_grid_to_quarters.parquet"
     dominant_path = preview_dir / "20_quarters_street_pattern_dominant_class.png"
-    mass_path = preview_dir / "21_quarters_street_pattern_covered_mass.png"
     multivariate_path = preview_dir / "22_quarters_street_pattern_multivariate.png"
+    legacy_mass_path = preview_dir / "21_quarters_street_pattern_covered_mass.png"
 
     _log(f"Using city bundle: {city_dir}")
     if args.no_cache:
@@ -415,12 +383,17 @@ def main() -> None:
     else:
         _log("Cache mode: enabled")
 
+    if legacy_mass_path.exists():
+        try:
+            legacy_mass_path.unlink()
+        except Exception:
+            pass
+
     if (
         transferred_path.exists()
         and enriched_path.exists()
         and manifest_path.exists()
         and dominant_path.exists()
-        and mass_path.exists()
         and multivariate_path.exists()
         and (not args.no_cache)
     ):

@@ -1181,8 +1181,8 @@ def _save_collection_previews(
                 {"geometry": [box(minx - pad_x, miny - pad_y, maxx + pad_x, maxy + pad_y)]},
                 crs=boundary_layer.crs,
             )
-            outer.plot(ax=ax, facecolor="#6b6b6b", edgecolor="none", alpha=1.0, zorder=0)
-            boundary_layer.plot(ax=ax, facecolor="#f7f0dd", edgecolor="none", linewidth=0.0, alpha=1.0, zorder=1)
+            outer.plot(ax=ax, facecolor="#6b6b6b", edgecolor="none", alpha=1.0, zorder=-20)
+            boundary_layer.plot(ax=ax, facecolor="#f7f0dd", edgecolor="none", linewidth=0.0, alpha=1.0, zorder=-10)
             boundary_layer.boundary.plot(ax=ax, color="#ffffff", linewidth=1.4, zorder=20)
             ax.set_xlim(minx - pad_x, maxx + pad_x)
             ax.set_ylim(miny - pad_y, maxy + pad_y)
@@ -2095,6 +2095,34 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
     buildings_path = Path(raw_files["buildings"]).resolve()
     land_use_path = Path(raw_files["land_use"]).resolve()
     floor_output_path = derived_dir / "buildings_floor_enriched.parquet"
+    buffered_quarters_path = derived_dir / "quarters_clipped.parquet"
+    clipped_street_grid_path = derived_dir / "street_grid_buffered.parquet"
+
+    def _refresh_collection_previews(stage_label: str, *, floor_metrics_for_preview: dict | None = None) -> None:
+        started = time.time()
+        preview_paths = _save_collection_previews(
+            data_root=data_root,
+            buffer_path=buffer_path,
+            raw_files=raw_files,
+            connectpt_manifest_path=connectpt_manifest_path,
+            intermodal_manifest_path=intermodal_manifest_path,
+            blocks_manifest_path=blocks_manifest_path,
+            buffered_quarters_path=buffered_quarters_path,
+            street_grid_path=clipped_street_grid_path,
+            floor_enriched_path=floor_output_path,
+            floor_metrics=floor_metrics_for_preview,
+        )
+        if preview_paths:
+            _log(
+                f"Preview refresh [{stage_label}] finished in {time.time() - started:.1f}s "
+                f"({len(preview_paths)} files)."
+            )
+        else:
+            _log(f"Preview refresh [{stage_label}] skipped (no readable layers yet).")
+
+    _log("Refreshing previews after raw/intermodal/connectpt collection...")
+    _refresh_collection_previews("raw_collection")
+
     floor_cache_current = _floor_output_is_current(floor_output_path)
     if floor_output_path.exists() and (not floor_cache_current) and (not args.no_cache):
         _warn(
@@ -2128,6 +2156,8 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             f"(predicted {floor_metrics['storey_predicted_by_model']})"
         )
         downloaded_in_this_run = True
+        _log("Refreshing previews after floor/building enrichment...")
+        _refresh_collection_previews("floor_enrichment", floor_metrics_for_preview=floor_metrics)
     else:
         _log(f"Using cached floor-preprocessing output: {floor_output_path}")
         floor_enriched = read_geodata(floor_output_path)
@@ -2164,7 +2194,6 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         raise RuntimeError(f"Cannot read blocksnet manifest: {blocks_manifest_path}")
     files = blocks_manifest.get("files", {})
     blocks_path = Path(files["blocks"]).resolve()
-    buffered_quarters_path = derived_dir / "quarters_clipped.parquet"
     if args.no_cache or not buffered_quarters_path.exists():
         _log("Clipping blocks quarters to analysis buffer...")
         buffered_quarters_path, buffered_quarters_count = _build_buffered_quarters(
@@ -2177,7 +2206,10 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         buffered_quarters_count = len(read_geodata(buffered_quarters_path))
         _log(f"Using cached clipped quarters: {buffered_quarters_path} ({buffered_quarters_count} features)")
 
-        _log("Classification step: building street-pattern grid for the same territory policy.")
+    _log("Refreshing previews after quarter preparation...")
+    _refresh_collection_previews("quarters_ready", floor_metrics_for_preview=floor_metrics)
+
+    _log("Classification step: building street-pattern grid for the same territory policy.")
     street_grid_source_path, street_summary_path, street_rebuilt = _ensure_street_grid_from_repo(
         place=place,
         repo_root=repo_root,
@@ -2188,7 +2220,6 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         center_node_id=args.center_node_id,
         roads_path=shared_roads_path,
     )
-    clipped_street_grid_path = derived_dir / "street_grid_buffered.parquet"
     if args.no_cache or street_rebuilt or not clipped_street_grid_path.exists():
         _log("Clipping street-grid to analysis buffer...")
         clipped_street_grid_path, clipped_street_grid_count = _clip_street_grid_to_buffer(
@@ -2204,6 +2235,8 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             f"({clipped_street_grid_count} features)"
         )
     downloaded_in_this_run = downloaded_in_this_run or street_rebuilt
+    _log("Refreshing previews after street-pattern preparation...")
+    _refresh_collection_previews("street_pattern_ready", floor_metrics_for_preview=floor_metrics)
     climate_grid_path = derived_dir / "climate_grid.parquet"
 
     climate_enabled = bool(args.climate_grid)
