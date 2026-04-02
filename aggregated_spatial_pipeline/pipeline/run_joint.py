@@ -1435,6 +1435,8 @@ def _save_collection_previews(
     buffer_gdf = _visual_only_shrink_buffer(buffer_gdf_full, shrink_m=5.0)
     water_gdf = _read(Path(raw_files["water"]))
     roads_gdf = _read(Path(raw_files["roads"]))
+    shared_roads_gdf = _read(data_root / "derived_layers" / "roads_drive_osmnx.parquet")
+    roads_base_gdf = shared_roads_gdf if shared_roads_gdf is not None and not shared_roads_gdf.empty else roads_gdf
     railways_gdf = _read(Path(raw_files["railways"]))
     land_use_gdf = _read(Path(raw_files["land_use"]))
     buildings_gdf = _read(Path(raw_files["buildings"]))
@@ -1662,7 +1664,7 @@ def _save_collection_previews(
 
     if street_grid_gdf is not None and not street_grid_gdf.empty:
         street_plot = street_grid_gdf.copy()
-        roads_plot = roads_gdf.copy() if roads_gdf is not None and not roads_gdf.empty else None
+        roads_plot = roads_base_gdf.copy() if roads_base_gdf is not None and not roads_base_gdf.empty else None
         buffer_plot = buffer_gdf
         if street_plot.crs is not None:
             try:
