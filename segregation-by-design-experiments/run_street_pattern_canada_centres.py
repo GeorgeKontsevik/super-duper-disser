@@ -351,10 +351,22 @@ def _normalize_lines(roads: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 
 
 def _contains_value(value, blocked_values: set[str]) -> bool:
-    if value is None or pd.isna(value):
+    if value is None:
         return False
     if isinstance(value, (list, tuple, set)):
         return any(_contains_value(item, blocked_values) for item in value)
+    if hasattr(value, "tolist") and not isinstance(value, (str, bytes)):
+        try:
+            converted = value.tolist()
+        except Exception:
+            converted = None
+        if isinstance(converted, list):
+            return any(_contains_value(item, blocked_values) for item in converted)
+    try:
+        if pd.isna(value):
+            return False
+    except Exception:
+        pass
 
     parts = [part.strip().lower() for part in str(value).split(";") if part.strip()]
     return any(part in blocked_values for part in parts)
