@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from loguru import logger
+from shapely.geometry import box
 
 from aggregated_spatial_pipeline.geodata_io import prepare_geodata_for_parquet, read_geodata
 
@@ -107,6 +108,7 @@ def _save_previews(
     prob_columns: list[str],
     preview_dir: Path,
     *,
+    boundary_gdf=None,
     use_cache: bool,
 ) -> dict[str, str]:
     import matplotlib
@@ -138,6 +140,38 @@ def _save_previews(
         except Exception:
             pass
 
+    boundary_plot = None
+    if boundary_gdf is not None and not boundary_gdf.empty:
+        boundary_plot = boundary_gdf.copy()
+        boundary_plot = boundary_plot[boundary_plot.geometry.notna() & ~boundary_plot.geometry.is_empty].copy()
+        if not boundary_plot.empty and boundary_plot.crs is not None:
+            try:
+                boundary_plot = boundary_plot.to_crs(plot_gdf.crs)
+            except Exception:
+                pass
+    if boundary_plot is None or boundary_plot.empty:
+        boundary_plot = plot_gdf[["geometry"]].copy()
+        try:
+            boundary_union = boundary_plot.union_all()
+            boundary_plot = gpd.GeoDataFrame({"geometry": [boundary_union]}, crs=plot_gdf.crs)
+        except Exception:
+            boundary_plot = None
+    outer_bg = None
+    outer_bounds = None
+    if boundary_plot is not None and not boundary_plot.empty:
+        try:
+            minx, miny, maxx, maxy = boundary_plot.total_bounds
+            pad_x = max((maxx - minx) * 0.08, 250.0)
+            pad_y = max((maxy - miny) * 0.08, 250.0)
+            outer_bounds = (minx - pad_x, miny - pad_y, maxx + pad_x, maxy + pad_y)
+            outer_bg = gpd.GeoDataFrame(
+                {"geometry": [box(*outer_bounds)]},
+                crs=boundary_plot.crs,
+            )
+        except Exception:
+            outer_bg = None
+            outer_bounds = None
+
     prob_frame = plot_gdf[prob_columns].apply(pd.to_numeric, errors="coerce").fillna(0.0)
     covered_mass = prob_frame.sum(axis=1)
     dominant_prob_col = prob_frame.idxmax(axis=1)
@@ -161,6 +195,12 @@ def _save_previews(
     ]
 
     fig, ax = plt.subplots(figsize=(12, 12))
+    fig.patch.set_facecolor("#6b6b6b")
+    ax.set_facecolor("#6b6b6b")
+    if outer_bg is not None and not outer_bg.empty:
+        outer_bg.plot(ax=ax, facecolor="#6b6b6b", edgecolor="none", alpha=1.0, zorder=0)
+    if boundary_plot is not None and not boundary_plot.empty:
+        boundary_plot.plot(ax=ax, facecolor="#f7f0dd", edgecolor="none", linewidth=0.0, alpha=1.0, zorder=1)
     legend_handles = []
     class_order = [label for label in CLASS_LABELS.values() if label in set(plot_gdf["dominant_class"])]
     if "unknown" in set(plot_gdf["dominant_class"]):
@@ -170,8 +210,13 @@ def _save_previews(
         if part.empty:
             continue
         color = CLASS_COLORS.get(class_name, "#d1d5db")
-        part.plot(ax=ax, color=color, linewidth=0.05, edgecolor="#f8fafc", alpha=0.95)
+        part.plot(ax=ax, color=color, linewidth=0.05, edgecolor="#f8fafc", alpha=0.95, zorder=2)
         legend_handles.append(Patch(facecolor=color, edgecolor="none", label=class_name))
+    if boundary_plot is not None and not boundary_plot.empty:
+        boundary_plot.boundary.plot(ax=ax, color="#ffffff", linewidth=1.4, zorder=3)
+    if outer_bounds is not None:
+        ax.set_xlim(outer_bounds[0], outer_bounds[2])
+        ax.set_ylim(outer_bounds[1], outer_bounds[3])
     ax.legend(
         handles=legend_handles,
         loc="lower center",
@@ -180,13 +225,19 @@ def _save_previews(
         frameon=True,
         fontsize=9,
     )
-    ax.set_title("Street Pattern Dominant Class On Quarters", fontsize=12)
+    ax.set_title("Street Pattern Dominant Class On Quarters", fontsize=19, fontweight="bold", color="#ffffff", pad=18)
     ax.set_axis_off()
-    fig.savefig(dominant_path, dpi=180, bbox_inches="tight")
+    fig.savefig(dominant_path, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     outputs["dominant_class_png"] = str(dominant_path)
 
     fig, ax = plt.subplots(figsize=(12, 12))
+    fig.patch.set_facecolor("#6b6b6b")
+    ax.set_facecolor("#6b6b6b")
+    if outer_bg is not None and not outer_bg.empty:
+        outer_bg.plot(ax=ax, facecolor="#6b6b6b", edgecolor="none", alpha=1.0, zorder=0)
+    if boundary_plot is not None and not boundary_plot.empty:
+        boundary_plot.plot(ax=ax, facecolor="#f7f0dd", edgecolor="none", linewidth=0.0, alpha=1.0, zorder=1)
     plot_gdf.plot(
         ax=ax,
         column="covered_mass",
@@ -197,21 +248,39 @@ def _save_previews(
         legend_kwds={"label": "covered probability mass", "location": "bottom"},
         vmin=0.0,
         vmax=max(1.0, float(np.nanmax(plot_gdf["covered_mass"]))),
+        zorder=2,
     )
-    ax.set_title("Street Pattern Coverage Mass On Quarters", fontsize=12)
+    if boundary_plot is not None and not boundary_plot.empty:
+        boundary_plot.boundary.plot(ax=ax, color="#ffffff", linewidth=1.4, zorder=3)
+    if outer_bounds is not None:
+        ax.set_xlim(outer_bounds[0], outer_bounds[2])
+        ax.set_ylim(outer_bounds[1], outer_bounds[3])
+    ax.set_title("Street Pattern Coverage Mass On Quarters", fontsize=19, fontweight="bold", color="#ffffff", pad=18)
     ax.set_axis_off()
-    fig.savefig(mass_path, dpi=180, bbox_inches="tight")
+    fig.savefig(mass_path, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     outputs["covered_mass_png"] = str(mass_path)
 
     fig, ax = plt.subplots(figsize=(12, 12))
+    fig.patch.set_facecolor("#6b6b6b")
+    ax.set_facecolor("#6b6b6b")
+    if outer_bg is not None and not outer_bg.empty:
+        outer_bg.plot(ax=ax, facecolor="#6b6b6b", edgecolor="none", alpha=1.0, zorder=0)
+    if boundary_plot is not None and not boundary_plot.empty:
+        boundary_plot.plot(ax=ax, facecolor="#f7f0dd", edgecolor="none", linewidth=0.0, alpha=1.0, zorder=1)
     plot_gdf.plot(
         ax=ax,
         color=plot_gdf["multivariate_color"].astype(str),
         linewidth=0.05,
         edgecolor="#f8fafc",
         alpha=0.95,
+        zorder=2,
     )
+    if boundary_plot is not None and not boundary_plot.empty:
+        boundary_plot.boundary.plot(ax=ax, color="#ffffff", linewidth=1.4, zorder=3)
+    if outer_bounds is not None:
+        ax.set_xlim(outer_bounds[0], outer_bounds[2])
+        ax.set_ylim(outer_bounds[1], outer_bounds[3])
     legend_handles = [
         Patch(facecolor=CLASS_COLORS[label], edgecolor="none", label=label)
         for label in CLASS_LABELS.values()
@@ -225,9 +294,9 @@ def _save_previews(
         frameon=True,
         fontsize=9,
     )
-    ax.set_title("Street Pattern Multivariate Mix On Quarters", fontsize=12)
+    ax.set_title("Street Pattern Multivariate Mix On Quarters", fontsize=19, fontweight="bold", color="#ffffff", pad=18)
     ax.set_axis_off()
-    fig.savefig(multivariate_path, dpi=180, bbox_inches="tight")
+    fig.savefig(multivariate_path, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     outputs["multivariate_png"] = str(multivariate_path)
     return outputs
@@ -349,6 +418,7 @@ def main() -> None:
 
     street_grid_path = city_dir / "derived_layers" / "street_grid_buffered.parquet"
     quarters_path = city_dir / "derived_layers" / "quarters_clipped.parquet"
+    boundary_path = city_dir / "analysis_territory" / "buffer.parquet"
     if not street_grid_path.exists():
         raise FileNotFoundError(f"Missing street grid layer: {street_grid_path}")
     if not quarters_path.exists():
@@ -357,6 +427,7 @@ def main() -> None:
     _log("Loading street grid and quarters layers...")
     street = read_geodata(street_grid_path).reset_index(drop=True)
     quarters = read_geodata(quarters_path).reset_index(drop=True)
+    boundary = read_geodata(boundary_path) if boundary_path.exists() else None
     if street.empty:
         raise ValueError(f"Street grid is empty: {street_grid_path}")
     if quarters.empty:
@@ -398,7 +469,13 @@ def main() -> None:
     enriched, service_output_columns = _build_quarter_enriched_layer(city_dir, transferred)
     prepare_geodata_for_parquet(enriched).to_parquet(enriched_path)
     _log("Generating preview PNGs for quarter-level street-pattern mix...")
-    preview_outputs = _save_previews(transferred, prob_columns, preview_dir, use_cache=(not args.no_cache))
+    preview_outputs = _save_previews(
+        transferred,
+        prob_columns,
+        preview_dir,
+        boundary_gdf=boundary,
+        use_cache=(not args.no_cache),
+    )
     manifest = {
         "pipeline": "pipeline_3_street_pattern_to_quarters",
         "city_bundle": str(city_dir),

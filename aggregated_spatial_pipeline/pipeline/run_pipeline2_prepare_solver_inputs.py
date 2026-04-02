@@ -7,6 +7,7 @@ import os
 import re
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
@@ -22,37 +23,40 @@ from blocksnet.analysis.provision import competitive_provision
 from blocksnet.relations import calculate_accessibility_matrix
 
 
-SUPPORTED_SERVICES = ("health", "post", "culture", "port", "airport", "marina")
+SUPPORTED_SERVICES = ("hospital", "polyclinic", "school")
 LP_BLOCK_SELECTION_POLICY = "has_living_buildings_or_service_capacity"
 
 # Keep matplotlib/tqdm ecosystem caches in writable workspace path.
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/mpl-asp-pipeline2")
 
-# High-level service categories used by arctic solver scenarios.
-# Downloaded as raw OSM layers, then converted to capacity points.
-SERVICE_TAG_QUERIES: dict[str, list[dict]] = {
-    "health": [
-        {"amenity": ["hospital", "clinic", "doctors", "dentist"]},
-        {"healthcare": True},
-    ],
-    "post": [
-        {"amenity": "post_office"},
-    ],
-    "culture": [
-        {"amenity": ["theatre", "cinema", "arts_centre", "community_centre", "library"]},
-        {"tourism": ["museum", "gallery"]},
-    ],
-    "port": [
-        {"landuse": "port"},
-        {"amenity": "ferry_terminal"},
-        {"harbour": True},
-    ],
-    "airport": [
-        {"aeroway": ["aerodrome", "terminal"]},
-    ],
-    "marina": [
-        {"leisure": "marina"},
-    ],
+@dataclass(frozen=True)
+class ServiceSpec:
+    tags: list[dict]
+    blocksnet_name: str
+    fallback_capacity: float = 600.0
+
+
+SERVICE_SPECS: dict[str, ServiceSpec] = {
+    "hospital": ServiceSpec(
+        tags=[
+            {"amenity": "hospital"},
+            {"healthcare": "hospital"},
+        ],
+        blocksnet_name="hospital",
+    ),
+    "polyclinic": ServiceSpec(
+        tags=[
+            {"amenity": ["clinic", "doctors"]},
+            {"healthcare": ["clinic", "doctor", "doctors"]},
+        ],
+        blocksnet_name="polyclinic",
+    ),
+    "school": ServiceSpec(
+        tags=[
+            {"amenity": "school"},
+        ],
+        blocksnet_name="school",
+    ),
 }
 
 # Arctic/solver defaults:
@@ -64,12 +68,7 @@ ARCTIC_DEFAULT_POPULATION = 120.0
 
 # Per-service defaults intentionally follow arctic-style generic fallback.
 DEFAULT_CAPACITY_BY_SERVICE = {
-    "health": ARCTIC_DEFAULT_CAPACITY,
-    "post": ARCTIC_DEFAULT_CAPACITY,
-    "culture": ARCTIC_DEFAULT_CAPACITY,
-    "port": ARCTIC_DEFAULT_CAPACITY,
-    "airport": ARCTIC_DEFAULT_CAPACITY,
-    "marina": ARCTIC_DEFAULT_CAPACITY,
+    service: spec.fallback_capacity for service, spec in SERVICE_SPECS.items()
 }
 
 
@@ -106,14 +105,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--service-radius-min",
         type=float,
-        default=60.0,
-        help="Accessibility threshold (minutes) for demand_within/demand_without split.",
+        default=None,
+        help="Optional global override for service accessibility threshold in minutes.",
     )
     parser.add_argument(
         "--demand-per-1000",
         type=float,
-        default=120.0,
-        help="Demand norm per 1000 population (same meaning as arctic CONST_BASE_DEMAND).",
+        default=None,
+        help="Optional global override for service demand per 1000 population.",
     )
     parser.add_argument(
         "--provision-max-depth",
@@ -172,6 +171,23 @@ def _resolve_city_dir(args: argparse.Namespace) -> Path:
             / slug
         ).resolve()
     raise ValueError("Provide either --joint-input-dir or --place.")
+
+
+def _load_blocksnet_service_defaults() -> dict[str, dict]:
+    config_path = (
+        Path(__file__).resolve().parents[2]
+        / "blocksnet"
+        / "blocksnet"
+        / "config"
+        / "service_types"
+        / "common"
+        / "default.json"
+    )
+    items = json.loads(config_path.read_text(encoding="utf-8"))
+    return {str(item.get("name")): item for item in items if item.get("name")}
+
+
+BLOCKSNET_SERVICE_DEFAULTS = _load_blocksnet_service_defaults()
 
 
 def _log(message: str) -> None:
@@ -298,7 +314,7 @@ def _normalize_raw_osm(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 def _download_service_raw(boundary_gdf: gpd.GeoDataFrame, service: str) -> gpd.GeoDataFrame:
     boundary_wgs84 = boundary_gdf.to_crs(4326)
     polygon = boundary_wgs84.union_all().convex_hull
-    queries = SERVICE_TAG_QUERIES[service]
+    queries = SERVICE_SPECS[service].tags
     frames: list[gpd.GeoDataFrame] = []
     for idx, tags in enumerate(queries, start=1):
         _log(f"OSM download [{service}] query {idx}/{len(queries)}: tags={tags}")
@@ -321,7 +337,7 @@ def _download_service_raw(boundary_gdf: gpd.GeoDataFrame, service: str) -> gpd.G
 
 
 def _capacity_from_row(row: pd.Series, service: str) -> float:
-    if service == "health":
+    if service == "hospital":
         beds = _first_number(row.get("beds"))
         if beds is not None and beds > 0:
             return beds
@@ -329,6 +345,22 @@ def _capacity_from_row(row: pd.Series, service: str) -> float:
     if cap is not None and cap > 0:
         return cap
     return float(DEFAULT_CAPACITY_BY_SERVICE[service])
+
+
+def _service_accessibility_min(service: str, args: argparse.Namespace) -> float:
+    if args.service_radius_min is not None:
+        return float(args.service_radius_min)
+    blocksnet_name = SERVICE_SPECS[service].blocksnet_name
+    config = BLOCKSNET_SERVICE_DEFAULTS.get(blocksnet_name, {})
+    return float(config.get("accessibility", 60.0))
+
+
+def _service_demand_per_1000(service: str, args: argparse.Namespace) -> float:
+    if args.demand_per_1000 is not None:
+        return float(args.demand_per_1000)
+    blocksnet_name = SERVICE_SPECS[service].blocksnet_name
+    config = BLOCKSNET_SERVICE_DEFAULTS.get(blocksnet_name, {})
+    return float(config.get("demand", ARCTIC_DEFAULT_POPULATION))
 
 
 def _to_points(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
@@ -415,12 +447,14 @@ def _plot_accessibility_previews(
     matrix_union: pd.DataFrame,
     out_dir: Path,
     *,
+    boundary: gpd.GeoDataFrame | None = None,
     use_cache: bool = True,
 ) -> dict[str, str]:
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from shapely.geometry import box
 
     out_dir.mkdir(parents=True, exist_ok=True)
     out: dict[str, str] = {}
@@ -431,6 +465,24 @@ def _plot_accessibility_previews(
     if use_cache and access_map_path.exists():
         out["accessibility_mean_time_map"] = str(access_map_path)
         return out
+
+    boundary_plot = None
+    outer_bg = None
+    outer_bounds = None
+    if boundary is not None and not boundary.empty:
+        boundary_plot = boundary.copy()
+        boundary_plot = boundary_plot[boundary_plot.geometry.notna() & ~boundary_plot.geometry.is_empty].copy()
+        if not boundary_plot.empty and boundary_plot.crs is not None:
+            try:
+                boundary_plot = boundary_plot.to_crs("EPSG:3857")
+            except Exception:
+                pass
+        if boundary_plot is not None and not boundary_plot.empty:
+            minx, miny, maxx, maxy = boundary_plot.total_bounds
+            pad_x = max((maxx - minx) * 0.08, 250.0)
+            pad_y = max((maxy - miny) * 0.08, 250.0)
+            outer_bounds = (minx - pad_x, miny - pad_y, maxx + pad_x, maxy + pad_y)
+            outer_bg = gpd.GeoDataFrame({"geometry": [box(*outer_bounds)]}, crs=boundary_plot.crs)
 
     matrix_numeric = matrix_union.apply(pd.to_numeric, errors="coerce").astype(np.float32, copy=False)
     matrix_numeric = matrix_numeric.where(np.isfinite(matrix_numeric), np.nan)
@@ -460,12 +512,19 @@ def _plot_accessibility_previews(
         base_plot = units_plot.copy()
         res_plot = units_plot[units_plot["is_residential"]].copy()
         fig, ax = plt.subplots(figsize=(12, 10))
+        fig.patch.set_facecolor("#6b6b6b")
+        ax.set_facecolor("#6b6b6b")
+        if outer_bg is not None and not outer_bg.empty:
+            outer_bg.plot(ax=ax, facecolor="#6b6b6b", edgecolor="none", alpha=1.0, zorder=0)
+        if boundary_plot is not None and not boundary_plot.empty:
+            boundary_plot.plot(ax=ax, facecolor="#f7f0dd", edgecolor="none", linewidth=0.0, alpha=1.0, zorder=1)
         base_plot.plot(
             ax=ax,
             color="#f3f4f6",
             linewidth=0.05,
             edgecolor="#d1d5db",
             alpha=0.95,
+            zorder=2,
         )
         if not res_plot.empty:
             res_plot.plot(
@@ -477,10 +536,22 @@ def _plot_accessibility_previews(
                 legend=True,
                 legend_kwds={"label": "mean travel time (min), higher = worse"},
                 missing_kwds={"color": "#9ca3af", "label": "residential with no path"},
+                zorder=3,
             )
-        ax.set_title("Accessibility: mean travel time (residential quarters only)", fontsize=12)
+        if boundary_plot is not None and not boundary_plot.empty:
+            boundary_plot.boundary.plot(ax=ax, color="#ffffff", linewidth=1.4, zorder=4)
+        if outer_bounds is not None:
+            ax.set_xlim(outer_bounds[0], outer_bounds[2])
+            ax.set_ylim(outer_bounds[1], outer_bounds[3])
+        ax.set_title(
+            "Accessibility: mean travel time (residential quarters only)",
+            fontsize=19,
+            fontweight="bold",
+            color="#ffffff",
+            pad=18,
+        )
         ax.set_axis_off()
-        fig.savefig(access_map_path, dpi=180, bbox_inches="tight")
+        fig.savefig(access_map_path, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
         plt.close(fig)
         out["accessibility_mean_time_map"] = str(access_map_path)
 
@@ -511,11 +582,13 @@ def _plot_service_lp_preview(
     out_path: Path,
     *,
     quarters_ref: gpd.GeoDataFrame | None = None,
+    boundary: gpd.GeoDataFrame | None = None,
 ) -> str | None:
     import matplotlib
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from shapely.geometry import box
 
     if solver_blocks is None or solver_blocks.empty:
         return None
@@ -531,6 +604,23 @@ def _plot_service_lp_preview(
             gdf = gdf.to_crs("EPSG:3857")
         except Exception:
             pass
+    boundary_plot = None
+    outer_bg = None
+    outer_bounds = None
+    if boundary is not None and not boundary.empty:
+        boundary_plot = boundary.copy()
+        boundary_plot = boundary_plot[boundary_plot.geometry.notna() & ~boundary_plot.geometry.is_empty].copy()
+        if not boundary_plot.empty and boundary_plot.crs is not None:
+            try:
+                boundary_plot = boundary_plot.to_crs("EPSG:3857")
+            except Exception:
+                pass
+        if boundary_plot is not None and not boundary_plot.empty:
+            minx, miny, maxx, maxy = boundary_plot.total_bounds
+            pad_x = max((maxx - minx) * 0.08, 250.0)
+            pad_y = max((maxy - miny) * 0.08, 250.0)
+            outer_bounds = (minx - pad_x, miny - pad_y, maxx + pad_x, maxy + pad_y)
+            outer_bg = gpd.GeoDataFrame({"geometry": [box(*outer_bounds)]}, crs=boundary_plot.crs)
 
     provision_col = "provision_strong" if "provision_strong" in gdf.columns else "provision" if "provision" in gdf.columns else None
     demand_without_col = "demand_without" if "demand_without" in gdf.columns else None
@@ -551,6 +641,13 @@ def _plot_service_lp_preview(
     )
     ax = axes[0]
     hist_ax = axes[1]
+    fig.patch.set_facecolor("#6b6b6b")
+    ax.set_facecolor("#6b6b6b")
+    hist_ax.set_facecolor("#f7f0dd")
+    if outer_bg is not None and not outer_bg.empty:
+        outer_bg.plot(ax=ax, facecolor="#6b6b6b", edgecolor="none", alpha=1.0, zorder=0)
+    if boundary_plot is not None and not boundary_plot.empty:
+        boundary_plot.plot(ax=ax, facecolor="#f7f0dd", edgecolor="none", linewidth=0.0, alpha=1.0, zorder=1)
     for status in ("good", "bad", "missing"):
         part = gdf[gdf["provision_binary"] == status]
         if part.empty:
@@ -561,13 +658,22 @@ def _plot_service_lp_preview(
             linewidth=0.05,
             edgecolor="#d1d5db",
             alpha=0.9,
+            zorder=2,
         )
+    if boundary_plot is not None and not boundary_plot.empty:
+        boundary_plot.boundary.plot(ax=ax, color="#ffffff", linewidth=1.4, zorder=3)
+    if outer_bounds is not None:
+        ax.set_xlim(outer_bounds[0], outer_bounds[2])
+        ax.set_ylim(outer_bounds[1], outer_bounds[3])
     good_cnt = int((gdf["provision_binary"] == "good").sum())
     bad_cnt = int((gdf["provision_binary"] == "bad").sum())
     miss_cnt = int((gdf["provision_binary"] == "missing").sum())
     ax.set_title(
         f"{service}: provision status (1=good, <1=bad) | good={good_cnt}, bad={bad_cnt}, missing={miss_cnt}",
-        fontsize=11,
+        fontsize=16,
+        fontweight="bold",
+        color="#ffffff",
+        pad=16,
     )
     ax.set_axis_off()
 
@@ -587,7 +693,7 @@ def _plot_service_lp_preview(
         hist_ax.set_axis_off()
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=180, bbox_inches="tight")
+    fig.savefig(out_path, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
     plt.close(fig)
     return str(out_path)
 
@@ -696,7 +802,12 @@ def main() -> None:
     units = units[units_mask].copy()
     units["has_living_buildings"] = _derive_has_living_from_buildings(units, city_dir)
     units["unit_name"] = units.index.astype(str)
-    units["demand_base"] = _calc_demand(units["population"], args.demand_per_1000)
+    legacy_demand_per_1000 = (
+        float(args.demand_per_1000)
+        if args.demand_per_1000 is not None
+        else _service_demand_per_1000(services[0], args)
+    )
+    units["demand_base"] = _calc_demand(units["population"], legacy_demand_per_1000)
     living_units = int(units["has_living_buildings"].fillna(False).sum())
     _log(
         f"Active units for solver/matrix: {len(units)} (population>0 only); "
@@ -738,7 +849,7 @@ def main() -> None:
     service_outputs: dict[str, dict] = {}
     preview_outputs: dict[str, object] = {}
     preview_outputs.update(
-        _plot_accessibility_previews(units, matrix_union, preview_dir, use_cache=(not args.no_cache))
+        _plot_accessibility_previews(units, matrix_union, preview_dir, boundary=boundary, use_cache=(not args.no_cache))
     )
     for service in services:
         if float(raw_stats.get(service, {}).get("capacity_total", 0.0)) <= 0.0:
@@ -758,10 +869,22 @@ def main() -> None:
 
         if (not args.no_cache) and blocks_path.exists() and matrix_service_path.exists() and summary_path.exists():
             cached_summary = _try_load_json(summary_path) or {}
+            expected_radius = _service_accessibility_min(service, args)
+            expected_demand = _service_demand_per_1000(service, args)
             if cached_summary.get("block_selection_policy") != LP_BLOCK_SELECTION_POLICY:
                 _warn(
                     f"Cached solver input [{service}] is outdated for current block-selection policy "
                     f"({LP_BLOCK_SELECTION_POLICY}). Rebuilding."
+                )
+            elif float(cached_summary.get("service_radius_min", -1.0)) != float(expected_radius):
+                _warn(
+                    f"Cached solver input [{service}] uses outdated service_radius_min "
+                    f"({cached_summary.get('service_radius_min')} != {expected_radius}). Rebuilding."
+                )
+            elif float(cached_summary.get("service_demand_per_1000", -1.0)) != float(expected_demand):
+                _warn(
+                    f"Cached solver input [{service}] uses outdated service_demand_per_1000 "
+                    f"({cached_summary.get('service_demand_per_1000')} != {expected_demand}). Rebuilding."
                 )
             else:
                 _log(f"Using cached solver input [{service}]: {summary_path}")
@@ -774,6 +897,7 @@ def main() -> None:
                             service,
                             lp_preview_target,
                             quarters_ref=quarters,
+                            boundary=boundary,
                         )
                     except Exception:
                         lp_preview_path = None
@@ -789,7 +913,10 @@ def main() -> None:
 
         cap_col = f"capacity_{service}"
         blocks = units[["unit_name", "population", "demand_base", cap_col, "geometry", "has_living_buildings"]].copy()
-        blocks = blocks.rename(columns={"demand_base": "demand", cap_col: "capacity"})
+        blocks = blocks.rename(columns={cap_col: "capacity"})
+        service_demand_per_1000 = _service_demand_per_1000(service, args)
+        service_radius_min = _service_accessibility_min(service, args)
+        blocks["demand"] = _calc_demand(blocks["population"], service_demand_per_1000)
         # LP policy: include only quarters with living buildings OR own service capacity.
         blocks["has_living_buildings"] = blocks["has_living_buildings"].fillna(False).astype(bool)
         blocks = blocks[blocks["has_living_buildings"] | (blocks["capacity"] > 0)].copy()
@@ -803,14 +930,15 @@ def main() -> None:
 
         _log(
             f"Service [{service}] provisioning prep: blocks={len(blocks)} "
-            f"(living={int(blocks['has_living_buildings'].sum())}, capacity>0={int((blocks['capacity'] > 0).sum())})"
+            f"(living={int(blocks['has_living_buildings'].sum())}, capacity>0={int((blocks['capacity'] > 0).sum())}, "
+            f"accessibility={service_radius_min:.1f} min, demand_per_1000={service_demand_per_1000:.1f})"
         )
         sub_mx = matrix_union.loc[blocks.index, blocks.index].copy()
         provision_started = time.time()
         provision_df, links_df = competitive_provision(
             blocks_df=blocks[["population", "demand", "capacity", "geometry"]].copy(),
             accessibility_matrix=sub_mx,
-            accessibility=int(math.ceil(args.service_radius_min)),
+            accessibility=int(math.ceil(service_radius_min)),
             demand=None,
             self_supply=True,
             max_depth=int(args.provision_max_depth),
@@ -823,7 +951,8 @@ def main() -> None:
             solver_blocks = gpd.GeoDataFrame(solver_blocks, geometry="geometry", crs=blocks.crs)
         solver_blocks["name"] = solver_blocks.index.astype(str)
         solver_blocks["service_name"] = service
-        solver_blocks["service_radius_min"] = float(args.service_radius_min)
+        solver_blocks["service_radius_min"] = float(service_radius_min)
+        solver_blocks["service_demand_per_1000"] = float(service_demand_per_1000)
         # Compatibility with arctic solver runner fields.
         solver_blocks["provision"] = solver_blocks["provision_strong"].fillna(0.0)
 
@@ -839,6 +968,7 @@ def main() -> None:
                 service,
                 lp_preview_target,
                 quarters_ref=quarters,
+                boundary=boundary,
             )
 
         summary = {

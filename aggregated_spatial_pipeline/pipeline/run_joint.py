@@ -1043,6 +1043,7 @@ def _save_collection_previews(
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
+    from shapely.geometry import box
 
     def _visual_only_shrink_buffer(
         buffer_layer: gpd.GeoDataFrame | None,
@@ -1124,6 +1125,37 @@ def _save_collection_previews(
             return
         fig.text(0.5, 0.02, text, ha="center", va="bottom", fontsize=8, color="#374151")
 
+    def _apply_preview_theme(
+        fig,
+        ax,
+        boundary_layer: gpd.GeoDataFrame | None,
+        *,
+        title: str | None = None,
+    ) -> None:
+        fig.patch.set_facecolor("#6b6b6b")
+        ax.set_facecolor("#6b6b6b")
+        if boundary_layer is None or boundary_layer.empty:
+            if title:
+                ax.set_title(title, fontsize=19, fontweight="bold", color="#ffffff", pad=18)
+            return
+        try:
+            minx, miny, maxx, maxy = boundary_layer.total_bounds
+            pad_x = max((maxx - minx) * 0.08, 250.0)
+            pad_y = max((maxy - miny) * 0.08, 250.0)
+            outer = gpd.GeoDataFrame(
+                {"geometry": [box(minx - pad_x, miny - pad_y, maxx + pad_x, maxy + pad_y)]},
+                crs=boundary_layer.crs,
+            )
+            outer.plot(ax=ax, facecolor="#6b6b6b", edgecolor="none", alpha=1.0, zorder=0)
+            boundary_layer.plot(ax=ax, facecolor="#f7f0dd", edgecolor="none", linewidth=0.0, alpha=1.0, zorder=1)
+            boundary_layer.boundary.plot(ax=ax, color="#ffffff", linewidth=1.4, zorder=20)
+            ax.set_xlim(minx - pad_x, maxx + pad_x)
+            ax.set_ylim(miny - pad_y, maxy + pad_y)
+        except Exception:
+            pass
+        if title:
+            ax.set_title(title, fontsize=19, fontweight="bold", color="#ffffff", pad=18)
+
     def _plot(
         output_path: Path,
         *,
@@ -1163,12 +1195,17 @@ def _save_collection_previews(
                 else:
                     patch_color = plot_style.get("color", plot_style.get("facecolor", "#777777"))
                     legend_handles.append(Patch(facecolor=patch_color, edgecolor="none", label=label, alpha=0.6))
+        boundary_norm = None
+        if buffer_gdf is not None and not buffer_gdf.empty:
+            try:
+                boundary_norm = buffer_gdf.to_crs(target_crs) if buffer_gdf.crs is not None else buffer_gdf
+            except Exception:
+                boundary_norm = buffer_gdf
+        _apply_preview_theme(fig, ax, boundary_norm, title=title)
         _legend_bottom(ax, legend_handles)
-        if title:
-            ax.set_title(title, fontsize=12)
         ax.set_axis_off()
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(output_path, dpi=180, bbox_inches="tight")
+        fig.savefig(output_path, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
         plt.close(fig)
         return output_path
 
@@ -1233,14 +1270,15 @@ def _save_collection_previews(
             gdf.plot(ax=ax, color=color, alpha=0.45, linewidth=0.05)
             legend_handles.append(Patch(facecolor=color, edgecolor="none", label=label))
         if buffer_norm is not None and not buffer_norm.empty:
-            buffer_norm.plot(ax=ax, facecolor="none", edgecolor="#111111", linewidth=1.1)
+            _apply_preview_theme(fig, ax, buffer_norm, title=title)
+        else:
+            _apply_preview_theme(fig, ax, None, title=title)
         _legend_bottom(ax, legend_handles)
-        ax.set_title(title, fontsize=12)
         ax.set_axis_off()
         _footer_text(fig, footer_lines)
         out = all_together_dir / output_name
         out.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(out, dpi=180, bbox_inches="tight")
+        fig.savefig(out, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
         plt.close(fig)
         return out
 
@@ -1402,12 +1440,12 @@ def _save_collection_previews(
                 center_plot.plot(ax=ax, color="#dc2626", markersize=28, marker="*")
                 legend_handles.append(Line2D([0], [0], marker="*", color="none", markerfacecolor="#dc2626", markersize=10, label="buffer center"))
 
+            _apply_preview_theme(fig, ax, territory_plot, title="Intermodal Transport Graph (all PT modes)")
             _legend_bottom(ax, legend_handles)
-            ax.set_title("Intermodal Transport Graph (all PT modes)", fontsize=12)
             ax.set_axis_off()
             _footer_text(fig, footer_lines)
             intermodal_png = all_together_dir / _next_name("intermodal_graph_modes")
-            fig.savefig(intermodal_png, dpi=180, bbox_inches="tight")
+            fig.savefig(intermodal_png, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
             plt.close(fig)
             saved.append(intermodal_png)
 
@@ -1490,11 +1528,11 @@ def _save_collection_previews(
                 center_for_services.plot(ax=ax, color="#dc2626", markersize=28, marker="*")
                 legend_handles.append(Line2D([0], [0], marker="*", color="none", markerfacecolor="#dc2626", markersize=10, label="buffer center"))
 
+            _apply_preview_theme(fig, ax, territory_for_services, title="Pipeline_2 Raw Services (all categories)")
             _legend_bottom(ax, legend_handles)
-            ax.set_title("Pipeline_2 Raw Services (all categories)", fontsize=12)
             ax.set_axis_off()
             services_png = all_together_dir / _next_name("pipeline2_services_raw_all")
-            fig.savefig(services_png, dpi=180, bbox_inches="tight")
+            fig.savefig(services_png, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
             plt.close(fig)
             saved.append(services_png)
 
@@ -1537,11 +1575,11 @@ def _save_collection_previews(
             if buffer_plot is not None and not buffer_plot.empty:
                 buffer_plot.plot(ax=ax, facecolor="none", edgecolor="#111111", linewidth=1.1)
                 legend_handles.append(Line2D([0], [0], color="#111111", linewidth=2, label="analysis buffer"))
+            _apply_preview_theme(fig, ax, buffer_plot, title="Street Pattern Top-1 Classification")
             _legend_bottom(ax, legend_handles)
-            ax.set_title("Street Pattern Top-1 Classification", fontsize=12)
             ax.set_axis_off()
             street_top1_png = all_together_dir / _next_name("street_pattern_top1")
-            fig.savefig(street_top1_png, dpi=180, bbox_inches="tight")
+            fig.savefig(street_top1_png, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
             plt.close(fig)
             saved.append(street_top1_png)
 
@@ -1563,11 +1601,11 @@ def _save_collection_previews(
             if buffer_plot is not None and not buffer_plot.empty:
                 buffer_plot.plot(ax=ax, facecolor="none", edgecolor="#111111", linewidth=1.1)
                 legend_handles.append(Line2D([0], [0], color="#111111", linewidth=2, label="analysis buffer"))
+            _apply_preview_theme(fig, ax, buffer_plot, title="Street Pattern Multivariate Classification")
             _legend_bottom(ax, legend_handles)
-            ax.set_title("Street Pattern Multivariate Classification", fontsize=12)
             ax.set_axis_off()
             street_multi_png = all_together_dir / _next_name("street_pattern_multivariate")
-            fig.savefig(street_multi_png, dpi=180, bbox_inches="tight")
+            fig.savefig(street_multi_png, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
             plt.close(fig)
             saved.append(street_multi_png)
 
@@ -1624,11 +1662,11 @@ def _save_collection_previews(
             if buf_plot is not None and not buf_plot.empty:
                 buf_plot.plot(ax=ax, facecolor="none", edgecolor="#111111", linewidth=1.1)
                 legend_handles.append(Line2D([0], [0], color="#111111", linewidth=2, label="analysis buffer"))
+            _apply_preview_theme(fig, ax, buf_plot, title=f"ConnectPT {modality_name}")
             _legend_bottom(ax, legend_handles)
-            ax.set_title(f"ConnectPT {modality_name}", fontsize=12)
             ax.set_axis_off()
             modality_png = all_together_dir / _next_name(f"connectpt_{modality_name}")
-            fig.savefig(modality_png, dpi=180, bbox_inches="tight")
+            fig.savefig(modality_png, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
             plt.close(fig)
             saved.append(modality_png)
 
@@ -1700,11 +1738,11 @@ def _save_collection_previews(
             if buffer_land_plot is not None and not buffer_land_plot.empty:
                 buffer_land_plot.plot(ax=ax, facecolor="none", edgecolor="#111111", linewidth=1.1)
                 legend_handles.append(Line2D([0], [0], color="#111111", linewidth=2, label="analysis buffer"))
+            _apply_preview_theme(fig, ax, buffer_land_plot, title="Raw Land Use (categorical)")
             _legend_bottom(ax, legend_handles)
-            ax.set_title("Raw Land Use (categorical)", fontsize=12)
             ax.set_axis_off()
             landuse_png = all_together_dir / _next_name("raw_land_use_categorical")
-            fig.savefig(landuse_png, dpi=180, bbox_inches="tight")
+            fig.savefig(landuse_png, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
             plt.close(fig)
             saved.append(landuse_png)
 
@@ -1793,12 +1831,12 @@ def _save_collection_previews(
                 if buffer_storey_plot is not None and not buffer_storey_plot.empty:
                     buffer_storey_plot.plot(ax=ax, facecolor="none", edgecolor="#111111", linewidth=1.1)
                     legend_handles_all.append(Line2D([0], [0], color="#111111", linewidth=2, label="analysis buffer"))
+                _apply_preview_theme(fig, ax, buffer_storey_plot, title="Buildings storey quantiles (all known storey)")
                 _legend_bottom(ax, legend_handles_all)
-                ax.set_title("Buildings storey quantiles (all known storey)", fontsize=12)
                 ax.set_axis_off()
                 _footer_text(fig, storey_model_footer_lines)
                 storey_png_all = all_together_dir / _next_name("buildings_storey_quantiles_all")
-                fig.savefig(storey_png_all, dpi=180, bbox_inches="tight")
+                fig.savefig(storey_png_all, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
                 plt.close(fig)
                 saved.append(storey_png_all)
 
@@ -1821,12 +1859,12 @@ def _save_collection_previews(
                     if buffer_storey_plot is not None and not buffer_storey_plot.empty:
                         buffer_storey_plot.plot(ax=ax, facecolor="none", edgecolor="#111111", linewidth=1.1)
                         legend_handles_rest.append(Line2D([0], [0], color="#111111", linewidth=2, label="analysis buffer"))
+                    _apply_preview_theme(fig, ax, buffer_storey_plot, title="Buildings storey quantiles (model predicted only)")
                     _legend_bottom(ax, legend_handles_rest)
-                    ax.set_title("Buildings storey quantiles (model predicted only)", fontsize=12)
                     ax.set_axis_off()
                     _footer_text(fig, storey_model_footer_lines)
                     storey_png_restored = all_together_dir / _next_name("buildings_storey_quantiles_model_predicted")
-                    fig.savefig(storey_png_restored, dpi=180, bbox_inches="tight")
+                    fig.savefig(storey_png_restored, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
                     plt.close(fig)
                     saved.append(storey_png_restored)
 
