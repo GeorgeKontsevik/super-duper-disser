@@ -104,6 +104,20 @@ def _round_probabilities(values, digits: int = 3) -> list[float]:
     return [round(float(value), digits) for value in values]
 
 
+def _json_ready(value):
+    if isinstance(value, np.ndarray):
+        return [_json_ready(item) for item in value.tolist()]
+    if isinstance(value, list):
+        return [_json_ready(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_ready(item) for item in value]
+    if isinstance(value, set):
+        return [_json_ready(item) for item in sorted(value, key=lambda item: str(item))]
+    if isinstance(value, dict):
+        return {str(key): _json_ready(item) for key, item in value.items()}
+    return value
+
+
 def _prepare_geojson_export(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     export_gdf = gdf.copy()
     for column in export_gdf.columns:
@@ -114,7 +128,7 @@ def _prepare_geojson_export(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         sample = next((value for value in export_gdf[column] if value is not None), None)
         if isinstance(sample, (list, tuple, set, dict, np.ndarray)):
             export_gdf[column] = export_gdf[column].map(
-                lambda value: json.dumps(value, ensure_ascii=False)
+                lambda value: json.dumps(_json_ready(value), ensure_ascii=False)
                 if isinstance(value, (list, tuple, set, dict, np.ndarray))
                 else value
             )
