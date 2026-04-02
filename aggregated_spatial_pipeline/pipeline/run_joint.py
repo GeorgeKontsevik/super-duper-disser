@@ -2018,10 +2018,10 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             output_path=analysis_buffer_path,
             center_node_id=args.center_node_id,
         )
-        _log(f"Analysis buffer built in {time.time() - started:.1f}s: {analysis_buffer_path}")
+        _log(f"Analysis buffer built in {time.time() - started:.1f}s: {analysis_buffer_path.name}")
         downloaded_in_this_run = True
     else:
-        _log(f"Using cached analysis buffer: {analysis_buffer_path}")
+        _log(f"Using cached analysis buffer: {analysis_buffer_path.name}")
     buffer_path = analysis_buffer_path
     shared_roads_path = derived_dir / "roads_drive_osmnx.parquet"
     shared_roads_path, shared_roads_count, shared_roads_rebuilt = _ensure_shared_drive_roads(
@@ -2032,11 +2032,11 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
     if shared_roads_rebuilt:
         _log(
             "Shared roads prepared from OSMnx drive graph: "
-            f"{shared_roads_count} edges ({shared_roads_path})"
+            f"{shared_roads_count} edges ({shared_roads_path.name})"
         )
         downloaded_in_this_run = True
     else:
-        _log(f"Using cached shared drive roads: {shared_roads_path} ({shared_roads_count} edges)")
+        _log(f"Using cached shared drive roads: {shared_roads_path.name} ({shared_roads_count} edges)")
 
     if args.no_cache or not blocks_raw_manifest_path.exists():
         _log("Collecting raw OSM layers for blocks/buildings preprocessing...")
