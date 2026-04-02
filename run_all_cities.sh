@@ -5,7 +5,7 @@ ROOT="/Users/gk/Code/super-duper-disser"
 PY="$ROOT/.venv/bin/python"
 export PYTHONPATH="$ROOT"
 
-BUFFER_M=3000
+BUFFER_M=5000
 STREET_GRID_STEP=500
 CITY_LIST_FILE="$ROOT/cities_small_compare.txt"
 
