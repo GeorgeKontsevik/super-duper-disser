@@ -40,6 +40,21 @@ class PreparedInputs:
     source_details: dict[str, dict]
 
 
+def _format_crs_for_log(crs) -> str:
+    if crs is None:
+        return "unknown"
+    try:
+        epsg = crs.to_epsg()
+    except Exception:
+        epsg = None
+    if epsg is not None:
+        return f"EPSG:{epsg}"
+    name = getattr(crs, "name", None)
+    if name:
+        return str(name)
+    return str(crs)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run the joint aggregated pipeline with optional data collection and clear progress output."
@@ -2393,7 +2408,7 @@ def main() -> None:
                     "Expected a valid Parquet/GeoJSON/GPKG with geometry and CRS."
                 ) from exc
             layers[layer_id] = gdf
-            _log(f"Loaded {layer_id}: {len(gdf)} features, CRS={gdf.crs}")
+            _log(f"Loaded {layer_id}: {len(gdf)} features, CRS={_format_crs_for_log(gdf.crs)}")
         steps.update(1)
 
         steps.set_description("Joint Pipeline: build crosswalks")
