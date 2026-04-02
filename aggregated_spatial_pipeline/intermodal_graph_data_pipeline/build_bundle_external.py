@@ -52,7 +52,15 @@ def _configure_logging() -> None:
         colorize=True,
     )
     try:
-        iduedu.config.configure_logging(level="INFO")
+        iduedu.config.logger.remove()
+        iduedu.config.logger.add(
+            sys.stderr,
+            level="INFO",
+            format="<green>{time:DD MMM HH:mm}</green> | <level>{level}</level> | <level>{message}</level>",
+            colorize=True,
+            backtrace=True,
+            diagnose=False,
+        )
         iduedu.config.set_enable_tqdm(False)
     except Exception:
         pass
