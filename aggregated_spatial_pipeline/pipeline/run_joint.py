@@ -2571,7 +2571,7 @@ def main() -> None:
         if issues:
             raise SystemExit("Invalid pipeline spec:\n- " + "\n- ".join(issues))
         required_scenarios = _collect_required_scenarios(runtime_spec, JOINT_SCENARIO_ID)
-        _log(f"Spec is valid. Required scenarios: {', '.join(required_scenarios)}")
+        _log(f"Spec is valid. Runtime spec references {len(required_scenarios)} scenario id(s).")
         steps.update(1)
 
         steps.set_description("Joint Pipeline: prepare inputs")
@@ -2642,9 +2642,12 @@ def main() -> None:
             _log(f"Built crosswalk {crosswalk_id}: {len(crosswalk_gdf)} intersections")
         steps.update(1)
 
-        steps.set_description("Joint Pipeline: run scenarios")
+        steps.set_description("Joint Pipeline: apply spec scenarios")
         all_results = run_scenarios(spec=runtime_spec, layers=layers, crosswalks=crosswalks)
-        _log(f"Scenario engine executed: {', '.join(all_results.keys())}")
+        _log(
+            "Spec scenario pass complete: "
+            f"{len(all_results)} scenario id(s) materialized from runtime spec."
+        )
         steps.update(1)
 
         steps.set_description("Joint Pipeline: save outputs")
