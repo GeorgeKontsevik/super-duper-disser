@@ -1,19 +1,20 @@
-Siena, Italy
-Cesky Krumlov, Czechia
+Salzburg, Austria
+Heidelberg, Germany
+Leuven, Belgium
 Bruges, Belgium
-Avila, Spain
-Ripoll, Spain
-Sighisoara, Romania
-Mostar, Bosnia and Herzegovina
-Gorizia, Italy
-Ptuj, Slovenia
-Paraty, Brazil
-Ouro Preto, Brazil
-San Miguel de Allende, Mexico
-Guanajuato, Mexico
-Lunenburg, Canada
-Deadwood, USA
-Nikko, Japan
-Takayama, Japan
-Ait Benhaddou, Morocco
-Veliko Tarnovo, Bulgaria
+Girona, Spain
+Coimbra, Portugal
+Trieste, Italy
+Graz, Austria
+Innsbruck, Austria
+Cluj-Napoca, Romania
+Plovdiv, Bulgaria
+Thessaloniki, Greece
+Bergen, Norway
+Aarhus, Denmark
+Quebec City, Canada
+Kyoto, Japan
+Nara, Japan
+Cusco, Peru
+Merida, Mexico
+Fez, Morocco
