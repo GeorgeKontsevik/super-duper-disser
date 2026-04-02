@@ -12,6 +12,7 @@ chmod +x scripts/bootstrap_fresh_machine.sh
 
 What the script does:
 - installs `uv` if missing
+- tries to install `python3`, `curl`, and `git` automatically via available package manager (`brew`, `apt`, `dnf`, `yum`, `pacman`, `zypper`, `winget`, `choco`)
 - initializes git submodules
 - creates `.venv`
 - installs main project dependencies
