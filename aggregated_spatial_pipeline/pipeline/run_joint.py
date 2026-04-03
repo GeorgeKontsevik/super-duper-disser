@@ -15,6 +15,7 @@ import geopandas as gpd
 import pandas as pd
 from loguru import logger
 from matplotlib.patches import Patch
+from shapely import Polygon
 from shapely.geometry import Point, box
 from tqdm.auto import tqdm
 
@@ -26,6 +27,7 @@ from aggregated_spatial_pipeline.runtime_paths import (
     blocksnet_python,
     connectpt_python,
     floor_predictor_python,
+    repo_root,
     street_pattern_python,
 )
 from aggregated_spatial_pipeline.spec import CONFIG_DIR, PipelineSpec
@@ -137,6 +139,24 @@ def parse_args() -> argparse.Namespace:
         help="Optional OSM node id of city centre. If provided, buffer is built from this node directly.",
     )
     parser.add_argument(
+        "--relation-id",
+        dest="relation_id",
+        type=int,
+        help=(
+            "Optional OSM relation id used as analysis territory directly. "
+            "If provided, the main territory is the relation polygon itself and no outer margin is added."
+        ),
+    )
+    parser.add_argument(
+        "--relation-geometry",
+        dest="relation_geometry",
+        help=(
+            "Optional local GeoJSON/Parquet/GPKG file with territory polygon. "
+            "If provided together with --relation-id, the file is used as the territory geometry "
+            "without any network requests."
+        ),
+    )
+    parser.add_argument(
         "--city",
         help="Optional city label shown in logs/manifest (overrides auto-detection).",
     )
@@ -186,14 +206,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--buffer-m",
         type=float,
-        default=20000.0,
-        help="Buffer radius in meters used by street-pattern pipeline and joint layer preparation.",
+        default=None,
+        help=(
+            "Optional buffer radius in meters used for circle-mode. "
+            "If omitted for --place, the pipeline uses the relation polygon; "
+            "if omitted with --center-node-id, the default circle radius is kept."
+        ),
     )
     parser.add_argument(
         "--street-grid-step",
         type=float,
-        default=1000.0,
-        help="Grid step in meters for street-pattern classification. Default: 1000.",
+        default=500.0,
+        help="Grid step in meters for street-pattern classification. Default: 500.",
     )
     parser.add_argument(
         "--analysis-margin-m",
@@ -263,17 +287,24 @@ def parse_args() -> argparse.Namespace:
 
 
 def _validate_args(args: argparse.Namespace) -> None:
-    if args.place and args.center_node_id is not None:
-        raise SystemExit("Use either --place or --center-node-id, not both.")
+    auto_sources = [
+        bool(args.place),
+        args.center_node_id is not None,
+        args.relation_id is not None,
+    ]
+    if sum(auto_sources) > 1:
+        raise SystemExit("Use only one auto-source: --place, --center-node-id, or --relation-id.")
+    if args.relation_geometry and args.relation_id is None:
+        raise SystemExit("--relation-geometry requires --relation-id to label outputs.")
 
-    has_auto_source = bool(args.place or args.center_node_id is not None)
+    has_auto_source = bool(args.place or args.center_node_id is not None or args.relation_id is not None)
     has_min_explicit = all([args.quarters, args.street_grid, args.cities])
     if has_auto_source or has_min_explicit:
         if args.collect_only and not has_auto_source:
-            raise SystemExit("--collect-only is supported only with --place/--center-node-id (auto data collection mode).")
+            raise SystemExit("--collect-only is supported only with auto-source mode (--place/--center-node-id/--relation-id).")
         return
     raise SystemExit(
-        "Provide either --place/--center-node-id for automatic data collection OR explicit layer paths: "
+        "Provide either --place/--center-node-id/--relation-id for automatic data collection OR explicit layer paths: "
         "--quarters --street-grid --cities [--climate-grid]."
     )
 
@@ -430,8 +461,10 @@ def _resolve_joint_output_dir(args: argparse.Namespace) -> Path:
         slug = _slugify(str(args.place))
     elif args.center_node_id is not None:
         slug = f"osm_node_{int(args.center_node_id)}"
+    elif args.relation_id is not None:
+        slug = f"osm_relation_{int(args.relation_id)}"
     else:
-        raise ValueError("Provide --output-dir explicitly when running run_joint without --place/--center-node-id.")
+        raise ValueError("Provide --output-dir explicitly when running run_joint without --place/--center-node-id/--relation-id.")
     return (repo_root / "aggregated_spatial_pipeline" / "outputs" / "joint" / slug).resolve()
 
 
@@ -538,6 +571,7 @@ def _ensure_street_grid_from_repo(
     no_cache: bool,
     buffer_m: float,
     grid_step: float,
+    relation_id: int | None = None,
     center_node_id: int | None = None,
     roads_path: Path | None = None,
 ) -> tuple[Path, Path, bool]:
@@ -603,6 +637,8 @@ def _ensure_street_grid_from_repo(
         command.extend(["--road-source", "local", "--roads", str(roads_for_street_pattern)])
     if center_node_id is not None:
         command.extend(["--center-node-id", str(int(center_node_id))])
+    if relation_id is not None:
+        command.extend(["--relation-id", str(int(relation_id))])
     if no_cache:
         command.append("--no-cache")
 
@@ -715,20 +751,124 @@ def _node_get(api, node_id: int) -> dict:
     return api.NodeGet(node_id)
 
 
+def _pick_relation_center_node(api, relation_id: int) -> dict | None:
+    relation = _relation_get(api, int(relation_id))
+    members = relation.get("member") or relation.get("members") or []
+    preferred_roles = ("admin_centre", "admin_center", "label", "capital")
+    for role in preferred_roles:
+        node_member = next(
+            (
+                member
+                for member in members
+                if member.get("type") == "node" and member.get("role") == role
+            ),
+            None,
+        )
+        if node_member is not None:
+            return _node_get(api, int(node_member["ref"]))
+    return None
+
+
+def _get_relation_boundary_via_overpass(relation_id: int):
+    try:
+        import osmnx as ox
+        from shapely.ops import unary_union
+
+        gdf = ox.geocode_to_gdf(f"R{int(relation_id)}", by_osmid=True)
+        if gdf.empty or "geometry" not in gdf:
+            raise ValueError(f"osmnx returned empty geometry for relation {relation_id}")
+        geoms = gdf.geometry.dropna().tolist()
+        if not geoms:
+            raise ValueError(f"osmnx returned no valid geometries for relation {relation_id}")
+        merged = unary_union(geoms)
+        if merged.is_empty:
+            raise ValueError(f"osmnx produced empty union for relation {relation_id}")
+        return merged
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError(
+            "Could not resolve relation boundary via osmnx "
+            f"(relation_id={relation_id})."
+        ) from exc
+
+
+def _resolve_relation_id_for_place(place: str | None) -> int | None:
+    if not place:
+        return None
+    try:
+        import osmnx as ox
+
+        geocoded = ox.geocode_to_gdf(place)
+        if geocoded.empty:
+            return None
+        row = geocoded.iloc[0]
+        if str(row.get("osm_type", "")).lower() != "relation":
+            return None
+        relation_id = row.get("osm_id")
+        if relation_id is None:
+            return None
+        return int(relation_id)
+    except Exception:
+        return None
+
+
 def _resolve_analysis_buffer_from_osm(
     *,
     place: str | None,
     buffer_m: float,
     output_path: Path,
     center_node_id: int | None = None,
+    relation_id: int | None = None,
+    relation_geometry: Path | None = None,
 ) -> Path:
     import osmnx as ox
-    import osmapi as osm
+    territory_mode = "node_buffer"
+    if relation_geometry is not None:
+        relation_gdf = read_geodata(relation_geometry)
+        if relation_gdf.empty:
+            raise ValueError(f"Relation geometry file is empty: {relation_geometry}")
+        relation_geom = relation_gdf.geometry.iloc[0]
+        if relation_geom.is_empty:
+            raise ValueError(f"Relation geometry is empty: {relation_geometry}")
+        if float(buffer_m) > 0.0:
+            relation_gdf = gpd.GeoDataFrame({"geometry": [relation_geom]}, crs=4326)
+            buffered = relation_gdf.to_crs(3857).buffer(float(buffer_m))
+            buffer_geom = gpd.GeoSeries(buffered, crs=3857).to_crs(4326).iloc[0]
+            territory_mode = "relation_buffer"
+        else:
+            buffer_geom = relation_geom
+            territory_mode = "relation"
+        representative = relation_geom.representative_point()
+        centre_node_id = None
+        centre_lon = float(representative.x)
+        centre_lat = float(representative.y)
+    elif relation_id is not None:
+        relation_geom = _get_relation_boundary_via_overpass(int(relation_id))
+        if relation_geom.is_empty:
+            raise ValueError(f"Empty boundary for relation {relation_id}")
+        if float(buffer_m) > 0.0:
+            relation_gdf = gpd.GeoDataFrame({"geometry": [relation_geom]}, crs=4326)
+            buffered = relation_gdf.to_crs(3857).buffer(float(buffer_m))
+            buffer_geom = gpd.GeoSeries(buffered, crs=3857).to_crs(4326).iloc[0]
+            territory_mode = "relation_buffer"
+        else:
+            buffer_geom = relation_geom
+            territory_mode = "relation"
+        representative = relation_geom.representative_point()
+        centre_node_id = None
+        centre_lon = float(representative.x)
+        centre_lat = float(representative.y)
+    elif center_node_id is not None:
+        import osmapi as osm
 
-    api = osm.OsmApi()
-    if center_node_id is not None:
+        api = osm.OsmApi()
         node = _node_get(api, int(center_node_id))
         relation_id = None
+        point = Point(float(node["lon"]), float(node["lat"]))
+        point_gdf = gpd.GeoDataFrame({"geometry": [point]}, crs=4326)
+        buffer_geom = gpd.GeoSeries(point_gdf.to_crs(3857).buffer(float(buffer_m)), crs=3857).to_crs(4326).iloc[0]
+        centre_node_id = int(node.get("id"))
+        centre_lon = float(node["lon"])
+        centre_lat = float(node["lat"])
     else:
         if not place:
             raise ValueError("place is required when --center-node-id is not provided.")
@@ -744,39 +884,29 @@ def _resolve_analysis_buffer_from_osm(
                 f"Expected a relation for {place}, got osm_type={osm_type!r}, osm_id={relation_id!r}"
             )
 
-        relation = _relation_get(api, int(relation_id))
-        members = relation.get("member") or relation.get("members") or []
-
-        preferred_roles = ("admin_centre", "admin_center", "label", "capital")
-        node_member = None
-        for role in preferred_roles:
-            node_member = next(
-                (
-                    member
-                    for member in members
-                    if member.get("type") == "node" and member.get("role") == role
-                ),
-                None,
-            )
-            if node_member is not None:
-                break
-
-        if node_member is None:
-            raise ValueError(f"Could not find a centre node for {place} in relation {relation_id}")
-
-        node = _node_get(api, int(node_member["ref"]))
-    point = Point(float(node["lon"]), float(node["lat"]))
-    point_gdf = gpd.GeoDataFrame({"geometry": [point]}, crs=4326)
-    buffer_geom = gpd.GeoSeries(point_gdf.to_crs(3857).buffer(float(buffer_m)), crs=3857).to_crs(4326).iloc[0]
+        relation_geom = _get_relation_boundary_via_overpass(int(relation_id))
+        representative = relation_geom.representative_point()
+        centre_node_id = None
+        centre_lon = float(representative.x)
+        centre_lat = float(representative.y)
+        if float(buffer_m) > 0.0:
+            relation_gdf = gpd.GeoDataFrame({"geometry": [relation_geom]}, crs=4326)
+            buffered = relation_gdf.to_crs(3857).buffer(float(buffer_m))
+            buffer_geom = gpd.GeoSeries(buffered, crs=3857).to_crs(4326).iloc[0]
+            territory_mode = "relation_buffer"
+        else:
+            buffer_geom = relation_geom
+            territory_mode = "relation"
 
     buffer_gdf = gpd.GeoDataFrame(
         [
             {
-                "place": place or f"osm_node_{int(center_node_id)}",
+                "place": place or (f"osm_relation_{int(relation_id)}" if relation_id is not None else f"osm_node_{int(center_node_id)}"),
+                "territory_mode": territory_mode,
                 "relation_id": int(relation_id) if relation_id is not None else None,
-                "centre_node_id": int(node.get("id")),
-                "centre_lon": float(node["lon"]),
-                "centre_lat": float(node["lat"]),
+                "centre_node_id": centre_node_id,
+                "centre_lon": centre_lon,
+                "centre_lat": centre_lat,
                 "buffer_m": float(buffer_m),
                 "geometry": buffer_geom,
             }
@@ -807,9 +937,9 @@ def _analysis_buffer_matches(path: Path, expected_buffer_m: float) -> bool:
         return False
 
 
-def _effective_analysis_margin_m(args: argparse.Namespace) -> float:
+def _effective_analysis_margin_m(args: argparse.Namespace, base_buffer_m: float) -> float:
     if args.analysis_margin_m is None:
-        return float(args.buffer_m) * 0.2
+        return float(base_buffer_m) * 0.2
     return max(0.0, float(args.analysis_margin_m))
 
 
@@ -1155,8 +1285,10 @@ def _save_collection_previews(
     street_grid_path: Path,
     floor_enriched_path: Path,
     floor_metrics: dict | None = None,
+    stage_label: str = "stage",
     clear_existing: bool = False,
 ) -> list[Path]:
+    import shutil
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -1402,6 +1534,7 @@ def _save_collection_previews(
 
     preview_dir = data_root / "preview_png"
     all_together_dir = preview_dir / "all_together"
+    stage_dir = preview_dir / "stages" / _slugify(stage_label)
     preview_dir.mkdir(parents=True, exist_ok=True)
     all_together_dir.mkdir(parents=True, exist_ok=True)
     if clear_existing:
@@ -1415,6 +1548,8 @@ def _save_collection_previews(
                 stale.unlink()
             except Exception:
                 pass
+        shutil.rmtree(preview_dir / "stages", ignore_errors=True)
+    stage_dir.mkdir(parents=True, exist_ok=True)
     index_counter = [1]
 
     def _next_name(stem: str) -> str:
@@ -1428,6 +1563,10 @@ def _save_collection_previews(
         if path is None:
             return
         saved.append(path)
+        try:
+            shutil.copy2(path, stage_dir / path.name)
+        except Exception:
+            pass
         _log(f"Preview step: saved {label}: {path.name}")
 
     buffer_gdf_full = _read(buffer_path)
@@ -2033,9 +2172,13 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
     _configure_logging()
     _configure_osm_requests(args.osm_timeout_s, overpass_url=args.overpass_url)
 
-    place = args.place or (f"osm_node_{int(args.center_node_id)}" if args.center_node_id is not None else None)
+    place = args.place or (
+        f"osm_node_{int(args.center_node_id)}"
+        if args.center_node_id is not None
+        else (f"osm_relation_{int(args.relation_id)}" if args.relation_id is not None else None)
+    )
     if not place:
-        raise ValueError("Internal error: either place or center_node_id is required for automatic input preparation.")
+        raise ValueError("Internal error: either place, center_node_id, or relation_id is required for automatic input preparation.")
 
     repo_root = Path(__file__).resolve().parents[2]
     slug = slugify_place(place)
@@ -2056,76 +2199,123 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
 
     _log(f"Auto-collection enabled for place: {place}")
     _log(f"Cache mode: {'disabled (--no-cache)' if args.no_cache else 'enabled'}")
-    effective_buffer_m = float(args.buffer_m)
-    analysis_margin_m = _effective_analysis_margin_m(args)
-    collection_buffer_m = float(effective_buffer_m + analysis_margin_m)
-    _log(
-        "Analysis territory policy: main circle + outer collection margin "
-        f"(core={effective_buffer_m}m, margin={analysis_margin_m}m, collection={collection_buffer_m}m)."
-    )
-    if effective_buffer_m < float(args.floor_min_buffer_m):
+    detected_relation_id = args.relation_id
+    relation_mode = detected_relation_id is not None or (args.place is not None and args.buffer_m is None)
+    if relation_mode and detected_relation_id is None and args.place:
+        detected_relation_id = _resolve_relation_id_for_place(args.place)
+
+    if relation_mode:
+        effective_buffer_m = 0.0
+        analysis_margin_m = 0.0
+    else:
+        effective_buffer_m = float(args.buffer_m) if args.buffer_m is not None else 20000.0
+        analysis_margin_m = _effective_analysis_margin_m(args, effective_buffer_m)
+    collection_buffer_m = 0.0 if relation_mode else float(effective_buffer_m + analysis_margin_m)
+    if relation_mode:
+        relation_log_id = f"relation_id={int(detected_relation_id)}" if detected_relation_id is not None else "relation_id=unknown"
+        _log(
+            "Analysis territory policy: relation polygon with no outer margin "
+            f"({relation_log_id})."
+        )
+    else:
+        _log(
+            "Analysis territory policy: main circle + outer collection margin "
+            f"(core={effective_buffer_m}m, margin={analysis_margin_m}m, collection={collection_buffer_m}m)."
+        )
+    floor_context_radius_m = None if relation_mode else effective_buffer_m
+    if floor_context_radius_m is not None and floor_context_radius_m < float(args.floor_min_buffer_m):
         _warn(
             "Floor restoration context is usually unstable for small buffers. "
-            f"Current effective radius={effective_buffer_m}m, recommended minimum={float(args.floor_min_buffer_m)}m "
+            f"Current effective radius={floor_context_radius_m}m, recommended minimum={float(args.floor_min_buffer_m)}m "
             "(tune via --floor-min-buffer-m or increase --buffer-m)."
         )
 
     analysis_dir = data_root / "analysis_territory"
     analysis_buffer_path = analysis_dir / "buffer.parquet"
     collection_buffer_path = analysis_dir / "buffer_collection.parquet"
-    buffer_matches = _analysis_buffer_matches(analysis_buffer_path, effective_buffer_m)
-    collection_buffer_matches = _analysis_buffer_matches(collection_buffer_path, collection_buffer_m)
+    main_territory_buffer_m = 0.0 if relation_mode else effective_buffer_m
+    collection_territory_buffer_m = 0.0 if relation_mode else collection_buffer_m
+    buffer_matches = _analysis_buffer_matches(analysis_buffer_path, main_territory_buffer_m)
+    collection_buffer_matches = _analysis_buffer_matches(collection_buffer_path, collection_territory_buffer_m)
     if (not args.no_cache) and analysis_buffer_path.exists() and (not buffer_matches):
         _warn(
             "Cached analysis buffer radius does not match current --buffer-m "
-            f"(requested={effective_buffer_m}m). Rebuilding analysis buffer."
+            f"(requested={main_territory_buffer_m}m). Rebuilding analysis buffer."
         )
-    if (not args.no_cache) and collection_buffer_path.exists() and (not collection_buffer_matches):
+    if (not relation_mode) and (not args.no_cache) and collection_buffer_path.exists() and (not collection_buffer_matches):
         _warn(
             "Cached outer collection buffer radius does not match current buffer+margin "
-            f"(requested={collection_buffer_m}m). Rebuilding collection buffer."
+            f"(requested={collection_territory_buffer_m}m). Rebuilding collection buffer."
         )
     if args.no_cache or not analysis_buffer_path.exists() or (not buffer_matches):
-        _log("OSM territory step: resolving city centre and building main analysis buffer.")
+        if relation_mode:
+            _log("OSM territory step: resolving relation geometry and building main analysis territory.")
+        else:
+            _log("OSM territory step: resolving city centre and building main analysis buffer.")
         started = time.time()
         _resolve_analysis_buffer_from_osm(
             place=args.place,
-            buffer_m=effective_buffer_m,
+            buffer_m=main_territory_buffer_m,
             output_path=analysis_buffer_path,
             center_node_id=args.center_node_id,
+            relation_id=detected_relation_id,
+            relation_geometry=Path(args.relation_geometry).resolve() if args.relation_geometry else None,
         )
-        _log(f"Analysis buffer built in {time.time() - started:.1f}s: {analysis_buffer_path.name}")
+        if relation_mode:
+            _log(f"Relation territory built in {time.time() - started:.1f}s: {analysis_buffer_path.name}")
+        else:
+            _log(f"Analysis buffer built in {time.time() - started:.1f}s: {analysis_buffer_path.name}")
         downloaded_in_this_run = True
     else:
-        _log(f"Using cached analysis buffer: {analysis_buffer_path.name}")
-    if args.no_cache or not collection_buffer_path.exists() or (not collection_buffer_matches):
+        if relation_mode:
+            _log(f"Using cached relation territory: {analysis_buffer_path.name}")
+        else:
+            _log(f"Using cached analysis buffer: {analysis_buffer_path.name}")
+    if relation_mode:
+        _log("OSM territory step: relation geometry reused for collection territory.")
+        if args.no_cache or not collection_buffer_path.exists():
+            analysis_buffer_gdf = read_geodata(analysis_buffer_path)
+            analysis_buffer_path.parent.mkdir(parents=True, exist_ok=True)
+            analysis_buffer_gdf.to_parquet(collection_buffer_path)
+            _log(f"Relation territory reused in 0.0s: {collection_buffer_path.name}")
+        else:
+            _log(f"Using cached relation territory reuse: {collection_buffer_path.name}")
+    elif args.no_cache or not collection_buffer_path.exists() or (not collection_buffer_matches):
         _log("OSM territory step: building outer collection buffer with margin.")
         started = time.time()
         center_node_id = args.center_node_id
-        if center_node_id is None:
+        relation_id = args.relation_id
+        if center_node_id is None and relation_id is None:
             core_buffer_gdf = read_geodata(analysis_buffer_path)
-            if core_buffer_gdf.empty or "centre_node_id" not in core_buffer_gdf.columns:
-                raise RuntimeError(
-                    f"Cannot derive centre node id from main analysis buffer: {analysis_buffer_path}"
-                )
-            center_values = pd.to_numeric(core_buffer_gdf["centre_node_id"], errors="coerce").dropna()
-            if center_values.empty:
-                raise RuntimeError(
-                    f"Main analysis buffer does not contain a valid centre node id: {analysis_buffer_path}"
-                )
-            center_node_id = int(center_values.iloc[0])
+            if not core_buffer_gdf.empty and "relation_id" in core_buffer_gdf.columns:
+                relation_values = pd.to_numeric(core_buffer_gdf["relation_id"], errors="coerce").dropna()
+                if not relation_values.empty:
+                    relation_id = int(relation_values.iloc[0])
+            if center_node_id is None and relation_id is None:
+                if core_buffer_gdf.empty or "centre_node_id" not in core_buffer_gdf.columns:
+                    raise RuntimeError(
+                        f"Cannot derive centre node id / relation id from main analysis buffer: {analysis_buffer_path}"
+                    )
+                center_values = pd.to_numeric(core_buffer_gdf["centre_node_id"], errors="coerce").dropna()
+                if center_values.empty:
+                    raise RuntimeError(
+                        f"Main analysis buffer does not contain a valid centre node id or relation id: {analysis_buffer_path}"
+                    )
+                center_node_id = int(center_values.iloc[0])
         _resolve_analysis_buffer_from_osm(
             place=args.place,
             buffer_m=collection_buffer_m,
             output_path=collection_buffer_path,
             center_node_id=center_node_id,
+            relation_id=relation_id,
+            relation_geometry=Path(args.relation_geometry).resolve() if args.relation_geometry else None,
         )
         _log(f"Collection buffer built in {time.time() - started:.1f}s: {collection_buffer_path.name}")
         downloaded_in_this_run = True
     else:
         _log(f"Using cached outer collection buffer: {collection_buffer_path.name}")
     buffer_path = analysis_buffer_path
-    collection_boundary_path = collection_buffer_path
+    collection_boundary_path = analysis_buffer_path if relation_mode else collection_buffer_path
     shared_roads_path = derived_dir / "roads_drive_osmnx.parquet"
     shared_roads_path, shared_roads_count, shared_roads_rebuilt = _ensure_shared_drive_roads(
         buffer_path=collection_boundary_path,
@@ -2245,12 +2435,13 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             street_grid_path=clipped_street_grid_path,
             floor_enriched_path=floor_output_path,
             floor_metrics=floor_metrics_for_preview,
+            stage_label=stage_label,
             clear_existing=(stage_label == "raw_collection"),
         )
         if preview_paths:
             _log(
                 f"Preview refresh [{stage_label}] finished in {time.time() - started:.1f}s "
-                f"({len(preview_paths)} files)."
+                f"({len(preview_paths)} files, stage snapshots saved under preview_png/stages/{_slugify(stage_label)})."
             )
         else:
             _log(f"Preview refresh [{stage_label}] skipped (no readable layers yet).")
@@ -2369,6 +2560,23 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
     _refresh_collection_previews("quarters_ready", floor_metrics_for_preview=floor_metrics)
 
     _log("Classification step: building street-pattern grid for the same territory policy.")
+    street_relation_id = detected_relation_id
+    street_center_node_id = args.center_node_id if street_relation_id is None else None
+    if (street_relation_id is None) and analysis_buffer_path.exists():
+        try:
+            analysis_buffer_gdf = read_geodata(analysis_buffer_path)
+            if not analysis_buffer_gdf.empty and "relation_id" in analysis_buffer_gdf.columns:
+                relation_values = pd.to_numeric(analysis_buffer_gdf["relation_id"], errors="coerce").dropna()
+                if not relation_values.empty:
+                    street_relation_id = int(relation_values.iloc[0])
+                    street_center_node_id = None
+            if not analysis_buffer_gdf.empty and "centre_node_id" in analysis_buffer_gdf.columns:
+                centre_values = pd.to_numeric(analysis_buffer_gdf["centre_node_id"], errors="coerce").dropna()
+                if (street_relation_id is None) and (not centre_values.empty):
+                    street_center_node_id = int(centre_values.iloc[0])
+        except Exception:
+            street_relation_id = args.relation_id
+            street_center_node_id = args.center_node_id if street_relation_id is None else None
     street_grid_source_path, street_summary_path, street_rebuilt = _ensure_street_grid_from_repo(
         place=place,
         repo_root=repo_root,
@@ -2376,7 +2584,8 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         no_cache=args.no_cache,
         buffer_m=collection_buffer_m,
         grid_step=float(args.street_grid_step),
-        center_node_id=args.center_node_id,
+        relation_id=street_relation_id,
+        center_node_id=street_center_node_id,
         roads_path=shared_roads_path,
     )
     if args.no_cache or street_rebuilt or not clipped_street_grid_path.exists():
@@ -2417,7 +2626,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         "place": place,
         "slug": slug,
         "generated_by": "aggregated_spatial_pipeline.pipeline.run_joint",
-        "buffer_m": args.buffer_m,
+        "buffer_m": effective_buffer_m,
         "street_grid_step": args.street_grid_step,
         "analysis_margin_m": analysis_margin_m,
         "effective_buffer_m": effective_buffer_m,
@@ -2485,7 +2694,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             "slug": slug,
             "downloaded_in_this_run": downloaded_in_this_run,
             "cached": (not args.no_cache and buffered_quarters_path.exists()),
-            "origin": f"blocks clipped to {effective_buffer_m}m buffer",
+            "origin": "blocks clipped to relation polygon" if relation_mode else f"blocks clipped to {effective_buffer_m}m buffer",
         },
         "street_grid": {
             "input_path": str(clipped_street_grid_path),
@@ -2495,8 +2704,12 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             "downloaded_in_this_run": downloaded_in_this_run,
             "cached": (not args.no_cache and clipped_street_grid_path.exists()),
             "origin": (
-                "segregation-by-design-experiments predicted_cells.geojson "
-                f"built on {collection_buffer_m}m collection buffer and clipped to {effective_buffer_m}m analysis buffer"
+                "segregation-by-design-experiments predicted_cells.geojson built on relation polygon"
+                if relation_mode
+                else (
+                    "segregation-by-design-experiments predicted_cells.geojson "
+                    f"built on {collection_buffer_m}m collection buffer and clipped to {effective_buffer_m}m analysis buffer"
+                )
             ),
         },
         **(
@@ -2520,7 +2733,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             "slug": slug,
             "downloaded_in_this_run": downloaded_in_this_run,
             "cached": (not args.no_cache and buffer_path.exists()),
-            "origin": f"main analysis buffer polygon ({effective_buffer_m}m) with collection margin {analysis_margin_m}m",
+            "origin": "main analysis relation polygon" if relation_mode else f"main analysis buffer polygon ({effective_buffer_m}m) with collection margin {analysis_margin_m}m",
         },
     }
     return PreparedInputs(
@@ -2532,7 +2745,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
 
 
 def _prepare_inputs(args: argparse.Namespace) -> PreparedInputs:
-    if args.place or args.center_node_id is not None:
+    if args.place or args.center_node_id is not None or args.relation_id is not None:
         prepared = _prepare_inputs_from_place(args)
         return PreparedInputs(
             layer_inputs=prepared.layer_inputs,

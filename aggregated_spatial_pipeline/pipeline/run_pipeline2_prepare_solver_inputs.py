@@ -136,6 +136,11 @@ def parse_args() -> argparse.Namespace:
         help="Rebuild all artifacts even if cached files exist.",
     )
     parser.add_argument(
+        "--placement-exact",
+        action="store_true",
+        help="Run exact service placement after solver-input preparation and save after-placement outputs/previews.",
+    )
+    parser.add_argument(
         "--overpass-url",
         default=None,
         help="Optional custom Overpass endpoint for OSMnx.",
@@ -189,6 +194,16 @@ def _load_blocksnet_service_defaults() -> dict[str, dict]:
 
 
 BLOCKSNET_SERVICE_DEFAULTS = _load_blocksnet_service_defaults()
+DEFAULT_POPULATION_SHARE_BY_SERVICE = {
+    "hospital": 1.0,
+    "polyclinic": 1.0,
+    "school": 1.0,
+}
+DEFAULT_MIN_NEW_CAPACITY_BY_SERVICE = {
+    "hospital": 50.0,
+    "polyclinic": 50.0,
+    "school": 1500.0,
+}
 LOG_FORMAT = (
     "<green>{time:DD MMM HH:mm}</green> | "
     "<level>{level: <7}</level> | "
@@ -390,6 +405,14 @@ def _service_demand_per_1000(service: str, args: argparse.Namespace) -> float:
     return float(config.get("demand", ARCTIC_DEFAULT_POPULATION))
 
 
+def _service_population_share(service: str) -> float:
+    return float(DEFAULT_POPULATION_SHARE_BY_SERVICE.get(service, 1.0))
+
+
+def _service_min_new_capacity(service: str) -> float:
+    return float(DEFAULT_MIN_NEW_CAPACITY_BY_SERVICE.get(service, 50.0))
+
+
 def _to_points(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     points = gdf.copy()
     points["geometry"] = points.geometry.representative_point()
@@ -432,10 +455,30 @@ PIPELINE2_GALLERY_FILENAMES = {
     "school": "33_lp_school_provision_unmet.png",
 }
 
+PIPELINE2_PLACEMENT_GALLERY_FILENAMES = {
+    "hospital": {
+        "status": "34_exact_hospital_placement_status.png",
+        "after": "35_exact_hospital_provision_after.png",
+    },
+    "polyclinic": {
+        "status": "36_exact_polyclinic_placement_status.png",
+        "after": "37_exact_polyclinic_provision_after.png",
+    },
+    "school": {
+        "status": "38_exact_school_placement_status.png",
+        "after": "39_exact_school_provision_after.png",
+    },
+}
+
 
 def _calc_demand(population: pd.Series, demand_per_1000: float) -> pd.Series:
     scaled = np.ceil((population.fillna(0.0).astype(float) / 1000.0) * float(demand_per_1000))
     return scaled.astype(int)
+
+
+def _calc_service_demand(population: pd.Series, service: str, demand_per_1000: float) -> pd.Series:
+    effective_population = population.fillna(0.0).astype(float) * _service_population_share(service)
+    return _calc_demand(effective_population, demand_per_1000)
 
 
 def _run_with_heartbeat(label: str, func, interval_s: float = 20.0):
@@ -738,6 +781,371 @@ def _plot_service_lp_preview(
     return str(out_path)
 
 
+def _load_solver_flp_optimize():
+    repo_root = Path(__file__).resolve().parents[2]
+    solver_src = repo_root / "solver_flp" / "src"
+    if str(solver_src) not in sys.path:
+        sys.path.insert(0, str(solver_src))
+    from method import optimize_placement  # type: ignore
+
+    return optimize_placement
+
+
+def _resolve_placement_demand_column(solver_blocks: pd.DataFrame) -> str:
+    for candidate in ("demand_without", "demand_left", "demand"):
+        if candidate in solver_blocks.columns:
+            values = pd.to_numeric(solver_blocks[candidate], errors="coerce").fillna(0.0)
+            if candidate == "demand" or float(values.sum()) > 0.0:
+                return candidate
+    raise ValueError("Could not resolve placement demand column.")
+
+
+def _build_placement_target_demand(solver_blocks: pd.DataFrame) -> pd.Series:
+    demand_left = pd.to_numeric(solver_blocks.get("demand_left", 0.0), errors="coerce").fillna(0.0)
+    demand_without = pd.to_numeric(solver_blocks.get("demand_without", 0.0), errors="coerce").fillna(0.0)
+    target = demand_left + demand_without
+    if float(target.sum()) > 0.0:
+        return target
+    demand = pd.to_numeric(solver_blocks.get("demand", 0.0), errors="coerce").fillna(0.0)
+    return demand
+
+
+def _build_assignment_links(res_id: dict, blocks_after: pd.DataFrame) -> pd.DataFrame:
+    demand_by_id = {}
+    if "target_unmet_demand" in blocks_after.columns and "name" in blocks_after.columns:
+        demand_by_id = {
+            str(row["name"]): float(row["target_unmet_demand"])
+            for _, row in blocks_after[["name", "target_unmet_demand"]].iterrows()
+        }
+    rows = []
+    for facility_id, client_ids in res_id.items():
+        for client_id in client_ids:
+            rows.append(
+                {
+                    "facility_id": str(facility_id),
+                    "client_id": str(client_id),
+                    "client_demand_target": float(demand_by_id.get(str(client_id), 0.0)),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _plot_placement_status_preview(
+    blocks_after: pd.DataFrame | gpd.GeoDataFrame,
+    service: str,
+    out_path: Path,
+    *,
+    quarters_ref: gpd.GeoDataFrame | None = None,
+    boundary: gpd.GeoDataFrame | None = None,
+) -> str | None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from shapely.geometry import box
+
+    gdf = _coerce_solver_blocks_geodataframe(blocks_after, quarters_ref=quarters_ref)
+    if gdf is None or gdf.empty:
+        return None
+    gdf = gdf[gdf.geometry.notna() & ~gdf.geometry.is_empty].copy()
+    if gdf.empty:
+        return None
+    _log(f"Preview step: rendering exact placement-status map for service [{service}]...")
+    if gdf.crs is not None:
+        try:
+            gdf = gdf.to_crs("EPSG:3857")
+        except Exception:
+            pass
+
+    boundary_plot = None
+    outer_bg = None
+    outer_bounds = None
+    if boundary is not None and not boundary.empty:
+        boundary_plot = boundary.copy()
+        boundary_plot = boundary_plot[boundary_plot.geometry.notna() & ~boundary_plot.geometry.is_empty].copy()
+        if not boundary_plot.empty and boundary_plot.crs is not None:
+            try:
+                boundary_plot = boundary_plot.to_crs("EPSG:3857")
+            except Exception:
+                pass
+        if boundary_plot is not None and not boundary_plot.empty:
+            minx, miny, maxx, maxy = boundary_plot.total_bounds
+            pad_x = max((maxx - minx) * 0.08, 250.0)
+            pad_y = max((maxy - miny) * 0.08, 250.0)
+            outer_bounds = (minx - pad_x, miny - pad_y, maxx + pad_x, maxy + pad_y)
+            outer_bg = gpd.GeoDataFrame({"geometry": [box(*outer_bounds)]}, crs=boundary_plot.crs)
+
+    if "placement_status" not in gdf.columns:
+        return None
+    color_map = {
+        "existing": "#2563eb",
+        "expanded": "#7c3aed",
+        "new": "#dc2626",
+        "inactive": "#d1d5db",
+    }
+    label_map = {
+        "existing": "existing service kept",
+        "expanded": "existing service expanded",
+        "new": "new service added",
+        "inactive": "no service in quarter",
+    }
+    fig, ax = plt.subplots(figsize=(12, 10))
+    fig.patch.set_facecolor("#6b6b6b")
+    ax.set_facecolor("#6b6b6b")
+    if outer_bg is not None and not outer_bg.empty:
+        outer_bg.plot(ax=ax, facecolor="#6b6b6b", edgecolor="none", alpha=1.0, zorder=-20)
+    if boundary_plot is not None and not boundary_plot.empty:
+        boundary_plot.plot(ax=ax, facecolor="#f7f0dd", edgecolor="none", linewidth=0.0, alpha=1.0, zorder=-10)
+    active_statuses = [status for status in ("inactive", "existing", "expanded", "new") if status in set(gdf["placement_status"])]
+    for status in active_statuses:
+        part = gdf[gdf["placement_status"] == status]
+        if part.empty:
+            continue
+        part.plot(
+            ax=ax,
+            color=color_map[status],
+            linewidth=0.05,
+            edgecolor="#d1d5db",
+            alpha=0.92,
+            zorder=2,
+        )
+    if boundary_plot is not None and not boundary_plot.empty:
+        boundary_plot.boundary.plot(ax=ax, color="#ffffff", linewidth=1.4, zorder=3)
+    if outer_bounds is not None:
+        ax.set_xlim(outer_bounds[0], outer_bounds[2])
+        ax.set_ylim(outer_bounds[1], outer_bounds[3])
+    counts = {status: int((gdf["placement_status"] == status).sum()) for status in color_map}
+    title_bits = [
+        f"existing={counts['existing']}",
+        f"new={counts['new']}",
+    ]
+    if counts["expanded"] > 0:
+        title_bits.append(f"expanded={counts['expanded']}")
+    ax.set_title(
+        f"{service}: exact placement status | " + ", ".join(title_bits),
+        fontsize=16,
+        fontweight="bold",
+        color="#ffffff",
+        pad=16,
+    )
+    from matplotlib.patches import Patch
+    legend_handles = [Patch(facecolor=color_map[s], edgecolor="none", label=label_map[s]) for s in active_statuses if counts[s] > 0]
+    if legend_handles:
+        ax.legend(
+            handles=legend_handles,
+            loc="lower left",
+            frameon=True,
+            facecolor="#f7f0dd",
+            edgecolor="#9ca3af",
+            fontsize=10,
+        )
+    ax.set_axis_off()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
+    plt.close(fig)
+    _log(f"Preview step: saved exact placement-status map for service [{service}]: {out_path.name}")
+    return str(out_path)
+
+
+def _plot_placement_after_preview(
+    blocks_after: pd.DataFrame | gpd.GeoDataFrame,
+    service: str,
+    out_path: Path,
+    *,
+    quarters_ref: gpd.GeoDataFrame | None = None,
+    boundary: gpd.GeoDataFrame | None = None,
+) -> str | None:
+    after = blocks_after.copy()
+    if "provision_strong_after" in after.columns:
+        after["provision_strong"] = after["provision_strong_after"]
+    if "demand_without_after" in after.columns:
+        after["demand_without"] = after["demand_without_after"]
+    return _plot_service_lp_preview(after, f"{service} exact-after", out_path, quarters_ref=quarters_ref, boundary=boundary)
+
+
+def _run_exact_placement_for_service(
+    solver_blocks: gpd.GeoDataFrame | pd.DataFrame,
+    sub_mx: pd.DataFrame,
+    service: str,
+    output_dir: Path,
+    *,
+    preview_dir: Path,
+    quarters_ref: gpd.GeoDataFrame,
+    boundary: gpd.GeoDataFrame,
+    use_cache: bool = True,
+) -> dict:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    blocks_after_path = output_dir / "blocks_solver_after.parquet"
+    summary_after_path = output_dir / "summary_after.json"
+    assignment_links_path = output_dir / "assignment_links_after.csv"
+    gallery_targets = PIPELINE2_PLACEMENT_GALLERY_FILENAMES.get(service, {})
+
+    manifest_cache_ok = use_cache and blocks_after_path.exists() and summary_after_path.exists() and assignment_links_path.exists()
+    if manifest_cache_ok:
+        cached_summary = _try_load_json(summary_after_path) or {}
+        return {
+            "summary_after": str(summary_after_path),
+            "blocks_after": str(blocks_after_path),
+            "assignment_links_after": str(assignment_links_path),
+            "status_preview_png": str(preview_dir / gallery_targets["status"]) if gallery_targets.get("status") and (preview_dir / gallery_targets["status"]).exists() else None,
+            "after_preview_png": str(preview_dir / gallery_targets["after"]) if gallery_targets.get("after") and (preview_dir / gallery_targets["after"]).exists() else None,
+            "selected_count": int(cached_summary.get("selected_count", 0)),
+            "new_count": int(cached_summary.get("new_count", 0)),
+            "expanded_count": int(cached_summary.get("expanded_count", 0)),
+        }
+
+    optimize_placement = _load_solver_flp_optimize()
+    demand_column = "target_unmet_demand"
+    target_demand_full = _build_placement_target_demand(solver_blocks)
+    provision_series = pd.to_numeric(solver_blocks.get("provision", 0.0), errors="coerce").fillna(0.0)
+    unmet_mask = target_demand_full > 0.0
+    if "provision" in solver_blocks.columns:
+        unmet_mask = unmet_mask | (provision_series < 1.0)
+    work = solver_blocks[unmet_mask].copy()
+    work[demand_column] = target_demand_full.loc[work.index].astype(float)
+    ids = list(work.index)
+    if not ids:
+        raise ValueError(f"No active blocks for exact placement [{service}].")
+    matrix = sub_mx.loc[ids, ids].copy()
+    work = work.reset_index(drop=True)
+    matrix = matrix.reset_index(drop=True)
+    matrix.columns = matrix.index
+
+    _log(
+        f"Exact placement [{service}]: blocks={len(work)}, demand_column={demand_column}, "
+        f"demand_sum={float(pd.to_numeric(work[demand_column], errors='coerce').fillna(0.0).sum()):.1f}"
+    )
+    started = time.time()
+    optimization = optimize_placement(
+        matrix=matrix,
+        df=work,
+        service_radius=float(work["service_radius_min"].iloc[0]),
+        id_matrix=ids,
+        use_genetic=False,
+        demand_column=demand_column,
+        prefer_existing=False,
+        keep_existing_capacity=True,
+        allow_existing_expansion=False,
+        min_new_capacity=_service_min_new_capacity(service),
+        heartbeat_interval_sec=20.0,
+    )
+    elapsed = time.time() - started
+
+    blocks_after = solver_blocks.copy()
+    original_capacity = pd.to_numeric(blocks_after["capacity"], errors="coerce").fillna(0.0)
+    optimized_capacity_total = original_capacity.copy()
+    optimized_capacity_total.loc[ids] = np.asarray(optimization["capacities"], dtype=float)
+    blocks_after["optimized_capacity_total"] = optimized_capacity_total.reindex(blocks_after.index).fillna(0.0)
+    blocks_after["optimized_capacity_added"] = np.maximum(
+        blocks_after["optimized_capacity_total"] - original_capacity,
+        0.0,
+    )
+    statuses = pd.Series("inactive", index=blocks_after.index, dtype=object)
+    selected_mask = blocks_after["optimized_capacity_total"] > 0.0
+    existing_mask = original_capacity > 0.0
+    statuses.loc[existing_mask & selected_mask] = "existing"
+    statuses.loc[existing_mask & (blocks_after["optimized_capacity_added"] > 0.0)] = "expanded"
+    statuses.loc[~existing_mask & selected_mask] = "new"
+    blocks_after["placement_status"] = statuses
+    target_demand = target_demand_full.reindex(blocks_after.index).fillna(0.0)
+    blocks_after["target_unmet_demand"] = target_demand
+
+    # Re-evaluate post-placement provision using the same mechanism as the base solver inputs.
+    reprovision_input = blocks_after[["demand", "geometry"]].copy()
+    reprovision_input["capacity"] = blocks_after["optimized_capacity_total"]
+    provision_after_df, links_after_df = competitive_provision(
+        blocks_df=reprovision_input,
+        accessibility_matrix=sub_mx,
+        accessibility=int(math.ceil(float(solver_blocks["service_radius_min"].iloc[0]))),
+        demand=None,
+        self_supply=True,
+        max_depth=1,
+    )
+    for before_col, after_col in (
+        ("demand_within", "demand_within_after"),
+        ("demand_without", "demand_without_after"),
+        ("demand_left", "demand_left_after"),
+        ("capacity_left", "capacity_left_after"),
+        ("capacity_within", "capacity_within_after"),
+        ("capacity_without", "capacity_without_after"),
+        ("provision_strong", "provision_strong_after"),
+        ("provision_weak", "provision_weak_after"),
+    ):
+        if before_col in provision_after_df.columns:
+            blocks_after[after_col] = pd.to_numeric(provision_after_df[before_col], errors="coerce").reindex(blocks_after.index)
+    _save_geodata(blocks_after, blocks_after_path)
+
+    assignment_links = _build_assignment_links(optimization["res_id"], blocks_after)
+    assignment_links_path.parent.mkdir(parents=True, exist_ok=True)
+    assignment_links.to_csv(assignment_links_path, index=False)
+    provision_links_after_path = output_dir / "provision_links_after.csv"
+    provision_links_after_path.parent.mkdir(parents=True, exist_ok=True)
+    links_after_df.reset_index().to_csv(provision_links_after_path, index=False)
+
+    status_png = None
+    after_png = None
+    if gallery_targets.get("status"):
+        status_png = _plot_placement_status_preview(
+            blocks_after,
+            service,
+            preview_dir / gallery_targets["status"],
+            quarters_ref=quarters_ref,
+            boundary=boundary,
+        )
+    if gallery_targets.get("after"):
+        after_png = _plot_placement_after_preview(
+            blocks_after,
+            service,
+            preview_dir / gallery_targets["after"],
+            quarters_ref=quarters_ref,
+            boundary=boundary,
+        )
+
+    total_demand = pd.to_numeric(blocks_after.get("demand", 0.0), errors="coerce").fillna(0.0)
+    summary_after = {
+        "service": service,
+        "mode": "exact",
+        "demand_column": demand_column,
+        "elapsed_sec": float(elapsed),
+        "min_new_capacity": float(_service_min_new_capacity(service)),
+        "blocks_count": int(len(blocks_after)),
+        "selected_count": int((blocks_after["optimized_capacity_total"] > 0.0).sum()),
+        "new_count": int((blocks_after["placement_status"] == "new").sum()),
+        "expanded_count": int((blocks_after["placement_status"] == "expanded").sum()),
+        "existing_count": int((blocks_after["placement_status"] == "existing").sum()),
+        "capacity_total_before": float(original_capacity.sum()),
+        "capacity_total_after": float(blocks_after["optimized_capacity_total"].sum()),
+        "capacity_added_total": float(blocks_after["optimized_capacity_added"].sum()),
+        "demand_target_total": float(target_demand.sum()),
+        "demand_without_after_total": float(pd.to_numeric(blocks_after["demand_without_after"], errors="coerce").fillna(0.0).sum()),
+        "demand_left_after_total": float(pd.to_numeric(blocks_after["demand_left_after"], errors="coerce").fillna(0.0).sum()),
+        "provision_strong_total_after": float(
+            pd.to_numeric(blocks_after["demand_within_after"], errors="coerce").fillna(0.0).sum() / total_demand.sum()
+            if total_demand.sum() > 0
+            else 0.0
+        ),
+        "files": {
+            "blocks_after": str(blocks_after_path),
+            "assignment_links_after": str(assignment_links_path),
+            "provision_links_after": str(provision_links_after_path),
+            "status_preview_png": status_png,
+            "after_preview_png": after_png,
+        },
+    }
+    summary_after_path.write_text(json.dumps(summary_after, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return {
+        "summary_after": str(summary_after_path),
+        "blocks_after": str(blocks_after_path),
+        "assignment_links_after": str(assignment_links_path),
+        "status_preview_png": status_png,
+        "after_preview_png": after_png,
+        "selected_count": summary_after["selected_count"],
+        "new_count": summary_after["new_count"],
+        "expanded_count": summary_after["expanded_count"],
+    }
+
+
 def main() -> None:
     _configure_logging()
     args = parse_args()
@@ -888,6 +1296,7 @@ def main() -> None:
 
     # 4) Per-service solver-ready tables (demand_within/demand_without/capacity_left/provision).
     service_outputs: dict[str, dict] = {}
+    placement_outputs: dict[str, dict] = {}
     preview_outputs: dict[str, object] = {}
     preview_outputs.update(
         _plot_accessibility_previews(units, matrix_union, preview_dir, boundary=boundary, use_cache=(not args.no_cache))
@@ -912,6 +1321,7 @@ def main() -> None:
             cached_summary = _try_load_json(summary_path) or {}
             expected_radius = _service_accessibility_min(service, args)
             expected_demand = _service_demand_per_1000(service, args)
+            expected_population_share = _service_population_share(service)
             if cached_summary.get("block_selection_policy") != LP_BLOCK_SELECTION_POLICY:
                 _warn(
                     f"Cached solver input [{service}] is outdated for current block-selection policy "
@@ -927,12 +1337,17 @@ def main() -> None:
                     f"Cached solver input [{service}] uses outdated service_demand_per_1000 "
                     f"({cached_summary.get('service_demand_per_1000')} != {expected_demand}). Rebuilding."
                 )
+            elif float(cached_summary.get("service_population_share", -1.0)) != float(expected_population_share):
+                _warn(
+                    f"Cached solver input [{service}] uses outdated service_population_share "
+                    f"({cached_summary.get('service_population_share')} != {expected_population_share}). Rebuilding."
+                )
             else:
                 _log(f"Using cached solver input [{service}]: {_log_name(summary_path)}")
                 lp_preview_path = str(lp_preview_target) if lp_preview_target.exists() else None
                 if lp_preview_path is None:
                     try:
-                        cached_blocks = pd.read_parquet(blocks_path)
+                        cached_blocks = gpd.read_parquet(blocks_path)
                         lp_preview_path = _plot_service_lp_preview(
                             cached_blocks,
                             service,
@@ -950,6 +1365,22 @@ def main() -> None:
                     "blocks_count": int(cached_summary.get("blocks_count", 0)),
                     "lp_preview_png": lp_preview_path,
                 }
+                if args.placement_exact:
+                    try:
+                        cached_blocks = gpd.read_parquet(blocks_path)
+                        cached_matrix = pd.read_parquet(matrix_service_path)
+                        placement_outputs[service] = _run_exact_placement_for_service(
+                            cached_blocks,
+                            cached_matrix,
+                            service,
+                            output_root / "placement_exact" / service,
+                            preview_dir=preview_dir,
+                            quarters_ref=quarters,
+                            boundary=boundary,
+                            use_cache=(not args.no_cache),
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        _warn(f"Exact placement [{service}] failed on cached inputs: {exc}")
                 continue
 
         cap_col = f"capacity_{service}"
@@ -957,7 +1388,7 @@ def main() -> None:
         blocks = blocks.rename(columns={cap_col: "capacity"})
         service_demand_per_1000 = _service_demand_per_1000(service, args)
         service_radius_min = _service_accessibility_min(service, args)
-        blocks["demand"] = _calc_demand(blocks["population"], service_demand_per_1000)
+        blocks["demand"] = _calc_service_demand(blocks["population"], service, service_demand_per_1000)
         # LP policy: include only quarters with living buildings OR own service capacity.
         blocks["has_living_buildings"] = blocks["has_living_buildings"].fillna(False).astype(bool)
         blocks = blocks[blocks["has_living_buildings"] | (blocks["capacity"] > 0)].copy()
@@ -972,7 +1403,8 @@ def main() -> None:
         _log(
             f"Service [{service}] provisioning prep: blocks={len(blocks)} "
             f"(living={int(blocks['has_living_buildings'].sum())}, capacity>0={int((blocks['capacity'] > 0).sum())}, "
-            f"accessibility={service_radius_min:.1f} min, demand_per_1000={service_demand_per_1000:.1f})"
+            f"accessibility={service_radius_min:.1f} min, demand_per_1000={service_demand_per_1000:.1f}, "
+            f"population_share={_service_population_share(service):.2f})"
         )
         sub_mx = matrix_union.loc[blocks.index, blocks.index].copy()
         provision_started = time.time()
@@ -994,6 +1426,7 @@ def main() -> None:
         solver_blocks["service_name"] = service
         solver_blocks["service_radius_min"] = float(service_radius_min)
         solver_blocks["service_demand_per_1000"] = float(service_demand_per_1000)
+        solver_blocks["service_population_share"] = float(_service_population_share(service))
         # Compatibility with arctic solver runner fields.
         solver_blocks["provision"] = solver_blocks["provision_strong"].fillna(0.0)
 
@@ -1015,6 +1448,9 @@ def main() -> None:
         summary = {
             "service": service,
             "block_selection_policy": LP_BLOCK_SELECTION_POLICY,
+            "service_radius_min": float(service_radius_min),
+            "service_demand_per_1000": float(service_demand_per_1000),
+            "service_population_share": float(_service_population_share(service)),
             "blocks_count": int(len(solver_blocks)),
             "blocks_with_living": int(blocks["has_living_buildings"].sum()),
             "blocks_with_service_capacity": int((blocks["capacity"] > 0).sum()),
@@ -1043,6 +1479,20 @@ def main() -> None:
             "blocks_count": int(len(solver_blocks)),
             "lp_preview_png": lp_preview_path,
         }
+        if args.placement_exact:
+            try:
+                placement_outputs[service] = _run_exact_placement_for_service(
+                    solver_blocks,
+                    sub_mx,
+                    service,
+                    output_root / "placement_exact" / service,
+                    preview_dir=preview_dir,
+                    quarters_ref=quarters,
+                    boundary=boundary,
+                    use_cache=(not args.no_cache),
+                )
+            except Exception as exc:  # noqa: BLE001
+                _warn(f"Exact placement [{service}] failed: {exc}")
         _log(
             f"Prepared solver input [{service}]: blocks={len(solver_blocks)}, "
             f"capacity_total={summary['capacity_total']:.1f}, demand_total={summary['demand_total']:.1f}"
@@ -1062,6 +1512,8 @@ def main() -> None:
         "preview_outputs": preview_outputs,
         "raw_services": raw_stats,
         "solver_outputs": service_outputs,
+        "placement_exact_enabled": bool(args.placement_exact),
+        "placement_exact_outputs": placement_outputs,
     }
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")

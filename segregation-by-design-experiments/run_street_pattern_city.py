@@ -189,6 +189,15 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--relation-id",
+        dest="relation_id",
+        type=int,
+        help=(
+            "Optional OSM relation id used as the territory geometry directly. "
+            "If provided, the boundary is resolved from this relation instead of geocoding --place."
+        ),
+    )
+    parser.add_argument(
         "--network-type",
         default="drive",
         help='OSMnx network type, for example "drive" or "all".',
@@ -287,6 +296,39 @@ def _node_get(api: osm.OsmApi, node_id: int) -> dict:
     return api.NodeGet(node_id)
 
 
+def _pick_relation_center_node(api: osm.OsmApi, relation_id: int) -> dict | None:
+    relation = _relation_get(api, int(relation_id))
+    members = relation.get("member") or relation.get("members") or []
+    preferred_roles = ("admin_centre", "admin_center", "label", "capital")
+    for role in preferred_roles:
+        node_member = next(
+            (
+                member
+                for member in members
+                if member.get("type") == "node" and member.get("role") == role
+            ),
+            None,
+        )
+        if node_member is not None:
+            return _node_get(api, int(node_member["ref"]))
+    return None
+
+
+def _get_relation_boundary_via_overpass(relation_id: int):
+    iduedu_src = REPO_ROOT / "iduedu-fork" / "src"
+    if str(iduedu_src) not in sys.path:
+        sys.path.insert(0, str(iduedu_src))
+    try:
+        from iduedu.modules.overpass.overpass_downloaders import get_boundary_by_osm_id
+    except Exception as exc:  # noqa: BLE001
+        raise RuntimeError("Could not import relation-boundary helper from iduedu-fork.") from exc
+
+    boundary = get_boundary_by_osm_id(int(relation_id))
+    if boundary is None or boundary.is_empty:
+        raise ValueError(f"iduedu-fork returned empty boundary for relation {relation_id}.")
+    return boundary
+
+
 def _cache_prefix(
     cache_dir: Path,
     *,
@@ -295,6 +337,7 @@ def _cache_prefix(
     network_type: str,
     grid_step: float,
     buffer_m: float,
+    relation_id: int | None,
     road_source_label: str,
     roads_path: Path | None,
     model_path: Path | str,
@@ -306,6 +349,7 @@ def _cache_prefix(
         "network_type": network_type,
         "grid_step": float(grid_step),
         "buffer_m": float(buffer_m),
+        "relation_id": None if relation_id is None else int(relation_id),
         "road_source": road_source_label,
         "roads_path": str(roads_path.resolve()) if roads_path is not None else None,
         "model_path": str(Path(model_path).resolve()),
@@ -367,6 +411,21 @@ def resolve_city_centre_node(place: str) -> tuple[dict, dict]:
 
     node = _node_get(api, int(node_member["ref"]))
     return relation, node
+
+
+def resolve_relation_territory(relation_id: int) -> tuple[dict, dict, object]:
+    api = osm.OsmApi()
+    relation = _relation_get(api, int(relation_id))
+    centre_node = _pick_relation_center_node(api, int(relation_id))
+    boundary = _get_relation_boundary_via_overpass(int(relation_id))
+    if centre_node is None:
+        representative = boundary.representative_point()
+        centre_node = {
+            "id": None,
+            "lon": float(representative.x),
+            "lat": float(representative.y),
+        }
+    return relation, centre_node, boundary
 
 
 def build_buffer_polygon(node: dict, buffer_m: float):
@@ -1125,6 +1184,7 @@ def classify_snapshot(
     model_path: Path | str,
     grid_step: float,
     buffer_m: float,
+    relation_id: int | None,
     device: str,
     no_cache: bool = False,
     cache_dir: Path | None = None,
@@ -1153,6 +1213,7 @@ def classify_snapshot(
             network_type=network_type,
             grid_step=grid_step,
             buffer_m=buffer_m,
+            relation_id=relation_id,
             road_source_label=road_source_label,
             roads_path=roads_path,
             model_path=model_path,
@@ -1494,6 +1555,10 @@ def main() -> None:
     cache_dir = Path(args.cache_dir).resolve()
     if not args.no_cache:
         cache_dir.mkdir(parents=True, exist_ok=True)
+    # Relation mode uses polygon territory directly; external buffer is forced to zero.
+    if args.relation_id is not None and float(args.buffer_m) != 0.0:
+        args.buffer_m = 0.0
+        _log("Relation mode: forcing --buffer-m to 0 (territory = relation polygon).")
     resolved_road_source, resolved_roads_path = resolve_roads_source(
         place=args.place,
         road_source=args.road_source,
@@ -1535,7 +1600,17 @@ def main() -> None:
     stage_bar.set_postfix_str("resolve model")
     stage_bar.update(1)
 
-    if args.center_node_id is not None:
+    if args.center_node_id is not None and args.relation_id is not None:
+        raise ValueError("Use only one explicit territory source: --center-node-id or --relation-id.")
+
+    if args.relation_id is not None:
+        stage_bar.set_postfix_str("resolve relation territory")
+        relation, centre_node, polygon = resolve_relation_territory(int(args.relation_id))
+        if centre_node.get("id") is not None:
+            _log(f"Used relation {int(args.relation_id)} and centre node {int(centre_node['id'])}")
+        else:
+            _log(f"Used relation {int(args.relation_id)} and representative point fallback")
+    elif args.center_node_id is not None:
         stage_bar.set_postfix_str("resolve centre node by OSM node id")
         api = osm.OsmApi()
         centre_node = _node_get(api, int(args.center_node_id))
@@ -1560,7 +1635,10 @@ def main() -> None:
     else:
         buffer_label = f"{int(args.buffer_m)}m"
     stage_bar.set_postfix_str(f"build {buffer_label} buffer")
-    polygon = build_buffer_polygon(centre_node, args.buffer_m)
+    if args.relation_id is None:
+        polygon = build_buffer_polygon(centre_node, args.buffer_m)
+    else:
+        args.buffer_m = 0.0
     buffer_gdf = gpd.GeoDataFrame({"geometry": [polygon]}, crs=4326)
     local_crs = buffer_gdf.estimate_utm_crs() or "EPSG:3857"
     polygon_projected = buffer_gdf.to_crs(local_crs).iloc[0].geometry
@@ -1579,6 +1657,7 @@ def main() -> None:
         model_path=model_path,
         grid_step=args.grid_step,
         buffer_m=args.buffer_m,
+        relation_id=args.relation_id,
         device=args.device,
         no_cache=args.no_cache,
         cache_dir=cache_dir,
@@ -1618,6 +1697,7 @@ def main() -> None:
             model_path=model_path,
             grid_step=args.grid_step,
             buffer_m=args.buffer_m,
+            relation_id=args.relation_id,
             device=args.device,
             no_cache=args.no_cache,
             cache_dir=cache_dir,

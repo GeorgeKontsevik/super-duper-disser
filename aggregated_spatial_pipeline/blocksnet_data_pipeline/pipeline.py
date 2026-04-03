@@ -161,6 +161,28 @@ def _clip_to_boundary(gdf: gpd.GeoDataFrame, boundary_geom, crs: str = "EPSG:432
     return clipped
 
 
+def _keep_geometry_types(
+    gdf: gpd.GeoDataFrame,
+    allowed_types: set[str] | tuple[str, ...] | list[str],
+    *,
+    layer_name: str,
+) -> gpd.GeoDataFrame:
+    if gdf.empty:
+        return gdf
+    allowed_types = set(allowed_types)
+    geom_types = gdf.geometry.geom_type
+    mask = gdf.geometry.notna() & ~gdf.geometry.is_empty & geom_types.isin(allowed_types)
+    dropped = int((~mask).sum())
+    if dropped:
+        logger.warning(
+            "[blocksnet-raw] Dropping {} non-{} geometries from layer='{}'",
+            dropped,
+            ", ".join(sorted(allowed_types)),
+            layer_name,
+        )
+    return gdf.loc[mask].reset_index(drop=True)
+
+
 def _features_from_polygon_or_empty(boundary_geom, tags: dict, layer_name: str) -> gpd.GeoDataFrame:
     logger.info("[blocksnet-raw] OSM request started: layer='{}'", layer_name)
     started = time.time()
@@ -328,6 +350,16 @@ def collect_blocksnet_raw_osm_bundle(
     land_use_gdf = _clip_to_boundary(land_use_gdf, boundary_geom)
     buildings_gdf = _clip_to_boundary(buildings_gdf, boundary_geom)
 
+    water_gdf = _keep_geometry_types(
+        water_gdf,
+        {"LineString", "MultiLineString", "Polygon", "MultiPolygon"},
+        layer_name="water",
+    )
+    roads_gdf = _keep_geometry_types(roads_gdf, {"LineString", "MultiLineString"}, layer_name="roads")
+    railways_gdf = _keep_geometry_types(railways_gdf, {"LineString", "MultiLineString"}, layer_name="railways")
+    land_use_gdf = _keep_geometry_types(land_use_gdf, {"Polygon", "MultiPolygon"}, layer_name="land_use")
+    buildings_gdf = _keep_geometry_types(buildings_gdf, {"Polygon", "MultiPolygon"}, layer_name="buildings")
+
     water_path = output_path / "water.parquet"
     roads_path = output_path / "roads.parquet"
     railways_path = output_path / "railways.parquet"
@@ -408,6 +440,16 @@ def build_blocksnet_bundle(
     railways_gdf = _clip_to_boundary(railways_gdf, boundary_geom)
     land_use_gdf = _clip_to_boundary(land_use_gdf, boundary_geom)
     buildings_gdf = _clip_to_boundary(buildings_gdf, boundary_geom)
+
+    water_gdf = _keep_geometry_types(
+        water_gdf,
+        {"LineString", "MultiLineString", "Polygon", "MultiPolygon"},
+        layer_name="water",
+    )
+    roads_gdf = _keep_geometry_types(roads_gdf, {"LineString", "MultiLineString"}, layer_name="roads")
+    railways_gdf = _keep_geometry_types(railways_gdf, {"LineString", "MultiLineString"}, layer_name="railways")
+    land_use_gdf = _keep_geometry_types(land_use_gdf, {"Polygon", "MultiPolygon"}, layer_name="land_use")
+    buildings_gdf = _keep_geometry_types(buildings_gdf, {"Polygon", "MultiPolygon"}, layer_name="buildings")
 
     water_gdf = water_gdf.to_crs(local_crs)
     roads_gdf = roads_gdf.to_crs(local_crs)

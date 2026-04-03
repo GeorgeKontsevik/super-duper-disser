@@ -82,10 +82,22 @@ def _setup_paths():
             sys.path.insert(0, path)
 
 
-def run(all_results, settl_name=None, service_name=None, flp_month=None):
+def run(
+    all_results,
+    settl_name=None,
+    service_name=None,
+    flp_month=None,
+    use_genetic=True,
+    prefer_existing=False,
+    existing_facility_discount=1.0,
+    keep_existing_capacity=False,
+    allow_existing_expansion=True,
+    heartbeat_interval_sec=20.0,
+    verbose=False,
+):
     _setup_paths()
 
-    from method import genetic_algorithm_main, block_coverage
+    from method import optimize_placement
     from scripts.preprocesser.constants import service_radius_minutes
 
     service_name = service_name or SERVICE_NAME
@@ -129,6 +141,7 @@ def run(all_results, settl_name=None, service_name=None, flp_month=None):
     uncovered = df_with_demand.copy()
     uncovered.reset_index(drop=True, inplace=True)
     uncovered.rename(columns={f"capacity_{service_name}": "capacity"}, inplace=True)
+    demand_column = None
 
     # Кандидаты рёбер (improvement_factor)
     edges = _choose_edges(
@@ -151,7 +164,7 @@ def run(all_results, settl_name=None, service_name=None, flp_month=None):
         ]
     print(f"Рёбер в графе кандидатов: {len(edges)}")
 
-    if not edges:
+    if use_genetic and not edges:
         print("Нет рёбер-кандидатов — солвер нечего оптимизировать, пропускаем.")
         return {
             "best_candidate": [],
@@ -165,25 +178,35 @@ def run(all_results, settl_name=None, service_name=None, flp_month=None):
             "SERVICE_RADIUS": SERVICE_RADIUS,
             "settl_name": settl_name,
             "service_name": service_name,
+            "use_genetic": use_genetic,
+            "demand_column": demand_column,
         }
 
-    num_offspring = POPULATION_SIZE - NUM_PARENTS
-    best_candidate, fitness_history = genetic_algorithm_main(
+    optimization = optimize_placement(
         matrix=acc_matrix,
-        edges=edges,
-        population_size=POPULATION_SIZE,
-        num_generations=NUM_GENERATIONS,
         df=uncovered,
         service_radius=SERVICE_RADIUS,
+        id_matrix=uncovered_ids,
+        use_genetic=use_genetic,
+        demand_column=demand_column,
+        population_size=POPULATION_SIZE,
+        num_generations=NUM_GENERATIONS,
         mutation_rate=MUTATION_RATE,
         num_parents=NUM_PARENTS,
-        num_offspring=num_offspring,
+        num_offspring=POPULATION_SIZE - NUM_PARENTS,
         number_res="all",
+        prefer_existing=prefer_existing,
+        existing_facility_discount=existing_facility_discount,
+        existing_column="capacity",
+        keep_existing_capacity=keep_existing_capacity,
+        allow_existing_expansion=allow_existing_expansion,
+        heartbeat_interval_sec=heartbeat_interval_sec,
+        verbose=verbose,
     )
-
-    capacities, res_id = block_coverage(
-        best_candidate, SERVICE_RADIUS, uncovered, uncovered_ids
-    )
+    best_candidate = optimization["best_candidate"]
+    fitness_history = optimization["fitness_history"]
+    capacities = optimization["capacities"]
+    res_id = optimization["res_id"]
 
     print("Вместимости новых объектов:", [c for c in capacities if c and c > 0])
     print("Привязка:", res_id)
@@ -200,4 +223,10 @@ def run(all_results, settl_name=None, service_name=None, flp_month=None):
         "SERVICE_RADIUS": SERVICE_RADIUS,
         "settl_name": settl_name,
         "service_name": service_name,
+        "use_genetic": use_genetic,
+        "demand_column": demand_column,
+        "prefer_existing": prefer_existing,
+        "existing_facility_discount": existing_facility_discount,
+        "keep_existing_capacity": keep_existing_capacity,
+        "allow_existing_expansion": allow_existing_expansion,
     }
