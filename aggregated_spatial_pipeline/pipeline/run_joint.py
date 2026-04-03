@@ -220,6 +220,18 @@ def parse_args() -> argparse.Namespace:
         help="Grid step in meters for street-pattern classification. Default: 500.",
     )
     parser.add_argument(
+        "--street-min-road-count",
+        type=int,
+        default=5,
+        help="Skip street-grid cells with fewer clipped road segments than this.",
+    )
+    parser.add_argument(
+        "--street-min-total-road-length",
+        type=float,
+        default=500.0,
+        help="Skip street-grid cells whose total clipped road length is below this threshold.",
+    )
+    parser.add_argument(
         "--analysis-margin-m",
         type=float,
         default=None,
@@ -571,6 +583,8 @@ def _ensure_street_grid_from_repo(
     no_cache: bool,
     buffer_m: float,
     grid_step: float,
+    min_road_count: int,
+    min_total_road_length: float,
     relation_id: int | None = None,
     center_node_id: int | None = None,
     roads_path: Path | None = None,
@@ -586,18 +600,32 @@ def _ensure_street_grid_from_repo(
         summary_payload = _try_load_json(summary_output)
         cached_buffer = None
         cached_grid_step = None
+        cached_min_road_count = None
+        cached_min_total_road_length = None
         if isinstance(summary_payload, dict):
             cached_buffer = summary_payload.get("buffer_m")
             cached_grid_step = summary_payload.get("grid_step")
+            cached_min_road_count = summary_payload.get("min_road_count")
+            cached_min_total_road_length = summary_payload.get("min_total_road_length")
         buffer_matches = cached_buffer is not None and abs(float(cached_buffer) - float(buffer_m)) <= 1e-6
         grid_matches = cached_grid_step is not None and abs(float(cached_grid_step) - float(grid_step)) <= 1e-6
-        if buffer_matches and grid_matches:
+        road_count_matches = (
+            cached_min_road_count is not None and int(cached_min_road_count) == int(min_road_count)
+        )
+        road_length_matches = (
+            cached_min_total_road_length is not None
+            and abs(float(cached_min_total_road_length) - float(min_total_road_length)) <= 1e-6
+        )
+        if buffer_matches and grid_matches and road_count_matches and road_length_matches:
             _log(f"Using cached street grid from repo outputs: {_log_name(predicted_cells_path)}")
             return predicted_cells_path, summary_output, False
         _warn(
             "Cached street-grid summary does not match current request "
             f"(buffer cached={cached_buffer}, requested={float(buffer_m)}; "
-            f"grid_step cached={cached_grid_step}, requested={float(grid_step)}). "
+            f"grid_step cached={cached_grid_step}, requested={float(grid_step)}; "
+            f"min_road_count cached={cached_min_road_count}, requested={int(min_road_count)}; "
+            f"min_total_road_length cached={cached_min_total_road_length}, "
+            f"requested={float(min_total_road_length)}). "
             "Rebuilding classification."
         )
 
@@ -621,6 +649,10 @@ def _ensure_street_grid_from_repo(
         str(float(buffer_m)),
         "--grid-step",
         str(float(grid_step)),
+        "--min-road-count",
+        str(int(min_road_count)),
+        "--min-total-road-length",
+        str(float(min_total_road_length)),
     ]
     if roads_path is not None and roads_path.exists():
         roads_for_street_pattern = roads_path
@@ -647,6 +679,7 @@ def _ensure_street_grid_from_repo(
         "Classification config: "
         f"place={place}, road_source={'local' if roads_path is not None and roads_path.exists() else 'osm'}, "
         f"buffer_m={buffer_m:.1f}, grid_step={grid_step:.1f}, "
+        f"min_road_count={int(min_road_count)}, min_total_road_length={float(min_total_road_length):.1f}, "
         f"output={summary_output.name}, roads={_log_name(roads_for_street_pattern) if roads_path is not None and roads_path.exists() else 'osm'}"
     )
     started = time.time()
@@ -1471,7 +1504,6 @@ def _save_collection_previews(
     ) -> Path | None:
         if gdf is None or gdf.empty:
             return None
-        output_name = _next_name(output_stem)
         style: dict = {"color": color, "alpha": alpha}
         geom_type = str(gdf.geom_type.iloc[0]) if "geom_type" in gdf else ""
         if "Point" in geom_type:
@@ -1479,9 +1511,9 @@ def _save_collection_previews(
         else:
             style["linewidth"] = linewidth
         return _plot(
-            all_together_dir / output_name,
+            _preview_path(output_stem),
             layers=[
-                (gdf, {**style, "label": title or output_name}),
+                (gdf, {**style, "label": title or output_stem}),
                 (buffer_gdf, {"facecolor": "none", "edgecolor": "#111111", "linewidth": 1.1, "label": "analysis buffer"}),
             ],
             title=title,
@@ -1497,7 +1529,6 @@ def _save_collection_previews(
         valid = [(g, color, label) for g, color, label in groups if g is not None and not g.empty]
         if not valid:
             return None
-        output_name = _next_name(output_stem)
         target_crs = "EPSG:3857"
         normalized_valid: list[tuple[gpd.GeoDataFrame, str, str]] = []
         for gdf, color, label in valid:
@@ -1526,7 +1557,7 @@ def _save_collection_previews(
         _legend_bottom(ax, legend_handles)
         ax.set_axis_off()
         _footer_text(fig, footer_lines)
-        out = all_together_dir / output_name
+        out = _preview_path(output_stem)
         out.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(out, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
         plt.close(fig)
@@ -1538,24 +1569,35 @@ def _save_collection_previews(
     preview_dir.mkdir(parents=True, exist_ok=True)
     all_together_dir.mkdir(parents=True, exist_ok=True)
     if clear_existing:
-        for stale in preview_dir.glob("*.png"):
-            try:
-                stale.unlink()
-            except Exception:
-                pass
         for stale in all_together_dir.glob("*.png"):
             try:
                 stale.unlink()
             except Exception:
                 pass
+        for stale in preview_dir.glob("*.png"):
+            try:
+                stale.unlink()
+            except Exception:
+                pass
         shutil.rmtree(preview_dir / "stages", ignore_errors=True)
+    shutil.rmtree(stage_dir, ignore_errors=True)
     stage_dir.mkdir(parents=True, exist_ok=True)
-    index_counter = [1]
+    stage_groups = {
+        "raw_collection": {"raw", "intermodal", "connectpt"},
+        "floor_enrichment": {"floor"},
+        "quarters_ready": {"quarters", "services"},
+        "street_pattern_ready": {"street_pattern"},
+    }
+    enabled_groups = stage_groups.get(
+        stage_label,
+        {"raw", "intermodal", "connectpt", "floor", "quarters", "services", "street_pattern"},
+    )
 
-    def _next_name(stem: str) -> str:
-        name = f"{index_counter[0]:02d}_{stem}.png"
-        index_counter[0] += 1
-        return name
+    def _should_render(group: str) -> bool:
+        return group in enabled_groups
+
+    def _preview_path(stem: str) -> Path:
+        return all_together_dir / f"{stem}.png"
 
     saved: list[Path] = []
 
@@ -1580,39 +1622,41 @@ def _save_collection_previews(
     land_use_gdf = _read(Path(raw_files["land_use"]))
     buildings_gdf = _read(Path(raw_files["buildings"]))
 
-    raw_png = _plot(
-        all_together_dir / _next_name("raw_osm_layers"),
-        layers=[
-            (water_gdf, {"color": "#67b7dc", "linewidth": 0.3, "alpha": 0.6, "label": "water"}),
-            (land_use_gdf, {"color": "#b8d8a8", "alpha": 0.3, "linewidth": 0.1, "label": "land use"}),
-            (roads_gdf, {"color": "#666666", "linewidth": 0.4, "alpha": 0.7, "label": "roads"}),
-            (railways_gdf, {"color": "#8d6e63", "linewidth": 0.6, "alpha": 0.8, "label": "railways"}),
-            (buildings_gdf, {"color": "#f59e0b", "alpha": 0.25, "linewidth": 0.05, "label": "buildings"}),
-            (buffer_gdf, {"facecolor": "none", "edgecolor": "#111111", "linewidth": 1.2, "label": "analysis buffer"}),
-        ],
-        title="Raw OSM Layers",
-    )
-    _remember_preview(raw_png, "raw OSM composite")
+    if _should_render("raw"):
+        raw_png = _plot(
+            _preview_path("overview_raw_osm_layers"),
+            layers=[
+                (water_gdf, {"color": "#67b7dc", "linewidth": 0.3, "alpha": 0.6, "label": "water"}),
+                (land_use_gdf, {"color": "#b8d8a8", "alpha": 0.3, "linewidth": 0.1, "label": "land use"}),
+                (roads_gdf, {"color": "#666666", "linewidth": 0.4, "alpha": 0.7, "label": "roads"}),
+                (railways_gdf, {"color": "#8d6e63", "linewidth": 0.6, "alpha": 0.8, "label": "railways"}),
+                (buildings_gdf, {"color": "#f59e0b", "alpha": 0.25, "linewidth": 0.05, "label": "buildings"}),
+                (buffer_gdf, {"facecolor": "none", "edgecolor": "#111111", "linewidth": 1.2, "label": "analysis buffer"}),
+            ],
+            title="Raw OSM Layers",
+        )
+        _remember_preview(raw_png, "raw OSM composite")
 
     blocks_manifest = _try_load_json(blocks_manifest_path) or {}
     blocks_files = blocks_manifest.get("files", {})
     blocks_gdf = _read(Path(blocks_files.get("blocks", ""))) if blocks_files.get("blocks") else None
     quarters_gdf = _read(buffered_quarters_path)
     street_grid_gdf = _read(street_grid_path)
-    prep_png = _plot(
-        all_together_dir / _next_name("prepared_quarters_street_grid"),
-        layers=[
-            (quarters_gdf, {"color": "#93c5fd", "alpha": 0.35, "linewidth": 0.1, "label": "quarters (clipped)"}),
-            (street_grid_gdf, {"color": "#ef4444", "alpha": 0.25, "linewidth": 0.1, "label": "street grid"}),
-            (blocks_gdf, {"facecolor": "none", "edgecolor": "#1f2937", "linewidth": 0.2, "alpha": 0.7, "label": "blocks"}),
-            (buffer_gdf, {"facecolor": "none", "edgecolor": "#111111", "linewidth": 1.1, "label": "analysis buffer"}),
-        ],
-        title="Prepared Quarters + Street Grid",
-    )
-    _remember_preview(prep_png, "prepared quarters + street grid")
+    if _should_render("quarters"):
+        prep_png = _plot(
+            _preview_path("overview_prepared_quarters_and_street_grid"),
+            layers=[
+                (quarters_gdf, {"color": "#93c5fd", "alpha": 0.35, "linewidth": 0.1, "label": "quarters (clipped)"}),
+                (street_grid_gdf, {"color": "#ef4444", "alpha": 0.25, "linewidth": 0.1, "label": "street grid"}),
+                (blocks_gdf, {"facecolor": "none", "edgecolor": "#1f2937", "linewidth": 0.2, "alpha": 0.7, "label": "blocks"}),
+                (buffer_gdf, {"facecolor": "none", "edgecolor": "#111111", "linewidth": 1.1, "label": "analysis buffer"}),
+            ],
+            title="Prepared Quarters + Street Grid",
+        )
+        _remember_preview(prep_png, "prepared quarters + street grid")
 
     intermodal_manifest = _try_load_json(intermodal_manifest_path) if intermodal_manifest_path else None
-    if isinstance(intermodal_manifest, dict):
+    if _should_render("intermodal") and isinstance(intermodal_manifest, dict):
         intermodal_files = intermodal_manifest.get("files") or {}
         intermodal_boundary = _read(Path(intermodal_files["boundary"])) if intermodal_files.get("boundary") else None
         intermodal_nodes = _read(Path(intermodal_files["graph_nodes"])) if intermodal_files.get("graph_nodes") else None
@@ -1709,14 +1753,14 @@ def _save_collection_previews(
             _legend_bottom(ax, legend_handles)
             ax.set_axis_off()
             _footer_text(fig, footer_lines)
-            intermodal_png = all_together_dir / _next_name("intermodal_graph_modes")
+            intermodal_png = _preview_path("pt_intermodal_graph_modes")
             fig.savefig(intermodal_png, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
             plt.close(fig)
             _remember_preview(intermodal_png, "intermodal graph modes")
 
     # Pipeline_2 raw services preview (single combined map).
     services_raw_dir = data_root / "pipeline_2" / "services_raw"
-    if services_raw_dir.exists():
+    if _should_render("services") and services_raw_dir.exists():
         service_order = ["health", "post", "culture", "port", "airport", "marina"]
         service_colors = {
             "health": "#dc2626",
@@ -1796,12 +1840,12 @@ def _save_collection_previews(
             _apply_preview_theme(fig, ax, territory_for_services, title="Pipeline_2 Raw Services (all categories)")
             _legend_bottom(ax, legend_handles)
             ax.set_axis_off()
-            services_png = all_together_dir / _next_name("pipeline2_services_raw_all")
+            services_png = _preview_path("services_pipeline2_raw_all")
             fig.savefig(services_png, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
             plt.close(fig)
             _remember_preview(services_png, "pipeline_2 raw services")
 
-    if street_grid_gdf is not None and not street_grid_gdf.empty:
+    if _should_render("street_pattern") and street_grid_gdf is not None and not street_grid_gdf.empty:
         street_plot = street_grid_gdf.copy()
         roads_plot = roads_base_gdf.copy() if roads_base_gdf is not None and not roads_base_gdf.empty else None
         buffer_plot = buffer_gdf
@@ -1843,7 +1887,7 @@ def _save_collection_previews(
             _apply_preview_theme(fig, ax, buffer_plot, title="Street Pattern Top-1 Classification")
             _legend_bottom(ax, legend_handles)
             ax.set_axis_off()
-            street_top1_png = all_together_dir / _next_name("street_pattern_top1")
+            street_top1_png = _preview_path("street_pattern_top1")
             fig.savefig(street_top1_png, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
             plt.close(fig)
             _remember_preview(street_top1_png, "street-pattern top1")
@@ -1869,100 +1913,106 @@ def _save_collection_previews(
             _apply_preview_theme(fig, ax, buffer_plot, title="Street Pattern Multivariate Classification")
             _legend_bottom(ax, legend_handles)
             ax.set_axis_off()
-            street_multi_png = all_together_dir / _next_name("street_pattern_multivariate")
+            street_multi_png = _preview_path("street_pattern_multivariate")
             fig.savefig(street_multi_png, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
             plt.close(fig)
             _remember_preview(street_multi_png, "street-pattern multivariate")
 
     connectpt_manifest = _try_load_json(connectpt_manifest_path) or {}
-    for modality in connectpt_manifest.get("modalities", []):
-        modality_name = modality.get("modality", "unknown")
-        files = modality.get("files") or {}
-        lines = _read(Path(files["lines"])) if files.get("lines") else None
-        stops = _read(Path(files["aggregated_stops"])) if files.get("aggregated_stops") else None
-        projected_lines = _read(Path(files["projected_lines"])) if files.get("projected_lines") else None
-        has_modality_content = any(
-            g is not None and not g.empty
-            for g in (projected_lines, lines, stops)
-        )
-        if has_modality_content:
-            if projected_lines is not None and not projected_lines.empty:
-                proj = projected_lines.copy()
-                if proj.crs is not None:
-                    proj = proj.to_crs("EPSG:3857")
-            else:
-                proj = None
-            base_lines = lines.copy().to_crs("EPSG:3857") if lines is not None and not lines.empty and lines.crs is not None else lines
-            stops_plot = stops.copy().to_crs("EPSG:3857") if stops is not None and not stops.empty and stops.crs is not None else stops
-            buf_plot = buffer_gdf.copy().to_crs("EPSG:3857") if buffer_gdf is not None and not buffer_gdf.empty and buffer_gdf.crs is not None else buffer_gdf
-
-            fig, ax = plt.subplots(figsize=(12, 12))
-            legend_handles = []
-            if base_lines is not None and not base_lines.empty:
-                base_lines.plot(ax=ax, color="#9ca3af", linewidth=0.35, alpha=0.6)
-                legend_handles.append(Line2D([0], [0], color="#9ca3af", linewidth=2, label="roads/lines base"))
-            if proj is not None and not proj.empty:
-                route_col = next((c for c in ("ref", "route", "name", "line_id") if c in proj.columns), None)
-                if route_col is None:
-                    proj.plot(ax=ax, color="#0f766e", linewidth=0.8, alpha=0.9)
-                    legend_handles.append(Line2D([0], [0], color="#0f766e", linewidth=2, label="routes"))
+    if _should_render("connectpt"):
+        for modality in connectpt_manifest.get("modalities", []):
+            modality_name = modality.get("modality", "unknown")
+            files = modality.get("files") or {}
+            lines = _read(Path(files["lines"])) if files.get("lines") else None
+            stops = _read(Path(files["aggregated_stops"])) if files.get("aggregated_stops") else None
+            projected_lines = _read(Path(files["projected_lines"])) if files.get("projected_lines") else None
+            has_modality_content = any(
+                g is not None and not g.empty
+                for g in (projected_lines, lines, stops)
+            )
+            if has_modality_content:
+                if projected_lines is not None and not projected_lines.empty:
+                    proj = projected_lines.copy()
+                    if proj.crs is not None:
+                        proj = proj.to_crs("EPSG:3857")
                 else:
-                    values = proj[route_col].astype("string").fillna("unknown")
-                    top_values = values.value_counts().head(6).index.tolist()
-                    palette = ["#0f766e", "#0ea5e9", "#8b5cf6", "#f97316", "#16a34a", "#dc2626", "#334155"]
-                    for idx, value in enumerate(top_values):
-                        color = palette[idx % len(palette)]
-                        part = proj[values == value]
-                        if part.empty:
-                            continue
-                        part.plot(ax=ax, color=color, linewidth=0.9, alpha=0.95)
-                        legend_handles.append(Line2D([0], [0], color=color, linewidth=2, label=f"route {value}"))
-                    other = proj[~values.isin(top_values)]
-                    if not other.empty:
-                        other.plot(ax=ax, color=palette[-1], linewidth=0.7, alpha=0.65)
-                        legend_handles.append(Line2D([0], [0], color=palette[-1], linewidth=2, label="other routes"))
-            if stops_plot is not None and not stops_plot.empty:
-                stops_plot.plot(ax=ax, color="#111827", markersize=7, alpha=0.95)
-                legend_handles.append(Line2D([0], [0], marker="o", color="none", markerfacecolor="#111827", markersize=7, label="stops"))
-            if buf_plot is not None and not buf_plot.empty:
-                buf_plot.plot(ax=ax, facecolor="none", edgecolor="#111111", linewidth=1.1)
-                legend_handles.append(Line2D([0], [0], color="#111111", linewidth=2, label="analysis buffer"))
-            _apply_preview_theme(fig, ax, buf_plot, title=f"ConnectPT {modality_name}")
-            _legend_bottom(ax, legend_handles)
-            ax.set_axis_off()
-            modality_png = all_together_dir / _next_name(f"connectpt_{modality_name}")
-            fig.savefig(modality_png, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
-            plt.close(fig)
-            _remember_preview(modality_png, f"connectpt {modality_name}")
+                    proj = None
+                base_lines = lines.copy().to_crs("EPSG:3857") if lines is not None and not lines.empty and lines.crs is not None else lines
+                stops_plot = stops.copy().to_crs("EPSG:3857") if stops is not None and not stops.empty and stops.crs is not None else stops
+                buf_plot = buffer_gdf.copy().to_crs("EPSG:3857") if buffer_gdf is not None and not buffer_gdf.empty and buffer_gdf.crs is not None else buffer_gdf
 
-        graph_nodes = _read(Path(files["graph_nodes"])) if files.get("graph_nodes") else None
-        graph_edges = _read(Path(files["graph_edges"])) if files.get("graph_edges") else None
-        if (graph_nodes is None or graph_nodes.empty) and (graph_edges is None or graph_edges.empty):
-            continue
-        graph_png = _plot(
-            all_together_dir / _next_name(f"connectpt_graph_{modality_name}"),
-            layers=[
-                (graph_edges, {"color": "#0b7285", "linewidth": 0.4, "alpha": 0.7, "label": "graph edges"}),
-                (graph_nodes, {"color": "#e03131", "markersize": 6, "alpha": 0.9, "label": "graph nodes"}),
-                (buffer_gdf, {"facecolor": "none", "edgecolor": "#111111", "linewidth": 1.1, "label": "analysis buffer"}),
-            ],
-            title=f"ConnectPT Graph {modality_name}",
-        )
-        _remember_preview(graph_png, f"connectpt graph {modality_name}")
+                fig, ax = plt.subplots(figsize=(12, 12))
+                legend_handles = []
+                if base_lines is not None and not base_lines.empty:
+                    base_lines.plot(ax=ax, color="#9ca3af", linewidth=0.35, alpha=0.6)
+                    legend_handles.append(Line2D([0], [0], color="#9ca3af", linewidth=2, label="roads/lines base"))
+                if proj is not None and not proj.empty:
+                    route_col = next((c for c in ("ref", "route", "name", "line_id") if c in proj.columns), None)
+                    if route_col is None:
+                        proj.plot(ax=ax, color="#0f766e", linewidth=0.8, alpha=0.9)
+                        legend_handles.append(Line2D([0], [0], color="#0f766e", linewidth=2, label="routes"))
+                    else:
+                        values = proj[route_col].astype("string").fillna("unknown")
+                        top_values = values.value_counts().head(6).index.tolist()
+                        palette = ["#0f766e", "#0ea5e9", "#8b5cf6", "#f97316", "#16a34a", "#dc2626", "#334155"]
+                        for idx, value in enumerate(top_values):
+                            color = palette[idx % len(palette)]
+                            part = proj[values == value]
+                            if part.empty:
+                                continue
+                            part.plot(ax=ax, color=color, linewidth=0.9, alpha=0.95)
+                            legend_handles.append(Line2D([0], [0], color=color, linewidth=2, label=f"route {value}"))
+                        other = proj[~values.isin(top_values)]
+                        if not other.empty:
+                            other.plot(ax=ax, color=palette[-1], linewidth=0.7, alpha=0.65)
+                            legend_handles.append(Line2D([0], [0], color=palette[-1], linewidth=2, label="other routes"))
+                if stops_plot is not None and not stops_plot.empty:
+                    stops_plot.plot(ax=ax, color="#111827", markersize=7, alpha=0.95)
+                    legend_handles.append(Line2D([0], [0], marker="o", color="none", markerfacecolor="#111827", markersize=7, label="stops"))
+                if buf_plot is not None and not buf_plot.empty:
+                    buf_plot.plot(ax=ax, facecolor="none", edgecolor="#111111", linewidth=1.1)
+                    legend_handles.append(Line2D([0], [0], color="#111111", linewidth=2, label="analysis buffer"))
+                _apply_preview_theme(fig, ax, buf_plot, title=f"ConnectPT {modality_name}")
+                _legend_bottom(ax, legend_handles)
+                ax.set_axis_off()
+                modality_png = _preview_path(f"pt_connectpt_{modality_name}")
+                fig.savefig(modality_png, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
+                plt.close(fig)
+                _remember_preview(modality_png, f"connectpt {modality_name}")
 
-    for item in [
-        _single_layer("raw_water", water_gdf, color="#0284c7", linewidth=0.5, alpha=0.8, title="Raw Water"),
-        _single_layer("raw_roads", roads_gdf, color="#4b5563", linewidth=0.35, alpha=0.85, title="Raw Roads"),
-        _single_layer("raw_railways", railways_gdf, color="#6b4f4f", linewidth=0.8, alpha=0.9, title="Raw Railways"),
-        _single_layer("raw_land_use", land_use_gdf, color="#65a30d", linewidth=0.15, alpha=0.45, title="Raw Land Use"),
-        _single_layer("raw_buildings", buildings_gdf, color="#f97316", linewidth=0.05, alpha=0.35, title="Raw Buildings"),
-        _single_layer("blocksnet_blocks", blocks_gdf, color="#334155", linewidth=0.2, alpha=0.75, title="BlocksNet Blocks"),
-        _single_layer("quarters_clipped", quarters_gdf, color="#2563eb", linewidth=0.15, alpha=0.45, title="Quarters Clipped To Analysis Buffer"),
-    ]:
-        _remember_preview(item, item.stem if item is not None else "")
+            graph_nodes = _read(Path(files["graph_nodes"])) if files.get("graph_nodes") else None
+            graph_edges = _read(Path(files["graph_edges"])) if files.get("graph_edges") else None
+            if (graph_nodes is None or graph_nodes.empty) and (graph_edges is None or graph_edges.empty):
+                continue
+            graph_png = _plot(
+                _preview_path(f"pt_connectpt_graph_{modality_name}"),
+                layers=[
+                    (graph_edges, {"color": "#0b7285", "linewidth": 0.4, "alpha": 0.7, "label": "graph edges"}),
+                    (graph_nodes, {"color": "#e03131", "markersize": 6, "alpha": 0.9, "label": "graph nodes"}),
+                    (buffer_gdf, {"facecolor": "none", "edgecolor": "#111111", "linewidth": 1.1, "label": "analysis buffer"}),
+                ],
+                title=f"ConnectPT Graph {modality_name}",
+            )
+            _remember_preview(graph_png, f"connectpt graph {modality_name}")
+
+    if _should_render("raw"):
+        for item in [
+            _single_layer("raw_water", water_gdf, color="#0284c7", linewidth=0.5, alpha=0.8, title="Raw Water"),
+            _single_layer("raw_roads", roads_gdf, color="#4b5563", linewidth=0.35, alpha=0.85, title="Raw Roads"),
+            _single_layer("raw_railways", railways_gdf, color="#6b4f4f", linewidth=0.8, alpha=0.9, title="Raw Railways"),
+            _single_layer("raw_land_use", land_use_gdf, color="#65a30d", linewidth=0.15, alpha=0.45, title="Raw Land Use"),
+            _single_layer("raw_buildings", buildings_gdf, color="#f97316", linewidth=0.05, alpha=0.35, title="Raw Buildings"),
+        ]:
+            _remember_preview(item, item.stem if item is not None else "")
+    if _should_render("quarters"):
+        for item in [
+            _single_layer("blocksnet_blocks", blocks_gdf, color="#334155", linewidth=0.2, alpha=0.75, title="BlocksNet Blocks"),
+            _single_layer("quarters_clipped", quarters_gdf, color="#2563eb", linewidth=0.15, alpha=0.45, title="Quarters Clipped To Analysis Buffer"),
+        ]:
+            _remember_preview(item, item.stem if item is not None else "")
 
     # Land-use categorical legend preview.
-    if land_use_gdf is not None and not land_use_gdf.empty:
+    if _should_render("raw") and land_use_gdf is not None and not land_use_gdf.empty:
         landuse_col = "landuse" if "landuse" in land_use_gdf.columns else "functional_zone" if "functional_zone" in land_use_gdf.columns else None
         if landuse_col is not None:
             fig, ax = plt.subplots(figsize=(12, 12))
@@ -2004,14 +2054,14 @@ def _save_collection_previews(
             _apply_preview_theme(fig, ax, buffer_land_plot, title="Raw Land Use (categorical)")
             _legend_bottom(ax, legend_handles)
             ax.set_axis_off()
-            landuse_png = all_together_dir / _next_name("raw_land_use_categorical")
+            landuse_png = _preview_path("raw_land_use_categorical")
             fig.savefig(landuse_png, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
             plt.close(fig)
             _remember_preview(landuse_png, "raw land-use categorical")
 
     floor_enriched_gdf = _read(floor_enriched_path)
     storey_model_footer_lines: list[str] = []
-    if floor_enriched_gdf is not None and not floor_enriched_gdf.empty:
+    if _should_render("floor") and floor_enriched_gdf is not None and not floor_enriched_gdf.empty:
         floor_base = floor_enriched_gdf.copy()
         try:
             floor_base["is_living"] = pd.to_numeric(floor_base.get("is_living"), errors="coerce")
@@ -2096,7 +2146,7 @@ def _save_collection_previews(
                 _legend_bottom(ax, legend_handles_all)
                 ax.set_axis_off()
                 _footer_text(fig, storey_model_footer_lines)
-                storey_png_all = all_together_dir / _next_name("buildings_storey_quantiles_all")
+                storey_png_all = _preview_path("buildings_storey_quantiles_all")
                 fig.savefig(storey_png_all, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
                 plt.close(fig)
                 _remember_preview(storey_png_all, "buildings storey quantiles all")
@@ -2124,7 +2174,7 @@ def _save_collection_previews(
                     _legend_bottom(ax, legend_handles_rest)
                     ax.set_axis_off()
                     _footer_text(fig, storey_model_footer_lines)
-                    storey_png_restored = all_together_dir / _next_name("buildings_storey_quantiles_model_predicted")
+                    storey_png_restored = _preview_path("buildings_storey_quantiles_model_predicted")
                     fig.savefig(storey_png_restored, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
                     plt.close(fig)
                     _remember_preview(storey_png_restored, "buildings storey quantiles model predicted")
@@ -2584,6 +2634,8 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         no_cache=args.no_cache,
         buffer_m=collection_buffer_m,
         grid_step=float(args.street_grid_step),
+        min_road_count=int(args.street_min_road_count),
+        min_total_road_length=float(args.street_min_total_road_length),
         relation_id=street_relation_id,
         center_node_id=street_center_node_id,
         roads_path=shared_roads_path,
@@ -2628,6 +2680,8 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         "generated_by": "aggregated_spatial_pipeline.pipeline.run_joint",
         "buffer_m": effective_buffer_m,
         "street_grid_step": args.street_grid_step,
+        "street_min_road_count": args.street_min_road_count,
+        "street_min_total_road_length": args.street_min_total_road_length,
         "analysis_margin_m": analysis_margin_m,
         "effective_buffer_m": effective_buffer_m,
         "collection_buffer_m": collection_buffer_m,
@@ -2656,29 +2710,12 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
     }
     derived_manifest_path.write_text(json.dumps(derived_manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    _log("Generating preview PNGs for collected and derived layers...")
-    preview_started = time.time()
-    preview_paths = _save_collection_previews(
-        data_root=data_root,
-        buffer_path=buffer_path,
-        raw_files=raw_files,
-        connectpt_manifest_path=connectpt_manifest_path,
-        intermodal_manifest_path=intermodal_manifest_path,
-        blocks_manifest_path=blocks_manifest_path,
-        buffered_quarters_path=buffered_quarters_path,
-        street_grid_path=clipped_street_grid_path,
-        floor_enriched_path=floor_output_path,
-        clear_existing=False,
-    )
-    _log(f"Preview generation finished in {time.time() - preview_started:.1f}s.")
+    preview_dir = data_root / "preview_png" / "all_together"
+    preview_paths = sorted(preview_dir.glob("*.png"))
     if preview_paths:
-        preview_dir = preview_paths[0].parent if preview_paths else None
-        if preview_dir is not None:
-            _log(f"Preview PNG files: {len(preview_paths)} saved to {_log_name(preview_dir)}")
-        else:
-            _log(f"Preview PNG files: {len(preview_paths)} generated")
+        _log(f"Preview PNG files are up to date: {len(preview_paths)} in {_log_name(preview_dir)}")
     else:
-        _log("Preview PNG files were not generated (no readable non-empty layers).")
+        _log("Preview PNG files were not generated yet (no readable non-empty layers).")
 
     layer_inputs = {
         "quarters": buffered_quarters_path,
