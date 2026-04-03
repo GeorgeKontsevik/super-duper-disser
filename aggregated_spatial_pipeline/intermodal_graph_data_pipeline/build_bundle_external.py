@@ -21,8 +21,16 @@ LOG_FORMAT = (
 
 CONNECTPT_COMPAT_EXTRA_STOP_TAGS = {
     "bus": [{"highway": "bus_stop"}],
-    "tram": [{"railway": "tram_stop"}],
-    "trolleybus": [{"highway": "bus_stop", "trolleybus": "yes"}],
+    "tram": [
+        {"railway": "tram_stop"},
+        {"public_transport": "platform", "tram": "yes"},
+        {"public_transport": "stop_position", "tram": "yes"},
+    ],
+    "trolleybus": [
+        {"highway": "bus_stop", "trolleybus": "yes"},
+        {"public_transport": "platform", "trolleybus": "yes"},
+        {"public_transport": "stop_position", "trolleybus": "yes"},
+    ],
 }
 
 

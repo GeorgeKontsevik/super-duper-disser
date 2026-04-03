@@ -247,6 +247,18 @@ def parse_args() -> argparse.Namespace:
         help="Buffer radius around the city-centre OSM node, in meters.",
     )
     parser.add_argument(
+        "--min-road-count",
+        type=int,
+        default=5,
+        help="Skip grid cells with fewer clipped road segments than this.",
+    )
+    parser.add_argument(
+        "--min-total-road-length",
+        type=float,
+        default=500.0,
+        help="Skip grid cells whose total clipped road length is below this threshold.",
+    )
+    parser.add_argument(
         "--device",
         default="cpu",
         help='Inference device. Use "cpu" by default.',
@@ -337,6 +349,8 @@ def _cache_prefix(
     network_type: str,
     grid_step: float,
     buffer_m: float,
+    min_road_count: int,
+    min_total_road_length: float,
     relation_id: int | None,
     road_source_label: str,
     roads_path: Path | None,
@@ -349,6 +363,8 @@ def _cache_prefix(
         "network_type": network_type,
         "grid_step": float(grid_step),
         "buffer_m": float(buffer_m),
+        "min_road_count": int(min_road_count),
+        "min_total_road_length": float(min_total_road_length),
         "relation_id": None if relation_id is None else int(relation_id),
         "road_source": road_source_label,
         "roads_path": str(roads_path.resolve()) if roads_path is not None else None,
@@ -359,6 +375,44 @@ def _cache_prefix(
         json.dumps(payload, sort_keys=True, ensure_ascii=True).encode("utf-8")
     ).hexdigest()[:12]
     return cache_dir / f"{_slugify(place)}__{payload['year']}__{digest}"
+
+
+def _subgraph_road_metrics(cell_data: dict) -> tuple[int, float]:
+    if "roads" in cell_data:
+        roads = cell_data["roads"]
+        if roads is None or roads.empty:
+            return 0, 0.0
+        return int(len(roads)), float(roads.geometry.length.sum())
+
+    graph = cell_data.get("graph")
+    if graph is None:
+        return 0, 0.0
+    edge_count = 0
+    total_length = 0.0
+    for _, _, data in graph.edges(data=True):
+        geometry = data.get("geometry")
+        if geometry is None or geometry.is_empty:
+            continue
+        edge_count += 1
+        total_length += float(geometry.length)
+    return edge_count, total_length
+
+
+def _filter_sparse_subgraphs(
+    subgraphs: dict,
+    *,
+    min_road_count: int,
+    min_total_road_length: float,
+) -> tuple[dict, int]:
+    filtered = {}
+    dropped = 0
+    for key, cell_data in subgraphs.items():
+        road_count, total_road_length = _subgraph_road_metrics(cell_data)
+        if road_count < int(min_road_count) or total_road_length < float(min_total_road_length):
+            dropped += 1
+            continue
+        filtered[key] = cell_data
+    return filtered, dropped
 
 
 def _save_pickle(path: Path, obj) -> None:
@@ -799,6 +853,42 @@ def _multivariate_color_from_probabilities(
     )
 
 
+def _draw_multivariate_scale_legend(
+    fig,
+    *,
+    class_colors: dict[str, str],
+    title: str,
+    text_color: str,
+):
+    import matplotlib.colors as mcolors
+    import numpy as np
+
+    legend_ax = fig.add_axes([0.79, 0.18, 0.18, 0.46])
+    legend_ax.set_facecolor(fig.get_facecolor())
+
+    class_labels = list(class_colors.keys())
+    weights = np.array([0.0, 0.25, 0.5, 0.75, 1.0], dtype=float)
+    base_rgb = np.array(mcolors.to_rgb("#34495e"), dtype=float)
+    swatches = np.zeros((len(class_labels), len(weights), 3), dtype=float)
+    for row_idx, class_name in enumerate(class_labels):
+        class_rgb = np.array(mcolors.to_rgb(class_colors[class_name]), dtype=float)
+        for col_idx, weight in enumerate(weights):
+            swatches[row_idx, col_idx, :] = base_rgb * (1.0 - weight) + class_rgb * weight
+
+    legend_ax.imshow(swatches, aspect="auto", interpolation="nearest")
+    legend_ax.set_xticks(range(len(weights)))
+    legend_ax.set_xticklabels([f"{int(level * 100)}%" for level in weights], fontsize=8, color=text_color)
+    legend_ax.set_yticks(range(len(class_labels)))
+    legend_ax.set_yticklabels(class_labels, fontsize=8, color=text_color)
+    legend_ax.xaxis.tick_top()
+    legend_ax.tick_params(length=0)
+    legend_ax.set_title(title, fontsize=10, color=text_color, pad=10, loc="left")
+    for spine in legend_ax.spines.values():
+        spine.set_edgecolor("#cbd5e1")
+        spine.set_linewidth(0.8)
+    return legend_ax
+
+
 def _category_color_lookup(values: list[str]) -> dict[str, str]:
     unique_values = sorted({value for value in values if value is not None})
     return {
@@ -978,25 +1068,34 @@ def render_city_map(
     centre_gdf.plot(ax=ax, color="#c0392b", markersize=20, zorder=5)
 
     if map_coloring != "vba":
-        legend_handles = [
-            Patch(facecolor=color_lookup[class_name], edgecolor="#1f1f1f", label=class_name, linewidth=0.35)
-            for class_name in class_names
-        ]
-        legend_title = (
-            "Street pattern class (top-1)"
-            if map_coloring == "top1"
-            else "Class palette (cell color = weighted class mix)"
-        )
-        ax.legend(
-            handles=legend_handles,
-            title=legend_title,
-            loc="upper left",
-            bbox_to_anchor=(1.02, 1.0),
-            borderaxespad=0.0,
-            frameon=True,
-            fontsize=8,
-            title_fontsize=9,
-        )
+        if map_coloring == "top1":
+            legend_handles = [
+                Patch(
+                    facecolor=color_lookup[class_name],
+                    edgecolor="#1f1f1f",
+                    label=class_name,
+                    linewidth=0.35,
+                )
+                for class_name in class_names
+            ]
+            ax.legend(
+                handles=legend_handles,
+                title="Street pattern class (top-1)",
+                loc="upper left",
+                bbox_to_anchor=(1.02, 1.0),
+                borderaxespad=0.0,
+                frameon=True,
+                fontsize=8,
+                title_fontsize=9,
+            )
+        elif map_coloring == "multivariate":
+            fig.subplots_adjust(right=0.76)
+            _draw_multivariate_scale_legend(
+                fig,
+                class_colors={class_name: color_lookup[class_name] for class_name in class_names},
+                title="Weight x Anchor Color",
+                text_color="#111111",
+            )
 
     if map_coloring == "top1":
         suffix = "top-1"
@@ -1128,6 +1227,8 @@ def _snapshot_summary(
     network_type: str,
     grid_step: float,
     buffer_m: float,
+    min_road_count: int,
+    min_total_road_length: float,
     device: str,
     no_cache: bool,
     cache_dir: str | None,
@@ -1145,6 +1246,8 @@ def _snapshot_summary(
         "network_type": network_type,
         "grid_step": grid_step,
         "buffer_m": buffer_m,
+        "min_road_count": int(min_road_count),
+        "min_total_road_length": float(min_total_road_length),
         "device": device,
         "no_cache": bool(no_cache),
         "cache_dir": cache_dir,
@@ -1184,6 +1287,8 @@ def classify_snapshot(
     model_path: Path | str,
     grid_step: float,
     buffer_m: float,
+    min_road_count: int,
+    min_total_road_length: float,
     relation_id: int | None,
     device: str,
     no_cache: bool = False,
@@ -1213,6 +1318,8 @@ def classify_snapshot(
             network_type=network_type,
             grid_step=grid_step,
             buffer_m=buffer_m,
+            min_road_count=min_road_count,
+            min_total_road_length=min_total_road_length,
             relation_id=relation_id,
             road_source_label=road_source_label,
             roads_path=roads_path,
@@ -1251,20 +1358,31 @@ def classify_snapshot(
                 polygon_projected,
                 grid_step=grid_step,
             )
+            subgraphs, dropped_sparse = _filter_sparse_subgraphs(
+                subgraphs,
+                min_road_count=min_road_count,
+                min_total_road_length=min_total_road_length,
+            )
+            if dropped_sparse:
+                _progress_log(
+                    f"{snapshot_label}: dropped {dropped_sparse} sparse graph cells "
+                    f"(min_road_count={min_road_count}, min_total_road_length={min_total_road_length:.1f})"
+                )
         else:
             _progress_log(f"{snapshot_label}: loading roads from local dataset")
             roads_projected, roads_wgs84, _, _ = prepare_city_roads(
                 roads_path=roads_path,
                 centre_node=centre_node,
                 buffer_m=buffer_m,
+                buffer_polygon_wgs84=polygon_wgs84,
             )
             _progress_log(f"{snapshot_label}: splitting roads by grid")
             subgraphs = split_roads_by_grid_for_polygon(
                 roads_projected,
                 polygon_projected,
                 grid_step=grid_step,
-                min_road_count=0,
-                min_total_road_length=0.0,
+                min_road_count=min_road_count,
+                min_total_road_length=min_total_road_length,
             )
 
         if not no_cache and roads_cache_path is not None:
@@ -1309,6 +1427,8 @@ def classify_snapshot(
         network_type=network_type,
         grid_step=grid_step,
         buffer_m=buffer_m,
+        min_road_count=min_road_count,
+        min_total_road_length=min_total_road_length,
         device=device,
         no_cache=no_cache,
         cache_dir=str(cache_dir) if cache_dir is not None else None,
@@ -1657,6 +1777,8 @@ def main() -> None:
         model_path=model_path,
         grid_step=args.grid_step,
         buffer_m=args.buffer_m,
+        min_road_count=args.min_road_count,
+        min_total_road_length=args.min_total_road_length,
         relation_id=args.relation_id,
         device=args.device,
         no_cache=args.no_cache,
@@ -1697,6 +1819,8 @@ def main() -> None:
             model_path=model_path,
             grid_step=args.grid_step,
             buffer_m=args.buffer_m,
+            min_road_count=args.min_road_count,
+            min_total_road_length=args.min_total_road_length,
             relation_id=args.relation_id,
             device=args.device,
             no_cache=args.no_cache,
@@ -1745,6 +1869,8 @@ def main() -> None:
             "network_type": args.network_type,
             "grid_step": args.grid_step,
             "buffer_m": args.buffer_m,
+            "min_road_count": int(args.min_road_count),
+            "min_total_road_length": float(args.min_total_road_length),
             "device": args.device,
             "map_coloring": args.map_coloring,
             "no_cache": args.no_cache,

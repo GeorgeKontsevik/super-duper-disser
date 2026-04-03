@@ -88,6 +88,15 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Rebuild the street-pattern-to-quarters transfer even if cached outputs exist.",
     )
+    parser.add_argument(
+        "--min-covered-mass",
+        type=float,
+        default=0.25,
+        help=(
+            "Minimum total transferred street-pattern probability mass required to keep "
+            "quarter-level morphology. Lower-covered quarters are marked as uncovered."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -128,6 +137,59 @@ def _configure_logging() -> None:
         format=LOG_FORMAT,
         colorize=True,
     )
+
+
+def _apply_low_coverage_mask(
+    transferred,
+    prob_columns: list[str],
+    *,
+    min_covered_mass: float,
+):
+    covered_mass = transferred[prob_columns].sum(axis=1)
+    result = transferred.copy()
+    result["street_pattern_covered_mass"] = covered_mass.astype(float)
+    result["street_pattern_coverage_ok"] = covered_mass >= float(min_covered_mass)
+    low_coverage_mask = ~result["street_pattern_coverage_ok"]
+    if low_coverage_mask.any():
+        result.loc[low_coverage_mask, prob_columns] = 0.0
+    return result, covered_mass, low_coverage_mask
+
+
+def _draw_multivariate_scale_legend(
+    fig,
+    *,
+    class_colors: dict[str, str],
+    uncovered_color: str,
+    title: str,
+    text_color: str,
+):
+    import matplotlib.colors as mcolors
+    import numpy as np
+
+    legend_ax = fig.add_axes([0.79, 0.18, 0.18, 0.46])
+    legend_ax.set_facecolor(fig.get_facecolor())
+
+    class_labels = list(class_colors.keys())
+    coverage_levels = np.array([0.0, 0.25, 0.5, 0.75, 1.0], dtype=float)
+    uncovered_rgb = np.array(mcolors.to_rgb(uncovered_color), dtype=float)
+    swatches = np.zeros((len(class_labels), len(coverage_levels), 3), dtype=float)
+    for row_idx, class_name in enumerate(class_labels):
+        class_rgb = np.array(mcolors.to_rgb(class_colors[class_name]), dtype=float)
+        for col_idx, coverage in enumerate(coverage_levels):
+            swatches[row_idx, col_idx, :] = uncovered_rgb * (1.0 - coverage) + class_rgb * coverage
+
+    legend_ax.imshow(swatches, aspect="auto", interpolation="nearest")
+    legend_ax.set_xticks(range(len(coverage_levels)))
+    legend_ax.set_xticklabels([f"{int(level * 100)}%" for level in coverage_levels], fontsize=8, color=text_color)
+    legend_ax.set_yticks(range(len(class_labels)))
+    legend_ax.set_yticklabels(class_labels, fontsize=8, color=text_color)
+    legend_ax.xaxis.tick_top()
+    legend_ax.tick_params(length=0)
+    legend_ax.set_title(title, fontsize=10, color=text_color, pad=10, loc="left")
+    for spine in legend_ax.spines.values():
+        spine.set_edgecolor("#d1d5db")
+        spine.set_linewidth(0.8)
+    return legend_ax
 
 
 def _save_previews(
@@ -283,18 +345,13 @@ def _save_previews(
     if outer_bounds is not None:
         ax.set_xlim(outer_bounds[0], outer_bounds[2])
         ax.set_ylim(outer_bounds[1], outer_bounds[3])
-    legend_handles = [
-        Patch(facecolor=CLASS_COLORS[label], edgecolor="none", label=label)
-        for label in CLASS_LABELS.values()
-    ]
-    legend_handles.append(Patch(facecolor=CLASS_COLORS["unknown"], edgecolor="none", label="uncovered"))
-    ax.legend(
-        handles=legend_handles,
-        loc="lower center",
-        bbox_to_anchor=(0.5, -0.12),
-        ncol=3,
-        frameon=True,
-        fontsize=9,
+    fig.subplots_adjust(right=0.76)
+    _draw_multivariate_scale_legend(
+        fig,
+        class_colors={label: CLASS_COLORS[label] for label in CLASS_LABELS.values()},
+        uncovered_color=CLASS_COLORS["unknown"],
+        title="Coverage x Anchor Color",
+        text_color="#f8fafc",
     )
     ax.set_title("Street Pattern Multivariate Mix On Quarters", fontsize=19, fontweight="bold", color="#ffffff", pad=18)
     ax.set_axis_off()
@@ -472,6 +529,17 @@ def main() -> None:
     if not prob_columns:
         raise RuntimeError("Street-pattern transfer produced no probability columns on quarters.")
 
+    transferred, covered_mass_before_filter, low_coverage_mask = _apply_low_coverage_mask(
+        transferred,
+        prob_columns,
+        min_covered_mass=float(args.min_covered_mass),
+    )
+    if low_coverage_mask.any():
+        _warn(
+            "Quarter coverage filter: masked street-pattern morphology for "
+            f"{int(low_coverage_mask.sum())} quarters with covered_mass < {float(args.min_covered_mass):.2f}."
+        )
+
     prepare_geodata_for_parquet(transferred).to_parquet(transferred_path)
     row_sum = transferred[prob_columns].sum(axis=1)
     _log("Joining pipeline_2 quarter-level indicators into one enriched quarter layer...")
@@ -499,11 +567,19 @@ def main() -> None:
         "crosswalk_intersections": int(len(crosswalk)),
         "street_cells": int(len(street)),
         "quarters_count": int(len(quarters)),
+        "min_covered_mass": float(args.min_covered_mass),
+        "low_coverage_quarters_masked": int(low_coverage_mask.sum()),
         "row_probability_sum_stats": {
             "min": float(row_sum.min()),
             "mean": float(row_sum.mean()),
             "median": float(row_sum.median()),
             "max": float(row_sum.max()),
+        },
+        "covered_mass_before_filter_stats": {
+            "min": float(covered_mass_before_filter.min()),
+            "mean": float(covered_mass_before_filter.mean()),
+            "median": float(covered_mass_before_filter.median()),
+            "max": float(covered_mass_before_filter.max()),
         },
     }
     manifest_path.parent.mkdir(parents=True, exist_ok=True)

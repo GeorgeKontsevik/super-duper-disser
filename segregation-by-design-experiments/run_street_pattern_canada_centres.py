@@ -488,8 +488,10 @@ def prepare_city_roads(
     roads_path: Path,
     centre_node: dict,
     buffer_m: float,
+    buffer_polygon_wgs84=None,
 ) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, Polygon, object]:
-    buffer_polygon_wgs84 = build_buffer_polygon(centre_node, buffer_m)
+    if buffer_polygon_wgs84 is None:
+        buffer_polygon_wgs84 = build_buffer_polygon(centre_node, buffer_m)
 
     buffer_gdf = gpd.GeoDataFrame({"geometry": [buffer_polygon_wgs84]}, crs=4326)
     local_crs = buffer_gdf.estimate_utm_crs() or "EPSG:3857"
