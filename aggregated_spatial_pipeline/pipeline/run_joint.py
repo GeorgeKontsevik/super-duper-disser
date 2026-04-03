@@ -923,10 +923,10 @@ def _resolve_analysis_buffer_from_osm(
         centre_lon = float(representative.x)
         centre_lat = float(representative.y)
         if float(buffer_m) > 0.0:
-            relation_gdf = gpd.GeoDataFrame({"geometry": [relation_geom]}, crs=4326)
-            buffered = relation_gdf.to_crs(3857).buffer(float(buffer_m))
+            point_gdf = gpd.GeoDataFrame({"geometry": [representative]}, crs=4326)
+            buffered = point_gdf.to_crs(3857).buffer(float(buffer_m))
             buffer_geom = gpd.GeoSeries(buffered, crs=3857).to_crs(4326).iloc[0]
-            territory_mode = "relation_buffer"
+            territory_mode = "place_center_buffer"
         else:
             buffer_geom = relation_geom
             territory_mode = "relation"
