@@ -34,8 +34,6 @@ from preprocess.types import Modality
 
 DEFAULT_SPEED_KMH = 20.0
 IDUEDU_CONNECTPT_BRIDGE_DISTANCE_M = 30.0
-INTERMODAL_SPARSE_STOP_FALLBACK_MODALITIES = {Modality.TRAM, Modality.TROLLEYBUS}
-MIN_RELIABLE_INTERMODAL_AGGREGATED_STOPS = 10
 
 
 @dataclass(frozen=True)
@@ -372,69 +370,13 @@ def build_connectpt_osm_bundle(
                     len(aggregated_stops),
                     intermodal_nodes_file.name,
                 )
-                if (
-                    modality in INTERMODAL_SPARSE_STOP_FALLBACK_MODALITIES
-                    and len(aggregated_stops) < MIN_RELIABLE_INTERMODAL_AGGREGATED_STOPS
-                ):
-                    logger.warning(
-                        "ConnectPT modality '{}' intermodal-derived stops look sparse (raw={}, aggregated={}). "
-                        "Trying direct OSM stop fallback.",
-                        modality.value,
-                        len(raw_stops),
-                        len(aggregated_stops),
-                    )
-                    try:
-                        direct_stops = _collect_direct_osm_stops(boundary, modality)
-                    except Exception as direct_exc:
-                        logger.warning(
-                            "ConnectPT direct OSM stop fallback failed for modality '{}': {}. "
-                            "Keeping intermodal-derived stops.",
-                            modality.value,
-                            direct_exc,
-                        )
-                    else:
-                        if direct_stops is not None and len(direct_stops) > len(aggregated_stops):
-                            stops_by_modality[modality] = direct_stops
-                            raw_stops_by_modality.pop(modality, None)
-                            stop_source_by_modality[modality] = "connectpt_direct_osm_sparse_fallback"
-                            logger.warning(
-                                "ConnectPT modality '{}' switched to direct OSM stops after sparse intermodal result "
-                                "(direct aggregated={} > intermodal aggregated={}).",
-                                modality.value,
-                                len(direct_stops),
-                                len(aggregated_stops),
-                            )
-                        else:
-                            logger.info(
-                                "ConnectPT modality '{}' kept intermodal-derived stops after fallback check "
-                                "(direct aggregated={}).",
-                                modality.value,
-                                0 if direct_stops is None else len(direct_stops),
-                            )
             except Exception as exc:
                 logger.warning(
                     "ConnectPT found no reusable intermodal-derived stops for modality '{}' ({}). "
-                    "Trying direct OSM stop fallback.",
+                    "This modality will be skipped for the current run.",
                     modality.value,
                     exc,
                 )
-                try:
-                    direct_stops = _collect_direct_osm_stops(boundary, modality)
-                except Exception as direct_exc:
-                    logger.warning(
-                        "ConnectPT stops collection skipped for modality '{}' due to OSM/processing error: {}",
-                        modality.value,
-                        direct_exc,
-                    )
-                else:
-                    if direct_stops is not None:
-                        stops_by_modality[modality] = direct_stops
-                        stop_source_by_modality[modality] = "connectpt_direct_osm_after_intermodal_failure"
-                        logger.warning(
-                            "ConnectPT modality '{}' fell back to direct OSM stops (aggregated={}).",
-                            modality.value,
-                            len(direct_stops),
-                        )
 
         if modality not in stops_by_modality and intermodal_nodes_file is None:
             logger.critical(
@@ -570,7 +512,7 @@ def build_connectpt_osm_bundle(
         "boundary_source": str(Path(boundary_path).resolve()) if boundary_path is not None else "osmnx_geocode",
         "speed_kmh": speed_kmh,
         "stop_source_policy": (
-            "intermodal_prefer_with_direct_osm_fallback"
+            "intermodal_iduedu_only"
             if intermodal_nodes_file is not None
             else "connectpt_direct_osm"
         ),

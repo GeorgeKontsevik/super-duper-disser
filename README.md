@@ -52,18 +52,6 @@ document it here as well.
 
 Current temporary behavior:
 - `aggregated_spatial_pipeline/connectpt_data_pipeline/pipeline.py` keeps the standard intermodal-to-connectpt stop bridge distance at `IDUEDU_CONNECTPT_BRIDGE_DISTANCE_M = 30.0`.
-- The same file currently contains a temporary sparse-stop fallback for `tram` and `trolleybus`:
-  - `INTERMODAL_SPARSE_STOP_FALLBACK_MODALITIES = {Modality.TRAM, Modality.TROLLEYBUS}`
-  - `MIN_RELIABLE_INTERMODAL_AGGREGATED_STOPS = 10`
-- Meaning:
-  - if intermodal/iduedu-derived stops for `tram` or `trolleybus` are present but look suspiciously sparse after aggregation,
-    the pipeline is allowed to retry stop collection via direct OSM/connectpt stop extraction and keep the richer result.
-- Why this exists:
-  - on some cities, intermodal graph nodes are currently rich enough for `bus` but visibly incomplete for `tram`/`trolleybus`;
-    for example, Vologda trolleybus stops from the intermodal graph were much sparser than direct OSM-derived stops.
-- This is a stopgap, not the desired final architecture:
-  - the intended long-term fix is to make intermodal/iduedu provide complete modality stop layers,
-    or to replace this heuristic with an explicit, documented source-selection policy.
 
 ## Next Steps
 
