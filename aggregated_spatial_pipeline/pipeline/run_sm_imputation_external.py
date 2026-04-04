@@ -12,6 +12,14 @@ import pandas as pd
 from loguru import logger
 
 from aggregated_spatial_pipeline.geodata_io import prepare_geodata_for_parquet, read_geodata
+from aggregated_spatial_pipeline.visualization import (
+    apply_preview_canvas,
+    clip_to_preview_boundary,
+    footer_text,
+    legend_bottom,
+    normalize_preview_gdf,
+    save_preview_figure,
+)
 
 
 LOG_FORMAT = (
@@ -336,25 +344,7 @@ def _clip_to_preview_boundary(
     gdf: gpd.GeoDataFrame | None,
     boundary_layer: gpd.GeoDataFrame | None,
 ) -> gpd.GeoDataFrame | None:
-    if gdf is None or gdf.empty or boundary_layer is None or boundary_layer.empty:
-        return gdf
-    try:
-        work = gdf.copy()
-        boundary = boundary_layer.copy()
-        if work.crs is not None and boundary.crs is not None and work.crs != boundary.crs:
-            boundary = boundary.to_crs(work.crs)
-        geom_types = set(work.geom_type.astype(str))
-        if any("Point" in geom for geom in geom_types):
-            boundary_union = boundary.union_all()
-            clipped = work[work.geometry.within(boundary_union) | work.geometry.intersects(boundary_union)].copy()
-        else:
-            clipped = gpd.clip(work, boundary)
-        if clipped is None or clipped.empty:
-            return gdf
-        clipped = clipped[clipped.geometry.notna() & ~clipped.geometry.is_empty].copy()
-        return clipped if not clipped.empty else gdf
-    except Exception:
-        return gdf
+    return clip_to_preview_boundary(gdf, boundary_layer)
 
 
 def _save_sm_previews(
@@ -374,73 +364,22 @@ def _save_sm_previews(
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
     from matplotlib.patches import Patch
-    from shapely.geometry import box
 
     boundary_gdf = _read_optional_geodata(boundary_path)
     if boundary_gdf is None or boundary_gdf.empty:
         boundary_gdf = blocks[["geometry"]].copy()
 
     def _apply_preview_theme(fig, ax, boundary_layer: gpd.GeoDataFrame | None, *, title: str | None = None) -> None:
-        fig.patch.set_facecolor("#6b6b6b")
-        ax.set_facecolor("#6b6b6b")
-        if boundary_layer is None or boundary_layer.empty:
-            if title:
-                ax.set_title(title, fontsize=19, fontweight="bold", color="#ffffff", pad=18)
-            return
-        try:
-            minx, miny, maxx, maxy = boundary_layer.total_bounds
-            span_x = maxx - minx
-            span_y = maxy - miny
-            span = max(span_x, span_y)
-            pad = max(span * 0.08, 100.0)
-            center_x = (minx + maxx) / 2.0
-            center_y = (miny + maxy) / 2.0
-            half_span = span / 2.0
-            frame_minx = center_x - half_span - pad
-            frame_maxx = center_x + half_span + pad
-            frame_miny = center_y - half_span - pad
-            frame_maxy = center_y + half_span + pad
-            outer = gpd.GeoDataFrame({"geometry": [box(frame_minx, frame_miny, frame_maxx, frame_maxy)]}, crs=boundary_layer.crs)
-            outer.plot(ax=ax, facecolor="#6b6b6b", edgecolor="none", alpha=1.0, zorder=-20)
-            boundary_layer.plot(ax=ax, facecolor="#f7f0dd", edgecolor="none", linewidth=0.0, alpha=1.0, zorder=-10)
-            boundary_layer.boundary.plot(ax=ax, color="#ffffff", linewidth=1.4, zorder=20)
-            ax.set_xlim(frame_minx, frame_maxx)
-            ax.set_ylim(frame_miny, frame_maxy)
-            ax.set_aspect("equal", adjustable="box")
-        except Exception:
-            pass
-        if title:
-            ax.set_title(title, fontsize=19, fontweight="bold", color="#ffffff", pad=18)
+        apply_preview_canvas(fig, ax, boundary_layer, title=title, min_pad=100.0)
 
     def _legend_bottom(ax, handles: list) -> None:
-        if not handles:
-            return
-        ax.legend(
-            handles=handles,
-            loc="upper center",
-            bbox_to_anchor=(0.5, -0.04),
-            ncol=min(4, len(handles)),
-            frameon=True,
-            fontsize=8,
-        )
+        legend_bottom(ax, handles)
 
     def _footer_text(fig, lines: list[str] | None) -> None:
-        if not lines:
-            return
-        text = "\n".join(line for line in lines if line)
-        if text.strip():
-            fig.text(0.5, 0.02, text, ha="center", va="bottom", fontsize=8, color="#374151")
+        footer_text(fig, lines)
 
     def _normalize(gdf: gpd.GeoDataFrame | None, *, clip_to: gpd.GeoDataFrame | None = None) -> gpd.GeoDataFrame | None:
-        if gdf is None or gdf.empty:
-            return gdf
-        work = gdf.copy()
-        try:
-            if work.crs is not None:
-                work = work.to_crs("EPSG:3857")
-        except Exception:
-            pass
-        return _clip_to_preview_boundary(work, clip_to)
+        return normalize_preview_gdf(gdf, clip_to, target_crs="EPSG:3857")
 
     preview_dir.mkdir(parents=True, exist_ok=True)
     shutil.rmtree(stage_dir, ignore_errors=True)
@@ -452,7 +391,7 @@ def _save_sm_previews(
 
     def _save(fig, stem: str) -> None:
         output_png = preview_dir / f"{stem}.png"
-        fig.savefig(output_png, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
+        save_preview_figure(fig, output_png)
         plt.close(fig)
         try:
             shutil.copy2(output_png, stage_dir / output_png.name)
@@ -594,12 +533,10 @@ def _save_sm_previews(
                 f"alternative non-top-1 class: {_fmt_class(example_case.get('alternative_class'))} at {_fmt_probability(example_case.get('alternative_class_probability'))} | fsi={_fmt_number(example_case.get('alternative_class_fsi'))}, gsi={_fmt_number(example_case.get('alternative_class_gsi'))}",
                 f"areas: build_floor_area {_fmt_number(example_case.get('original_build_floor_area'), 1)} -> {_fmt_number(example_case.get('imputed_build_floor_area'), 1)} | footprint_area {_fmt_number(example_case.get('original_footprint_area'), 1)} -> {_fmt_number(example_case.get('imputed_footprint_area'), 1)}",
             ]
-            fig.text(
-                0.5,
-                0.035,
-                "\n".join(footer_lines),
-                ha="center",
-                va="bottom",
+            footer_text(
+                fig,
+                footer_lines,
+                y=0.035,
                 fontsize=8,
                 color="#1f2937",
                 bbox={

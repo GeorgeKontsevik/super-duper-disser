@@ -10,6 +10,12 @@ from loguru import logger
 
 from aggregated_spatial_pipeline.geodata_io import read_geodata
 from aggregated_spatial_pipeline.connectpt_data_pipeline.pipeline import build_connectpt_osm_bundle, parse_modalities
+from aggregated_spatial_pipeline.visualization import (
+    apply_preview_canvas,
+    legend_bottom,
+    normalize_preview_gdf,
+    save_preview_figure,
+)
 
 
 LOG_FORMAT = (
@@ -59,9 +65,6 @@ def _save_connectpt_previews(manifest: dict, output_dir: Path) -> dict[str, str]
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
-    from matplotlib.patches import Patch
-    import geopandas as gpd
-    from shapely.geometry import box
 
     local_dir, shared_dir = _derive_preview_dirs(output_dir)
     local_dir.mkdir(parents=True, exist_ok=True)
@@ -80,44 +83,15 @@ def _save_connectpt_previews(manifest: dict, output_dir: Path) -> dict[str, str]
     if boundary is None or boundary.empty:
         return outputs
 
-    def _normalize(gdf):
-        if gdf is None or gdf.empty:
-            return gdf
-        work = gdf.copy()
-        try:
-            if work.crs is not None:
-                work = work.to_crs("EPSG:3857")
-        except Exception:
-            pass
-        return work
-
-    boundary = _normalize(boundary)
-    minx, miny, maxx, maxy = boundary.total_bounds
-    span_x = maxx - minx
-    span_y = maxy - miny
-    span = max(span_x, span_y)
-    pad = max(span * 0.08, 120.0)
-    center_x = (minx + maxx) / 2.0
-    center_y = (miny + maxy) / 2.0
-    half = span / 2.0
-    frame = (center_x - half - pad, center_y - half - pad, center_x + half + pad, center_y + half + pad)
-    outer_bg = gpd.GeoDataFrame({"geometry": [box(*frame)]}, crs=boundary.crs)
+    boundary = normalize_preview_gdf(boundary, target_crs="EPSG:3857")
 
     def _apply_theme(fig, ax, title: str) -> None:
-        fig.patch.set_facecolor("#6b6b6b")
-        ax.set_facecolor("#6b6b6b")
-        outer_bg.plot(ax=ax, facecolor="#6b6b6b", edgecolor="none", alpha=1.0, zorder=-20)
-        boundary.plot(ax=ax, facecolor="#f7f0dd", edgecolor="none", linewidth=0.0, alpha=1.0, zorder=-10)
-        boundary.boundary.plot(ax=ax, color="#ffffff", linewidth=1.4, zorder=20)
-        ax.set_xlim(frame[0], frame[2])
-        ax.set_ylim(frame[1], frame[3])
-        ax.set_aspect("equal", adjustable="box")
+        apply_preview_canvas(fig, ax, boundary, title=title, min_pad=120.0)
         ax.set_axis_off()
-        ax.set_title(title, fontsize=19, fontweight="bold", color="#ffffff", pad=18)
 
     def _save(fig, stem: str) -> None:
         out = local_dir / f"{stem}.png"
-        fig.savefig(out, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
+        save_preview_figure(fig, out)
         plt.close(fig)
         outputs[stem] = str(out)
         if shared_dir is not None:
@@ -130,11 +104,11 @@ def _save_connectpt_previews(manifest: dict, output_dir: Path) -> dict[str, str]
     for modality in manifest.get("modalities", []):
         modality_name = modality.get("modality", "unknown")
         files = modality.get("files") or {}
-        lines = _normalize(read_geodata(Path(files["lines"]))) if files.get("lines") else None
-        projected_lines = _normalize(read_geodata(Path(files["projected_lines"]))) if files.get("projected_lines") else None
-        stops = _normalize(read_geodata(Path(files["aggregated_stops"]))) if files.get("aggregated_stops") else None
-        graph_nodes = _normalize(read_geodata(Path(files["graph_nodes"]))) if files.get("graph_nodes") else None
-        graph_edges = _normalize(read_geodata(Path(files["graph_edges"]))) if files.get("graph_edges") else None
+        lines = normalize_preview_gdf(read_geodata(Path(files["lines"])), boundary, target_crs="EPSG:3857") if files.get("lines") else None
+        projected_lines = normalize_preview_gdf(read_geodata(Path(files["projected_lines"])), boundary, target_crs="EPSG:3857") if files.get("projected_lines") else None
+        stops = normalize_preview_gdf(read_geodata(Path(files["aggregated_stops"])), boundary, target_crs="EPSG:3857") if files.get("aggregated_stops") else None
+        graph_nodes = normalize_preview_gdf(read_geodata(Path(files["graph_nodes"])), boundary, target_crs="EPSG:3857") if files.get("graph_nodes") else None
+        graph_edges = normalize_preview_gdf(read_geodata(Path(files["graph_edges"])), boundary, target_crs="EPSG:3857") if files.get("graph_edges") else None
 
         if any(g is not None and not g.empty for g in (lines, projected_lines, stops)):
             fig, ax = plt.subplots(figsize=(12, 12))
@@ -150,7 +124,7 @@ def _save_connectpt_previews(manifest: dict, output_dir: Path) -> dict[str, str]
                 stops.plot(ax=ax, color="#111827", markersize=7, alpha=0.95)
                 legend.append(Line2D([0], [0], marker="o", color="none", markerfacecolor="#111827", markersize=7, label="stops"))
             legend.append(Line2D([0], [0], color="#111111", linewidth=2, label="analysis boundary"))
-            ax.legend(handles=legend, loc="upper center", bbox_to_anchor=(0.5, -0.04), ncol=min(4, len(legend)), frameon=True, fontsize=8)
+            legend_bottom(ax, legend)
             _save(fig, f"pt_connectpt_{modality_name}")
 
         if any(g is not None and not g.empty for g in (graph_nodes, graph_edges)):
@@ -164,7 +138,7 @@ def _save_connectpt_previews(manifest: dict, output_dir: Path) -> dict[str, str]
                 graph_nodes.plot(ax=ax, color="#e03131", markersize=6, alpha=0.9)
                 legend.append(Line2D([0], [0], marker="o", color="none", markerfacecolor="#e03131", markersize=7, label="graph nodes"))
             legend.append(Line2D([0], [0], color="#111111", linewidth=2, label="analysis boundary"))
-            ax.legend(handles=legend, loc="upper center", bbox_to_anchor=(0.5, -0.04), ncol=min(4, len(legend)), frameon=True, fontsize=8)
+            legend_bottom(ax, legend)
             _save(fig, f"pt_connectpt_graph_{modality_name}")
 
     return outputs

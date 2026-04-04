@@ -32,6 +32,14 @@ from aggregated_spatial_pipeline.runtime_paths import (
     street_pattern_python,
 )
 from aggregated_spatial_pipeline.spec import CONFIG_DIR, PipelineSpec
+from aggregated_spatial_pipeline.visualization import (
+    apply_preview_canvas,
+    clip_to_preview_boundary,
+    footer_text,
+    legend_bottom,
+    normalize_preview_gdf,
+    save_preview_figure,
+)
 
 from .crosswalks import build_crosswalk, save_crosswalk
 from .io import load_layer, save_layer
@@ -1417,24 +1425,10 @@ def _save_collection_previews(
             return None, center
 
     def _legend_bottom(ax, handles: list) -> None:
-        if not handles:
-            return
-        ax.legend(
-            handles=handles,
-            loc="upper center",
-            bbox_to_anchor=(0.5, -0.04),
-            ncol=min(4, len(handles)),
-            frameon=True,
-            fontsize=8,
-        )
+        legend_bottom(ax, handles)
 
     def _footer_text(fig, lines: list[str] | None) -> None:
-        if not lines:
-            return
-        text = "\n".join(line for line in lines if line)
-        if not text.strip():
-            return
-        fig.text(0.5, 0.02, text, ha="center", va="bottom", fontsize=8, color="#374151")
+        footer_text(fig, lines)
 
     def _apply_preview_theme(
         fig,
@@ -1443,63 +1437,13 @@ def _save_collection_previews(
         *,
         title: str | None = None,
     ) -> None:
-        fig.patch.set_facecolor("#6b6b6b")
-        ax.set_facecolor("#6b6b6b")
-        if boundary_layer is None or boundary_layer.empty:
-            if title:
-                ax.set_title(title, fontsize=19, fontweight="bold", color="#ffffff", pad=18)
-            return
-        try:
-            minx, miny, maxx, maxy = boundary_layer.total_bounds
-            span_x = maxx - minx
-            span_y = maxy - miny
-            span = max(span_x, span_y)
-            pad = max(span * 0.08, 250.0)
-            center_x = (minx + maxx) / 2.0
-            center_y = (miny + maxy) / 2.0
-            half_span = span / 2.0
-            frame_minx = center_x - half_span - pad
-            frame_maxx = center_x + half_span + pad
-            frame_miny = center_y - half_span - pad
-            frame_maxy = center_y + half_span + pad
-            outer = gpd.GeoDataFrame(
-                {"geometry": [box(frame_minx, frame_miny, frame_maxx, frame_maxy)]},
-                crs=boundary_layer.crs,
-            )
-            outer.plot(ax=ax, facecolor="#6b6b6b", edgecolor="none", alpha=1.0, zorder=-20)
-            boundary_layer.plot(ax=ax, facecolor="#f7f0dd", edgecolor="none", linewidth=0.0, alpha=1.0, zorder=-10)
-            boundary_layer.boundary.plot(ax=ax, color="#ffffff", linewidth=1.4, zorder=20)
-            ax.set_xlim(frame_minx, frame_maxx)
-            ax.set_ylim(frame_miny, frame_maxy)
-            ax.set_aspect("equal", adjustable="box")
-        except Exception:
-            pass
-        if title:
-            ax.set_title(title, fontsize=19, fontweight="bold", color="#ffffff", pad=18)
+        apply_preview_canvas(fig, ax, boundary_layer, title=title)
 
     def _clip_to_preview_boundary(
         gdf: gpd.GeoDataFrame | None,
         boundary_layer: gpd.GeoDataFrame | None,
     ) -> gpd.GeoDataFrame | None:
-        if gdf is None or gdf.empty or boundary_layer is None or boundary_layer.empty:
-            return gdf
-        try:
-            work = gdf.copy()
-            boundary = boundary_layer.copy()
-            if work.crs is not None and boundary.crs is not None and work.crs != boundary.crs:
-                boundary = boundary.to_crs(work.crs)
-            geom_types = set(work.geom_type.astype(str))
-            if any("Point" in geom for geom in geom_types):
-                boundary_union = boundary.union_all()
-                clipped = work[work.geometry.within(boundary_union) | work.geometry.intersects(boundary_union)].copy()
-            else:
-                clipped = gpd.clip(work, boundary)
-            if clipped is None or clipped.empty:
-                return gdf
-            clipped = clipped[clipped.geometry.notna() & ~clipped.geometry.is_empty].copy()
-            return clipped if not clipped.empty else gdf
-        except Exception:
-            return gdf
+        return clip_to_preview_boundary(gdf, boundary_layer)
 
     def _plot(
         output_path: Path,
@@ -1512,21 +1456,12 @@ def _save_collection_previews(
             return None
         # Normalize all layers to a single CRS for correct overlay/scale in previews.
         target_crs = "EPSG:3857"
-        boundary_norm = None
-        if buffer_gdf is not None and not buffer_gdf.empty:
-            try:
-                boundary_norm = buffer_gdf.to_crs(target_crs) if buffer_gdf.crs is not None else buffer_gdf
-            except Exception:
-                boundary_norm = buffer_gdf
+        boundary_norm = normalize_preview_gdf(buffer_gdf, target_crs=target_crs)
         normalized_layers: list[tuple[gpd.GeoDataFrame, dict]] = []
         for gdf, style in valid_layers:
-            try:
-                if gdf.crs is None:
-                    normalized_layers.append((_clip_to_preview_boundary(gdf, boundary_norm), style))
-                else:
-                    normalized_layers.append((_clip_to_preview_boundary(gdf.to_crs(target_crs), boundary_norm), style))
-            except Exception:
-                normalized_layers.append((_clip_to_preview_boundary(gdf, boundary_norm), style))
+            normalized = normalize_preview_gdf(gdf, boundary_norm, target_crs=target_crs)
+            if normalized is not None and not normalized.empty:
+                normalized_layers.append((normalized, style))
         fig, ax = plt.subplots(figsize=(12, 12))
         legend_handles = []
         for gdf, style in normalized_layers:
@@ -1553,7 +1488,7 @@ def _save_collection_previews(
         _legend_bottom(ax, legend_handles)
         ax.set_axis_off()
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(output_path, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
+        save_preview_figure(fig, output_path)
         plt.close(fig)
         return output_path
 

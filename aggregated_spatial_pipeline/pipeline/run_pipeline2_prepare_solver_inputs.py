@@ -20,6 +20,13 @@ import pandas as pd
 from loguru import logger
 
 from aggregated_spatial_pipeline.geodata_io import prepare_geodata_for_parquet, read_geodata
+from aggregated_spatial_pipeline.visualization import (
+    apply_preview_canvas,
+    footer_text,
+    legend_bottom,
+    normalize_preview_gdf,
+    save_preview_figure,
+)
 from blocksnet.analysis.provision import competitive_provision
 from blocksnet.relations import calculate_accessibility_matrix
 
@@ -539,7 +546,6 @@ def _plot_accessibility_previews(
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from shapely.geometry import box
 
     out_dir.mkdir(parents=True, exist_ok=True)
     out: dict[str, str] = {}
@@ -552,23 +558,7 @@ def _plot_accessibility_previews(
         out["accessibility_mean_time_map"] = str(access_map_path)
         return out
 
-    boundary_plot = None
-    outer_bg = None
-    outer_bounds = None
-    if boundary is not None and not boundary.empty:
-        boundary_plot = boundary.copy()
-        boundary_plot = boundary_plot[boundary_plot.geometry.notna() & ~boundary_plot.geometry.is_empty].copy()
-        if not boundary_plot.empty and boundary_plot.crs is not None:
-            try:
-                boundary_plot = boundary_plot.to_crs("EPSG:3857")
-            except Exception:
-                pass
-        if boundary_plot is not None and not boundary_plot.empty:
-            minx, miny, maxx, maxy = boundary_plot.total_bounds
-            pad_x = max((maxx - minx) * 0.08, 250.0)
-            pad_y = max((maxy - miny) * 0.08, 250.0)
-            outer_bounds = (minx - pad_x, miny - pad_y, maxx + pad_x, maxy + pad_y)
-            outer_bg = gpd.GeoDataFrame({"geometry": [box(*outer_bounds)]}, crs=boundary_plot.crs)
+    boundary_plot = normalize_preview_gdf(boundary, target_crs="EPSG:3857")
 
     matrix_numeric = matrix_union.apply(pd.to_numeric, errors="coerce").astype(np.float32, copy=False)
     matrix_numeric = matrix_numeric.where(np.isfinite(matrix_numeric), np.nan)
@@ -591,20 +581,11 @@ def _plot_accessibility_previews(
     units_plot = units_plot[units_plot.geometry.notna() & ~units_plot.geometry.is_empty].copy()
     if not units_plot.empty:
         _log("Preview step: rendering accessibility mean-time map...")
-        if units_plot.crs is not None:
-            try:
-                units_plot = units_plot.to_crs("EPSG:3857")
-            except Exception:
-                pass
+        units_plot = normalize_preview_gdf(units_plot, boundary_plot, target_crs="EPSG:3857")
         base_plot = units_plot.copy()
         res_plot = units_plot[units_plot["is_residential"]].copy()
         fig, ax = plt.subplots(figsize=(12, 10))
-        fig.patch.set_facecolor("#6b6b6b")
-        ax.set_facecolor("#6b6b6b")
-        if outer_bg is not None and not outer_bg.empty:
-            outer_bg.plot(ax=ax, facecolor="#6b6b6b", edgecolor="none", alpha=1.0, zorder=-20)
-        if boundary_plot is not None and not boundary_plot.empty:
-            boundary_plot.plot(ax=ax, facecolor="#f7f0dd", edgecolor="none", linewidth=0.0, alpha=1.0, zorder=-10)
+        apply_preview_canvas(fig, ax, boundary_plot)
         base_plot.plot(
             ax=ax,
             color="#f3f4f6",
@@ -625,11 +606,6 @@ def _plot_accessibility_previews(
                 missing_kwds={"color": "#9ca3af", "label": "residential with no path"},
                 zorder=3,
             )
-        if boundary_plot is not None and not boundary_plot.empty:
-            boundary_plot.boundary.plot(ax=ax, color="#ffffff", linewidth=1.4, zorder=4)
-        if outer_bounds is not None:
-            ax.set_xlim(outer_bounds[0], outer_bounds[2])
-            ax.set_ylim(outer_bounds[1], outer_bounds[3])
         ax.set_title(
             "Accessibility: mean travel time (residential quarters only)",
             fontsize=19,
@@ -638,7 +614,7 @@ def _plot_accessibility_previews(
             pad=18,
         )
         ax.set_axis_off()
-        fig.savefig(access_map_path, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
+        save_preview_figure(fig, access_map_path)
         plt.close(fig)
         out["accessibility_mean_time_map"] = str(access_map_path)
         _log(f"Preview step: saved accessibility map: {access_map_path.name}")
@@ -662,7 +638,6 @@ def _plot_block_selection_status(
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib.patches import Patch
-    from shapely.geometry import box
 
     if blocks is None or blocks.empty or status_column not in blocks.columns:
         return None
@@ -671,37 +646,11 @@ def _plot_block_selection_status(
     gdf = gdf[gdf.geometry.notna() & ~gdf.geometry.is_empty].copy()
     if gdf.empty:
         return None
-    if gdf.crs is not None:
-        try:
-            gdf = gdf.to_crs("EPSG:3857")
-        except Exception:
-            pass
-
-    boundary_plot = None
-    outer_bg = None
-    outer_bounds = None
-    if boundary is not None and not boundary.empty:
-        boundary_plot = boundary.copy()
-        boundary_plot = boundary_plot[boundary_plot.geometry.notna() & ~boundary_plot.geometry.is_empty].copy()
-        if not boundary_plot.empty and boundary_plot.crs is not None:
-            try:
-                boundary_plot = boundary_plot.to_crs("EPSG:3857")
-            except Exception:
-                pass
-        if boundary_plot is not None and not boundary_plot.empty:
-            minx, miny, maxx, maxy = boundary_plot.total_bounds
-            pad_x = max((maxx - minx) * 0.08, 250.0)
-            pad_y = max((maxy - miny) * 0.08, 250.0)
-            outer_bounds = (minx - pad_x, miny - pad_y, maxx + pad_x, maxy + pad_y)
-            outer_bg = gpd.GeoDataFrame({"geometry": [box(*outer_bounds)]}, crs=boundary_plot.crs)
+    boundary_plot = normalize_preview_gdf(boundary, target_crs="EPSG:3857")
+    gdf = normalize_preview_gdf(gdf, boundary_plot, target_crs="EPSG:3857")
 
     fig, ax = plt.subplots(figsize=(12, 10))
-    fig.patch.set_facecolor("#6b6b6b")
-    ax.set_facecolor("#6b6b6b")
-    if outer_bg is not None and not outer_bg.empty:
-        outer_bg.plot(ax=ax, facecolor="#6b6b6b", edgecolor="none", alpha=1.0, zorder=-20)
-    if boundary_plot is not None and not boundary_plot.empty:
-        boundary_plot.plot(ax=ax, facecolor="#f7f0dd", edgecolor="none", linewidth=0.0, alpha=1.0, zorder=-10)
+    apply_preview_canvas(fig, ax, boundary_plot, title=title)
 
     statuses = gdf[status_column].astype("string").fillna("unknown")
     legend_handles = []
@@ -711,27 +660,12 @@ def _plot_block_selection_status(
             continue
         part.plot(ax=ax, color=color, linewidth=0.05, edgecolor="#d1d5db", alpha=0.92, zorder=2)
         legend_handles.append(Patch(facecolor=color, edgecolor="none", label=label_map.get(status, status)))
-
-    if boundary_plot is not None and not boundary_plot.empty:
-        boundary_plot.boundary.plot(ax=ax, color="#ffffff", linewidth=1.4, zorder=3)
-    if outer_bounds is not None:
-        ax.set_xlim(outer_bounds[0], outer_bounds[2])
-        ax.set_ylim(outer_bounds[1], outer_bounds[3])
-    ax.set_title(title, fontsize=16, fontweight="bold", color="#ffffff", pad=16)
     if legend_handles:
-        ax.legend(
-            handles=legend_handles,
-            loc="lower left",
-            frameon=True,
-            facecolor="#f7f0dd",
-            edgecolor="#9ca3af",
-            fontsize=10,
-        )
-    if footer_lines:
-        fig.text(0.5, 0.02, "\n".join([line for line in footer_lines if line]), ha="center", va="bottom", fontsize=8, color="#374151")
+        legend_bottom(ax, legend_handles, max_cols=4, fontsize=10)
+    footer_text(fig, footer_lines)
     ax.set_axis_off()
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
+    save_preview_figure(fig, out_path)
     plt.close(fig)
     _log(f"Preview step: saved selection-status map: {out_path.name}")
     return str(out_path)
@@ -767,7 +701,6 @@ def _plot_service_lp_preview(
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from shapely.geometry import box
 
     if solver_blocks is None or solver_blocks.empty:
         return None
@@ -779,28 +712,8 @@ def _plot_service_lp_preview(
     gdf = gdf[gdf.geometry.notna() & ~gdf.geometry.is_empty].copy()
     if gdf.empty:
         return None
-    if gdf.crs is not None:
-        try:
-            gdf = gdf.to_crs("EPSG:3857")
-        except Exception:
-            pass
-    boundary_plot = None
-    outer_bg = None
-    outer_bounds = None
-    if boundary is not None and not boundary.empty:
-        boundary_plot = boundary.copy()
-        boundary_plot = boundary_plot[boundary_plot.geometry.notna() & ~boundary_plot.geometry.is_empty].copy()
-        if not boundary_plot.empty and boundary_plot.crs is not None:
-            try:
-                boundary_plot = boundary_plot.to_crs("EPSG:3857")
-            except Exception:
-                pass
-        if boundary_plot is not None and not boundary_plot.empty:
-            minx, miny, maxx, maxy = boundary_plot.total_bounds
-            pad_x = max((maxx - minx) * 0.08, 250.0)
-            pad_y = max((maxy - miny) * 0.08, 250.0)
-            outer_bounds = (minx - pad_x, miny - pad_y, maxx + pad_x, maxy + pad_y)
-            outer_bg = gpd.GeoDataFrame({"geometry": [box(*outer_bounds)]}, crs=boundary_plot.crs)
+    boundary_plot = normalize_preview_gdf(boundary, target_crs="EPSG:3857")
+    gdf = normalize_preview_gdf(gdf, boundary_plot, target_crs="EPSG:3857")
 
     provision_col = "provision_strong" if "provision_strong" in gdf.columns else "provision" if "provision" in gdf.columns else None
     demand_without_col = "demand_without" if "demand_without" in gdf.columns else None
@@ -821,13 +734,8 @@ def _plot_service_lp_preview(
     )
     ax = axes[0]
     hist_ax = axes[1]
-    fig.patch.set_facecolor("#6b6b6b")
-    ax.set_facecolor("#6b6b6b")
+    apply_preview_canvas(fig, ax, boundary_plot)
     hist_ax.set_facecolor("#f7f0dd")
-    if outer_bg is not None and not outer_bg.empty:
-        outer_bg.plot(ax=ax, facecolor="#6b6b6b", edgecolor="none", alpha=1.0, zorder=-20)
-    if boundary_plot is not None and not boundary_plot.empty:
-        boundary_plot.plot(ax=ax, facecolor="#f7f0dd", edgecolor="none", linewidth=0.0, alpha=1.0, zorder=-10)
     for status in ("good", "bad", "missing"):
         part = gdf[gdf["provision_binary"] == status]
         if part.empty:
@@ -840,11 +748,6 @@ def _plot_service_lp_preview(
             alpha=0.9,
             zorder=2,
         )
-    if boundary_plot is not None and not boundary_plot.empty:
-        boundary_plot.boundary.plot(ax=ax, color="#ffffff", linewidth=1.4, zorder=3)
-    if outer_bounds is not None:
-        ax.set_xlim(outer_bounds[0], outer_bounds[2])
-        ax.set_ylim(outer_bounds[1], outer_bounds[3])
     good_cnt = int((gdf["provision_binary"] == "good").sum())
     bad_cnt = int((gdf["provision_binary"] == "bad").sum())
     miss_cnt = int((gdf["provision_binary"] == "missing").sum())
@@ -873,7 +776,7 @@ def _plot_service_lp_preview(
         hist_ax.set_axis_off()
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
+    save_preview_figure(fig, out_path)
     plt.close(fig)
     _log(f"Preview step: saved LP map for service [{service}]: {out_path.name}")
     return str(out_path)

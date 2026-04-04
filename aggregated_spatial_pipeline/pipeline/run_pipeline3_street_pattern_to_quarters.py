@@ -10,9 +10,14 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from loguru import logger
-from shapely.geometry import box
 
 from aggregated_spatial_pipeline.geodata_io import prepare_geodata_for_parquet, read_geodata
+from aggregated_spatial_pipeline.visualization import (
+    apply_preview_canvas,
+    legend_bottom,
+    normalize_preview_gdf,
+    save_preview_figure,
+)
 
 from .crosswalks import build_crosswalk
 from .transfers import apply_transfer_rule
@@ -225,21 +230,8 @@ def _save_previews(
     plot_gdf = plot_gdf[plot_gdf.geometry.notna() & ~plot_gdf.geometry.is_empty].copy()
     if plot_gdf.empty:
         return outputs
-    if plot_gdf.crs is not None:
-        try:
-            plot_gdf = plot_gdf.to_crs("EPSG:3857")
-        except Exception:
-            pass
-
-    boundary_plot = None
-    if boundary_gdf is not None and not boundary_gdf.empty:
-        boundary_plot = boundary_gdf.copy()
-        boundary_plot = boundary_plot[boundary_plot.geometry.notna() & ~boundary_plot.geometry.is_empty].copy()
-        if not boundary_plot.empty and boundary_plot.crs is not None:
-            try:
-                boundary_plot = boundary_plot.to_crs(plot_gdf.crs)
-            except Exception:
-                pass
+    boundary_plot = normalize_preview_gdf(boundary_gdf, target_crs="EPSG:3857")
+    plot_gdf = normalize_preview_gdf(plot_gdf, boundary_plot, target_crs="EPSG:3857")
     if boundary_plot is None or boundary_plot.empty:
         boundary_plot = plot_gdf[["geometry"]].copy()
         try:
@@ -247,21 +239,6 @@ def _save_previews(
             boundary_plot = gpd.GeoDataFrame({"geometry": [boundary_union]}, crs=plot_gdf.crs)
         except Exception:
             boundary_plot = None
-    outer_bg = None
-    outer_bounds = None
-    if boundary_plot is not None and not boundary_plot.empty:
-        try:
-            minx, miny, maxx, maxy = boundary_plot.total_bounds
-            pad_x = max((maxx - minx) * 0.08, 250.0)
-            pad_y = max((maxy - miny) * 0.08, 250.0)
-            outer_bounds = (minx - pad_x, miny - pad_y, maxx + pad_x, maxy + pad_y)
-            outer_bg = gpd.GeoDataFrame(
-                {"geometry": [box(*outer_bounds)]},
-                crs=boundary_plot.crs,
-            )
-        except Exception:
-            outer_bg = None
-            outer_bounds = None
 
     prob_frame = plot_gdf[prob_columns].apply(pd.to_numeric, errors="coerce").fillna(0.0)
     covered_mass = prob_frame.sum(axis=1)
@@ -287,12 +264,7 @@ def _save_previews(
 
     _log("Preview step: rendering quarter-level street-pattern dominant-class map...")
     fig, ax = plt.subplots(figsize=(12, 12))
-    fig.patch.set_facecolor("#6b6b6b")
-    ax.set_facecolor("#6b6b6b")
-    if outer_bg is not None and not outer_bg.empty:
-        outer_bg.plot(ax=ax, facecolor="#6b6b6b", edgecolor="none", alpha=1.0, zorder=-20)
-    if boundary_plot is not None and not boundary_plot.empty:
-        boundary_plot.plot(ax=ax, facecolor="#f7f0dd", edgecolor="none", linewidth=0.0, alpha=1.0, zorder=-10)
+    apply_preview_canvas(fig, ax, boundary_plot, title="Street Pattern Dominant Class On Quarters")
     legend_handles = []
     class_order = [label for label in CLASS_LABELS.values() if label in set(plot_gdf["dominant_class"])]
     if "unknown" in set(plot_gdf["dominant_class"]):
@@ -304,34 +276,16 @@ def _save_previews(
         color = CLASS_COLORS.get(class_name, "#d1d5db")
         part.plot(ax=ax, color=color, linewidth=0.05, edgecolor="#d1d5db", alpha=0.92, zorder=2)
         legend_handles.append(Patch(facecolor=color, edgecolor="none", label=class_name))
-    if boundary_plot is not None and not boundary_plot.empty:
-        boundary_plot.boundary.plot(ax=ax, color="#ffffff", linewidth=1.4, zorder=3)
-    if outer_bounds is not None:
-        ax.set_xlim(outer_bounds[0], outer_bounds[2])
-        ax.set_ylim(outer_bounds[1], outer_bounds[3])
-    ax.legend(
-        handles=legend_handles,
-        loc="lower center",
-        bbox_to_anchor=(0.5, -0.12),
-        ncol=3,
-        frameon=True,
-        fontsize=9,
-    )
-    ax.set_title("Street Pattern Dominant Class On Quarters", fontsize=19, fontweight="bold", color="#ffffff", pad=18)
+    legend_bottom(ax, legend_handles, max_cols=3, fontsize=9)
     ax.set_axis_off()
-    fig.savefig(dominant_path, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
+    save_preview_figure(fig, dominant_path)
     plt.close(fig)
     outputs["dominant_class_png"] = str(dominant_path)
     _log(f"Preview step: saved quarter-level street-pattern dominant-class map: {dominant_path.name}")
 
     _log("Preview step: rendering quarter-level street-pattern multivariate map...")
     fig, ax = plt.subplots(figsize=(12, 12))
-    fig.patch.set_facecolor("#6b6b6b")
-    ax.set_facecolor("#6b6b6b")
-    if outer_bg is not None and not outer_bg.empty:
-        outer_bg.plot(ax=ax, facecolor="#6b6b6b", edgecolor="none", alpha=1.0, zorder=-20)
-    if boundary_plot is not None and not boundary_plot.empty:
-        boundary_plot.plot(ax=ax, facecolor="#f7f0dd", edgecolor="none", linewidth=0.0, alpha=1.0, zorder=-10)
+    apply_preview_canvas(fig, ax, boundary_plot, title="Street Pattern Multivariate Mix On Quarters")
     plot_gdf.plot(
         ax=ax,
         color=plot_gdf["multivariate_color"].astype(str),
@@ -340,11 +294,6 @@ def _save_previews(
         alpha=0.92,
         zorder=2,
     )
-    if boundary_plot is not None and not boundary_plot.empty:
-        boundary_plot.boundary.plot(ax=ax, color="#ffffff", linewidth=1.4, zorder=3)
-    if outer_bounds is not None:
-        ax.set_xlim(outer_bounds[0], outer_bounds[2])
-        ax.set_ylim(outer_bounds[1], outer_bounds[3])
     fig.subplots_adjust(right=0.76)
     _draw_multivariate_scale_legend(
         fig,
@@ -353,9 +302,8 @@ def _save_previews(
         title="Coverage x Anchor Color",
         text_color="#f8fafc",
     )
-    ax.set_title("Street Pattern Multivariate Mix On Quarters", fontsize=19, fontweight="bold", color="#ffffff", pad=18)
     ax.set_axis_off()
-    fig.savefig(multivariate_path, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
+    save_preview_figure(fig, multivariate_path)
     plt.close(fig)
     outputs["multivariate_png"] = str(multivariate_path)
     _log(f"Preview step: saved quarter-level street-pattern multivariate map: {multivariate_path.name}")

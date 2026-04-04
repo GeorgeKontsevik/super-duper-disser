@@ -19,6 +19,7 @@ from shapely.geometry import Point
 from torch_geometric.loader import DataLoader
 
 from aggregated_spatial_pipeline.geodata_io import prepare_geodata_for_parquet
+from aggregated_spatial_pipeline.visualization import apply_preview_canvas, normalize_preview_gdf, save_preview_figure
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -435,9 +436,17 @@ def _save_route_preview(
     summary: dict,
     out_path: Path,
 ) -> None:
+    boundary_plot = normalize_preview_gdf(boundary, target_crs="EPSG:3857")
+    target_crs = getattr(boundary_plot, "crs", None) or "EPSG:3857"
+    if boundary_plot is None or boundary_plot.empty:
+        try:
+            all_edge_geoms = [data.get("geometry") for _, _, data in graph.edges(data=True) if data.get("geometry") is not None]
+            if all_edge_geoms:
+                boundary_plot = normalize_preview_gdf(gpd.GeoDataFrame({"geometry": all_edge_geoms}, crs=target_crs), target_crs="EPSG:3857")
+        except Exception:
+            boundary_plot = None
     fig, ax = plt.subplots(figsize=(10, 10))
-    if boundary is not None and not boundary.empty:
-        boundary.plot(ax=ax, color="#f7f0dd", edgecolor="#d8c6a3", linewidth=1.0, zorder=0)
+    apply_preview_canvas(fig, ax, boundary_plot, title=None, min_pad=120.0)
 
     edge_geoms = []
     for _, _, data in graph.edges(data=True):
@@ -445,12 +454,12 @@ def _save_route_preview(
         if geom is not None and not geom.is_empty:
             edge_geoms.append(geom)
     if edge_geoms:
-        gpd.GeoSeries(edge_geoms, crs=boundary.crs if boundary is not None else None).plot(
+        gpd.GeoSeries(edge_geoms, crs=target_crs).pipe(lambda s: s.to_crs("EPSG:3857") if getattr(s, "crs", None) else s).plot(
             ax=ax, color="#9aa0a6", linewidth=1.2, alpha=0.45, zorder=1
         )
 
     node_points = [Point(float(graph.nodes[n]["x"]), float(graph.nodes[n]["y"])) for n in sorted(graph.nodes())]
-    gpd.GeoSeries(node_points, crs=boundary.crs if boundary is not None else None).plot(
+    gpd.GeoSeries(node_points, crs=target_crs).pipe(lambda s: s.to_crs("EPSG:3857") if getattr(s, "crs", None) else s).plot(
         ax=ax, color="#495057", markersize=18, alpha=0.9, zorder=2
     )
 
@@ -461,7 +470,7 @@ def _save_route_preview(
             if graph.has_edge(u, v):
                 geom = graph.get_edge_data(u, v).get("geometry")
                 if geom is not None and not geom.is_empty:
-                    gpd.GeoSeries([geom], crs=boundary.crs if boundary is not None else None).plot(
+                    gpd.GeoSeries([geom], crs=target_crs).pipe(lambda s: s.to_crs("EPSG:3857") if getattr(s, "crs", None) else s).plot(
                         ax=ax, color=color, linewidth=3.6, alpha=0.95, zorder=4
                     )
         xs = [float(graph.nodes[n]["x"]) for n in route]
@@ -478,7 +487,7 @@ def _save_route_preview(
     ax.set_aspect("equal")
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=180)
+    save_preview_figure(fig, out_path)
     plt.close(fig)
 
 

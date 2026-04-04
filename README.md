@@ -45,6 +45,49 @@ City list:
 Batch runner:
 - [run_all_cities.sh](/Users/gk/Code/super-duper-disser/run_all_cities.sh)
 
+## Shared Visualization Tool
+
+One project-level visualization tool now owns the default preview canvas and base map styling:
+
+- [aggregated_spatial_pipeline/visualization/map_canvas.py](/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/visualization/map_canvas.py)
+- [aggregated_spatial_pipeline/visualization/__init__.py](/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/visualization/__init__.py)
+
+Use it instead of adding custom per-module matplotlib setup when a step already has:
+- a boundary or circle canvas
+- one or more `GeoDataFrame` layers
+- a default background layer such as blocks
+- a preview PNG output
+
+Core helpers provided by the tool:
+- `normalize_preview_gdf(...)`
+- `clip_to_preview_boundary(...)`
+- `apply_preview_canvas(...)`
+- `legend_bottom(...)`
+- `footer_text(...)`
+- `save_preview_figure(...)`
+
+Already wired into:
+- [aggregated_spatial_pipeline/pipeline/run_joint.py](/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/pipeline/run_joint.py)
+- [aggregated_spatial_pipeline/pipeline/run_pipeline2_prepare_solver_inputs.py](/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/pipeline/run_pipeline2_prepare_solver_inputs.py)
+- [aggregated_spatial_pipeline/pipeline/run_sm_imputation_external.py](/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/pipeline/run_sm_imputation_external.py)
+
+Quick check after changes:
+
+```bash
+cd /Users/gk/Code/super-duper-disser
+PYTHONPYCACHEPREFIX=/Users/gk/Code/super-duper-disser/.cache/pyc python3 -m py_compile \
+  aggregated_spatial_pipeline/visualization/__init__.py \
+  aggregated_spatial_pipeline/visualization/map_canvas.py \
+  aggregated_spatial_pipeline/pipeline/run_joint.py \
+  aggregated_spatial_pipeline/pipeline/run_pipeline2_prepare_solver_inputs.py \
+  aggregated_spatial_pipeline/pipeline/run_sm_imputation_external.py
+```
+
+If a preview changes visually, check the rendered PNGs in:
+- [aggregated_spatial_pipeline/outputs/joint_inputs](/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/joint_inputs)
+- `.../preview_png/all_together/`
+- `.../preview_png/stages/<stage>/`
+
 ## Temporary Heuristics And Fallbacks
 
 The root repo contains a few explicitly temporary guardrails. If you add a new workaround,
