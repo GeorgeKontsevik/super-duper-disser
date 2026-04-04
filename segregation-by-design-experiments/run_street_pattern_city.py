@@ -6,6 +6,7 @@ import json
 import pickle
 import re
 import sys
+import warnings
 from collections import Counter
 from pathlib import Path
 
@@ -79,10 +80,20 @@ def _configure_logging() -> None:
         format=LOG_FORMAT,
         colorize=True,
     )
+    warnings.filterwarnings(
+        "ignore",
+        message=r"Could not parse column 'reversed' as JSON; leaving as string",
+        category=UserWarning,
+    )
+    warnings.filterwarnings(
+        "ignore",
+        message=r"This figure includes Axes that are not compatible with tight_layout, so results might be incorrect\.",
+        category=UserWarning,
+    )
 
 
 def _progress_log(message: str) -> None:
-    logger.bind(tag="[street-pattern]").info(message)
+    logger.bind(tag="[street-pattern]").debug(message)
 
 
 def _log(message: str) -> None:
@@ -219,6 +230,13 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--boundary-path",
+        help=(
+            "Optional local GeoJSON/Parquet/GPKG file with the already resolved territory polygon. "
+            "When provided, relation-mode uses this geometry directly without any network request."
+        ),
+    )
+    parser.add_argument(
         "--year",
         type=int,
         help=(
@@ -306,6 +324,22 @@ def _node_get(api: osm.OsmApi, node_id: int) -> dict:
     if hasattr(api, "node_get"):
         return api.node_get(node_id)
     return api.NodeGet(node_id)
+
+
+def _read_boundary_geometry(path: str | Path):
+    source = Path(path)
+    if source.suffix.lower() == ".parquet":
+        gdf = gpd.read_parquet(source)
+    else:
+        gdf = gpd.read_file(source)
+    if gdf.empty:
+        raise ValueError(f"Boundary geometry file is empty: {source}")
+    geometry = gdf.union_all()
+    if geometry is None or geometry.is_empty:
+        raise ValueError(f"Boundary geometry is empty: {source}")
+    if gdf.crs is not None and str(gdf.crs) != "EPSG:4326":
+        geometry = gpd.GeoSeries([geometry], crs=gdf.crs).to_crs(4326).iloc[0]
+    return geometry
 
 
 def _pick_relation_center_node(api: osm.OsmApi, relation_id: int) -> dict | None:
@@ -479,6 +513,18 @@ def resolve_relation_territory(relation_id: int) -> tuple[dict, dict, object]:
             "lon": float(representative.x),
             "lat": float(representative.y),
         }
+    return relation, centre_node, boundary
+
+
+def resolve_relation_territory_from_boundary(relation_id: int, boundary_path: str | Path) -> tuple[dict, dict, object]:
+    boundary = _read_boundary_geometry(boundary_path)
+    representative = boundary.representative_point()
+    relation = {"id": int(relation_id)}
+    centre_node = {
+        "id": None,
+        "lon": float(representative.x),
+        "lat": float(representative.y),
+    }
     return relation, centre_node, boundary
 
 
@@ -1297,7 +1343,7 @@ def classify_snapshot(
     road_source_label: str = "osm",
 ):
     snapshot_label = _year_label(year)
-    _progress_log(f"{snapshot_label}: start classification snapshot")
+    _progress_log(f"Snapshot [{snapshot_label}]: start")
     graph_wgs84 = None
     roads_wgs84 = None
     subgraphs = None
@@ -1333,7 +1379,7 @@ def classify_snapshot(
 
     if not no_cache and subgraphs_cache_path is not None and subgraphs_cache_path.exists():
         subgraphs = _load_pickle(subgraphs_cache_path)
-        _progress_log(f"{snapshot_label}: loaded cached subgraphs")
+        _progress_log(f"Snapshot [{snapshot_label}]: loaded cached grid cells")
 
     if not no_cache and roads_cache_path is not None and roads_cache_path.exists():
         roads_cache = _load_pickle(roads_cache_path)
@@ -1342,17 +1388,17 @@ def classify_snapshot(
         elif isinstance(roads_cache, gpd.GeoDataFrame):
             roads_wgs84 = roads_cache
         if roads_wgs84 is not None:
-            _progress_log(f"{snapshot_label}: loaded cached roads")
+            _progress_log(f"Snapshot [{snapshot_label}]: loaded cached roads")
 
     if subgraphs is None or roads_wgs84 is None:
-        _progress_log(f"{snapshot_label}: preparing roads and graph split (this can take time)")
+        _progress_log(f"Snapshot [{snapshot_label}]: prepare roads and grid cells")
         if roads_path is None:
-            _progress_log(f"{snapshot_label}: downloading road graph from OSM")
+            _progress_log(f"Snapshot [{snapshot_label}]: download roads from OSM")
             graph_wgs84 = download_street_graph(polygon_wgs84, network_type=network_type, year=year)
             _, roads_wgs84 = ox.graph_to_gdfs(graph_wgs84)
             roads_wgs84 = roads_wgs84.reset_index()
             graph_projected = ox.project_graph(graph_wgs84, to_crs=local_crs)
-            _progress_log(f"{snapshot_label}: splitting projected graph by grid")
+            _progress_log(f"Snapshot [{snapshot_label}]: split projected graph by grid")
             subgraphs = split_graph_by_grid_for_polygon(
                 graph_projected,
                 polygon_projected,
@@ -1365,18 +1411,18 @@ def classify_snapshot(
             )
             if dropped_sparse:
                 _progress_log(
-                    f"{snapshot_label}: dropped {dropped_sparse} sparse graph cells "
+                    f"Snapshot [{snapshot_label}]: dropped {dropped_sparse} sparse grid cells "
                     f"(min_road_count={min_road_count}, min_total_road_length={min_total_road_length:.1f})"
                 )
         else:
-            _progress_log(f"{snapshot_label}: loading roads from local dataset")
+            _progress_log(f"Snapshot [{snapshot_label}]: load roads from local dataset")
             roads_projected, roads_wgs84, _, _ = prepare_city_roads(
                 roads_path=roads_path,
                 centre_node=centre_node,
                 buffer_m=buffer_m,
                 buffer_polygon_wgs84=polygon_wgs84,
             )
-            _progress_log(f"{snapshot_label}: splitting roads by grid")
+            _progress_log(f"Snapshot [{snapshot_label}]: split roads by grid")
             subgraphs = split_roads_by_grid_for_polygon(
                 roads_projected,
                 polygon_projected,
@@ -1392,9 +1438,9 @@ def classify_snapshot(
 
     if not no_cache and dataset_cache_path is not None and dataset_cache_path.exists():
         dataset = _load_pickle(dataset_cache_path)
-        _progress_log(f"{snapshot_label}: loaded cached dataset")
+        _progress_log(f"Snapshot [{snapshot_label}]: loaded cached feature dataset")
     else:
-        _progress_log(f"{snapshot_label}: building graph dataset/features")
+        _progress_log(f"Snapshot [{snapshot_label}]: build feature dataset")
         dataset = BlockDataset(subgraphs)
         if not no_cache and dataset_cache_path is not None:
             _save_pickle(dataset_cache_path, dataset)
@@ -1405,10 +1451,10 @@ def classify_snapshot(
             predictions = cached_predictions.get("predictions")
             probabilities = cached_predictions.get("probabilities")
             if predictions is not None and probabilities is not None:
-                _progress_log(f"{snapshot_label}: loaded cached predictions")
+                _progress_log(f"Snapshot [{snapshot_label}]: loaded cached predictions")
 
     if predictions is None or probabilities is None:
-        _progress_log(f"{snapshot_label}: running model inference")
+        _progress_log(f"Snapshot [{snapshot_label}]: run model inference")
         predictions, probabilities = classify_blocks(
             dataset,
             model_path=model_path,
@@ -1678,7 +1724,7 @@ def main() -> None:
     # Relation mode uses polygon territory directly; external buffer is forced to zero.
     if args.relation_id is not None and float(args.buffer_m) != 0.0:
         args.buffer_m = 0.0
-        _log("Relation mode: forcing --buffer-m to 0 (territory = relation polygon).")
+        _progress_log("Relation mode: forcing --buffer-m to 0 (territory = relation polygon).")
     resolved_road_source, resolved_roads_path = resolve_roads_source(
         place=args.place,
         road_source=args.road_source,
@@ -1725,11 +1771,20 @@ def main() -> None:
 
     if args.relation_id is not None:
         stage_bar.set_postfix_str("resolve relation territory")
-        relation, centre_node, polygon = resolve_relation_territory(int(args.relation_id))
-        if centre_node.get("id") is not None:
-            _log(f"Used relation {int(args.relation_id)} and centre node {int(centre_node['id'])}")
+        if args.boundary_path:
+            relation, centre_node, polygon = resolve_relation_territory_from_boundary(
+                int(args.relation_id),
+                args.boundary_path,
+            )
+            _progress_log(
+                f"Territory source: local boundary file {Path(args.boundary_path).name} for relation {int(args.relation_id)}"
+            )
         else:
-            _log(f"Used relation {int(args.relation_id)} and representative point fallback")
+            relation, centre_node, polygon = resolve_relation_territory(int(args.relation_id))
+            if centre_node.get("id") is not None:
+                _progress_log(f"Territory source: relation {int(args.relation_id)} with centre node {int(centre_node['id'])}")
+            else:
+                _progress_log(f"Territory source: relation {int(args.relation_id)} with representative-point fallback")
     elif args.center_node_id is not None:
         stage_bar.set_postfix_str("resolve centre node by OSM node id")
         api = osm.OsmApi()
@@ -1920,7 +1975,7 @@ def main() -> None:
         _log(f"Roads file: {resolved_roads_path}")
     if args.compare_year is not None:
         _log(f"Saved comparison artifacts to {city_root_dir / f'comparison_{args.year}_vs_{args.compare_year}'}")
-    _log(f"Used relation {relation.get('id')} and centre node {centre_node.get('id')}")
+    _log(f"Territory resolved: relation={relation.get('id')}, centre_node={centre_node.get('id')}")
     if args.compare_year is None:
         _log("Class counts:")
         for class_name, count in summary["class_counts"].items():

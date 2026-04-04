@@ -302,7 +302,7 @@ def _save_previews(
         if part.empty:
             continue
         color = CLASS_COLORS.get(class_name, "#d1d5db")
-        part.plot(ax=ax, color=color, linewidth=0.05, edgecolor="#f8fafc", alpha=0.95, zorder=2)
+        part.plot(ax=ax, color=color, linewidth=0.05, edgecolor="#d1d5db", alpha=0.92, zorder=2)
         legend_handles.append(Patch(facecolor=color, edgecolor="none", label=class_name))
     if boundary_plot is not None and not boundary_plot.empty:
         boundary_plot.boundary.plot(ax=ax, color="#ffffff", linewidth=1.4, zorder=3)
@@ -336,8 +336,8 @@ def _save_previews(
         ax=ax,
         color=plot_gdf["multivariate_color"].astype(str),
         linewidth=0.05,
-        edgecolor="#f8fafc",
-        alpha=0.95,
+        edgecolor="#d1d5db",
+        alpha=0.92,
         zorder=2,
     )
     if boundary_plot is not None and not boundary_plot.empty:

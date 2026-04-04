@@ -455,6 +455,13 @@ PIPELINE2_GALLERY_FILENAMES = {
     "school": "33_lp_school_provision_unmet.png",
 }
 
+PIPELINE2_SELECTION_GALLERY_FILENAMES = {
+    "accessibility": "accessibility_block_selection_status.png",
+    "hospital": "lp_hospital_block_selection_status.png",
+    "polyclinic": "lp_polyclinic_block_selection_status.png",
+    "school": "lp_school_block_selection_status.png",
+}
+
 PIPELINE2_PLACEMENT_GALLERY_FILENAMES = {
     "hospital": {
         "status": "34_exact_hospital_placement_status.png",
@@ -637,6 +644,97 @@ def _plot_accessibility_previews(
         _log(f"Preview step: saved accessibility map: {access_map_path.name}")
 
     return out
+
+
+def _plot_block_selection_status(
+    blocks: gpd.GeoDataFrame,
+    out_path: Path,
+    *,
+    title: str,
+    status_column: str,
+    color_map: dict[str, str],
+    label_map: dict[str, str],
+    footer_lines: list[str] | None = None,
+    boundary: gpd.GeoDataFrame | None = None,
+) -> str | None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
+    from shapely.geometry import box
+
+    if blocks is None or blocks.empty or status_column not in blocks.columns:
+        return None
+
+    gdf = blocks.copy()
+    gdf = gdf[gdf.geometry.notna() & ~gdf.geometry.is_empty].copy()
+    if gdf.empty:
+        return None
+    if gdf.crs is not None:
+        try:
+            gdf = gdf.to_crs("EPSG:3857")
+        except Exception:
+            pass
+
+    boundary_plot = None
+    outer_bg = None
+    outer_bounds = None
+    if boundary is not None and not boundary.empty:
+        boundary_plot = boundary.copy()
+        boundary_plot = boundary_plot[boundary_plot.geometry.notna() & ~boundary_plot.geometry.is_empty].copy()
+        if not boundary_plot.empty and boundary_plot.crs is not None:
+            try:
+                boundary_plot = boundary_plot.to_crs("EPSG:3857")
+            except Exception:
+                pass
+        if boundary_plot is not None and not boundary_plot.empty:
+            minx, miny, maxx, maxy = boundary_plot.total_bounds
+            pad_x = max((maxx - minx) * 0.08, 250.0)
+            pad_y = max((maxy - miny) * 0.08, 250.0)
+            outer_bounds = (minx - pad_x, miny - pad_y, maxx + pad_x, maxy + pad_y)
+            outer_bg = gpd.GeoDataFrame({"geometry": [box(*outer_bounds)]}, crs=boundary_plot.crs)
+
+    fig, ax = plt.subplots(figsize=(12, 10))
+    fig.patch.set_facecolor("#6b6b6b")
+    ax.set_facecolor("#6b6b6b")
+    if outer_bg is not None and not outer_bg.empty:
+        outer_bg.plot(ax=ax, facecolor="#6b6b6b", edgecolor="none", alpha=1.0, zorder=-20)
+    if boundary_plot is not None and not boundary_plot.empty:
+        boundary_plot.plot(ax=ax, facecolor="#f7f0dd", edgecolor="none", linewidth=0.0, alpha=1.0, zorder=-10)
+
+    statuses = gdf[status_column].astype("string").fillna("unknown")
+    legend_handles = []
+    for status, color in color_map.items():
+        part = gdf[statuses == status]
+        if part.empty:
+            continue
+        part.plot(ax=ax, color=color, linewidth=0.05, edgecolor="#d1d5db", alpha=0.92, zorder=2)
+        legend_handles.append(Patch(facecolor=color, edgecolor="none", label=label_map.get(status, status)))
+
+    if boundary_plot is not None and not boundary_plot.empty:
+        boundary_plot.boundary.plot(ax=ax, color="#ffffff", linewidth=1.4, zorder=3)
+    if outer_bounds is not None:
+        ax.set_xlim(outer_bounds[0], outer_bounds[2])
+        ax.set_ylim(outer_bounds[1], outer_bounds[3])
+    ax.set_title(title, fontsize=16, fontweight="bold", color="#ffffff", pad=16)
+    if legend_handles:
+        ax.legend(
+            handles=legend_handles,
+            loc="lower left",
+            frameon=True,
+            facecolor="#f7f0dd",
+            edgecolor="#9ca3af",
+            fontsize=10,
+        )
+    if footer_lines:
+        fig.text(0.5, 0.02, "\n".join([line for line in footer_lines if line]), ha="center", va="bottom", fontsize=8, color="#374151")
+    ax.set_axis_off()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
+    plt.close(fig)
+    _log(f"Preview step: saved selection-status map: {out_path.name}")
+    return str(out_path)
 
 
 def _coerce_solver_blocks_geodataframe(
@@ -1232,23 +1330,23 @@ def main() -> None:
 
     # 2) Build a unified spatial-units layer for matrix + solver prep.
     if population_col is None:
-        units = quarters[["geometry"]].copy()
-        units["population"] = float(args.population_default)
+        units_all = quarters[["geometry"]].copy()
+        units_all["population"] = float(args.population_default)
     else:
-        units = quarters[[population_col, "geometry"]].copy()
-        units = units.rename(columns={population_col: "population"})
-        units["population"] = pd.to_numeric(units["population"], errors="coerce").fillna(0.0)
+        units_all = quarters[[population_col, "geometry"]].copy()
+        units_all = units_all.rename(columns={population_col: "population"})
+        units_all["population"] = pd.to_numeric(units_all["population"], errors="coerce").fillna(0.0)
     # Keep residential context for accessibility-map styling.
     for residential_col in ("residential", "living_area", "living_area_proxy"):
         if residential_col in quarters.columns:
-            units[residential_col] = quarters[residential_col].reindex(units.index)
+            units_all[residential_col] = quarters[residential_col].reindex(units_all.index)
 
     for cap_col, series in capacity_columns.items():
-        units[cap_col] = series.reindex(units.index).fillna(0.0).astype(float)
+        units_all[cap_col] = series.reindex(units_all.index).fillna(0.0).astype(float)
 
     # Strict rule: quarters without population are excluded from all pipeline_2 calculations.
-    units_mask = units["population"] > 0
-    units = units[units_mask].copy()
+    units_mask = units_all["population"] > 0
+    units = units_all[units_mask].copy()
     units["has_living_buildings"] = _derive_has_living_from_buildings(units, city_dir)
     units["unit_name"] = units.index.astype(str)
     legacy_demand_per_1000 = (
@@ -1261,6 +1359,24 @@ def main() -> None:
     _log(
         f"Active units for solver/matrix: {len(units)} (population>0 only); "
         f"units with is_living buildings={living_units}"
+    )
+
+    accessibility_selection = units_all[["geometry", "population"]].copy()
+    accessibility_selection["selection_status"] = np.where(
+        units_mask.reindex(units_all.index).fillna(False),
+        "included_population_positive",
+        "excluded_zero_population",
+    )
+    accessibility_selection["has_living_buildings"] = False
+    accessibility_selection.loc[units.index, "has_living_buildings"] = units["has_living_buildings"].fillna(False).astype(bool)
+    accessibility_selection["selection_detail"] = np.where(
+        accessibility_selection["selection_status"].eq("excluded_zero_population"),
+        "excluded_zero_population",
+        np.where(
+            accessibility_selection["has_living_buildings"],
+            "included_with_living_buildings",
+            "included_population_only",
+        ),
     )
 
     units_path = prepared_dir / "units_union.parquet"
@@ -1301,12 +1417,70 @@ def main() -> None:
     preview_outputs.update(
         _plot_accessibility_previews(units, matrix_union, preview_dir, boundary=boundary, use_cache=(not args.no_cache))
     )
+    accessibility_selection_png = _plot_block_selection_status(
+        accessibility_selection,
+        preview_dir / PIPELINE2_SELECTION_GALLERY_FILENAMES["accessibility"],
+        title="Accessibility Input Selection",
+        status_column="selection_detail",
+        color_map={
+            "included_with_living_buildings": "#2563eb",
+            "included_population_only": "#93c5fd",
+            "excluded_zero_population": "#d1d5db",
+        },
+        label_map={
+            "included_with_living_buildings": "included: population>0 and living buildings",
+            "included_population_only": "included: population>0 but no living buildings",
+            "excluded_zero_population": "excluded: zero population",
+        },
+        footer_lines=[
+            "matrix/accessibility rule: include only blocks with population > 0",
+            f"included={int(units_mask.sum())}, excluded={int((~units_mask).sum())}, included_with_living={int(living_units)}",
+        ],
+        boundary=boundary,
+    )
+    if accessibility_selection_png is not None:
+        preview_outputs["accessibility_block_selection_status"] = accessibility_selection_png
+
     for service in services:
+        cap_col = f"capacity_{service}"
+        service_selection = units[["geometry", "has_living_buildings"]].copy()
+        service_selection["capacity"] = pd.to_numeric(units.get(cap_col, 0.0), errors="coerce").fillna(0.0)
+        service_selection["selection_status"] = "excluded_no_living_no_capacity"
+        living_mask = service_selection["has_living_buildings"].fillna(False).astype(bool)
+        capacity_mask = service_selection["capacity"] > 0.0
+        service_selection.loc[living_mask & ~capacity_mask, "selection_status"] = "included_living_only"
+        service_selection.loc[~living_mask & capacity_mask, "selection_status"] = "included_capacity_only"
+        service_selection.loc[living_mask & capacity_mask, "selection_status"] = "included_living_and_capacity"
+        selection_preview_target = preview_dir / PIPELINE2_SELECTION_GALLERY_FILENAMES[service]
+        selection_preview_path = _plot_block_selection_status(
+            service_selection,
+            selection_preview_target,
+            title=f"{service}: LP Input Selection",
+            status_column="selection_status",
+            color_map={
+                "included_living_and_capacity": "#7c3aed",
+                "included_living_only": "#2563eb",
+                "included_capacity_only": "#f59e0b",
+                "excluded_no_living_no_capacity": "#d1d5db",
+            },
+            label_map={
+                "included_living_and_capacity": "included: living buildings and service capacity",
+                "included_living_only": "included: living buildings only",
+                "included_capacity_only": "included: service capacity only",
+                "excluded_no_living_no_capacity": "excluded: no living buildings and no service capacity",
+            },
+            footer_lines=[
+                "LP rule: include blocks with living buildings OR own service capacity",
+                f"living_only={int((living_mask & ~capacity_mask).sum())}, capacity_only={int((~living_mask & capacity_mask).sum())}, living_and_capacity={int((living_mask & capacity_mask).sum())}, excluded={int((~living_mask & ~capacity_mask).sum())}",
+            ],
+            boundary=boundary,
+        )
         if float(raw_stats.get(service, {}).get("capacity_total", 0.0)) <= 0.0:
             _warn(f"Service [{service}] has zero total capacity in territory; skipping.")
             service_outputs[service] = {
                 "skipped": True,
                 "reason": "zero_capacity_in_territory",
+                "selection_preview_png": selection_preview_path,
             }
             continue
 
@@ -1364,6 +1538,7 @@ def main() -> None:
                     "provision_links": str(links_path),
                     "blocks_count": int(cached_summary.get("blocks_count", 0)),
                     "lp_preview_png": lp_preview_path,
+                    "selection_preview_png": selection_preview_path,
                 }
                 if args.placement_exact:
                     try:
@@ -1383,7 +1558,6 @@ def main() -> None:
                         _warn(f"Exact placement [{service}] failed on cached inputs: {exc}")
                 continue
 
-        cap_col = f"capacity_{service}"
         blocks = units[["unit_name", "population", "demand_base", cap_col, "geometry", "has_living_buildings"]].copy()
         blocks = blocks.rename(columns={cap_col: "capacity"})
         service_demand_per_1000 = _service_demand_per_1000(service, args)
@@ -1397,6 +1571,7 @@ def main() -> None:
             service_outputs[service] = {
                 "skipped": True,
                 "reason": "no_living_or_service_blocks_after_filtering",
+                "selection_preview_png": selection_preview_path,
             }
             continue
 
@@ -1444,7 +1619,6 @@ def main() -> None:
                 quarters_ref=quarters,
                 boundary=boundary,
             )
-
         summary = {
             "service": service,
             "block_selection_policy": LP_BLOCK_SELECTION_POLICY,
@@ -1454,6 +1628,10 @@ def main() -> None:
             "blocks_count": int(len(solver_blocks)),
             "blocks_with_living": int(blocks["has_living_buildings"].sum()),
             "blocks_with_service_capacity": int((blocks["capacity"] > 0).sum()),
+            "blocks_living_only": int((living_mask & ~capacity_mask).sum()),
+            "blocks_capacity_only": int((~living_mask & capacity_mask).sum()),
+            "blocks_living_and_capacity": int((living_mask & capacity_mask).sum()),
+            "blocks_excluded_no_living_no_capacity": int((~living_mask & ~capacity_mask).sum()),
             "demand_total": float(solver_blocks["demand"].sum()),
             "capacity_total": float(solver_blocks["capacity"].sum()),
             "demand_within_total": float(solver_blocks["demand_within"].sum()),
@@ -1467,6 +1645,7 @@ def main() -> None:
                 "blocks_solver": str(blocks_path),
                 "adj_matrix": str(matrix_service_path),
                 "provision_links": str(links_path),
+                "selection_preview_png": selection_preview_path,
             },
         }
         summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1478,6 +1657,7 @@ def main() -> None:
             "provision_links": str(links_path),
             "blocks_count": int(len(solver_blocks)),
             "lp_preview_png": lp_preview_path,
+            "selection_preview_png": selection_preview_path,
         }
         if args.placement_exact:
             try:
@@ -1508,6 +1688,14 @@ def main() -> None:
         "demand_per_1000": float(args.demand_per_1000) if args.demand_per_1000 is not None else None,
         "units_union": str(units_path),
         "adj_matrix_union": str(matrix_path),
+        "accessibility_selection": {
+            "selection_policy": "population_positive_only",
+            "blocks_total_before_filter": int(len(units_all)),
+            "blocks_included": int(units_mask.sum()),
+            "blocks_excluded_zero_population": int((~units_mask).sum()),
+            "blocks_included_with_living_buildings": int(living_units),
+            "selection_preview_png": accessibility_selection_png,
+        },
         "previews_dir": str(preview_dir),
         "preview_outputs": preview_outputs,
         "raw_services": raw_stats,

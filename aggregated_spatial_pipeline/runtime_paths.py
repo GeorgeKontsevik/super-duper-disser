@@ -34,6 +34,11 @@ def floor_predictor_python(root: Path | None = None) -> Path:
     return _venv_python(root / "floor-predictor" / ".venv")
 
 
+def sm_imputation_python(root: Path | None = None) -> Path:
+    root = root or repo_root()
+    return _venv_python(root / "sm_imputation" / ".venv")
+
+
 def street_pattern_python(root: Path | None = None) -> Path:
     root = root or repo_root()
     return _venv_python(root / "segregation-by-design-experiments" / ".venv")

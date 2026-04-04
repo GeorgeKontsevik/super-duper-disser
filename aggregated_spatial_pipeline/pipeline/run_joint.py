@@ -28,6 +28,7 @@ from aggregated_spatial_pipeline.runtime_paths import (
     connectpt_python,
     floor_predictor_python,
     repo_root,
+    sm_imputation_python,
     street_pattern_python,
 )
 from aggregated_spatial_pipeline.spec import CONFIG_DIR, PipelineSpec
@@ -88,6 +89,12 @@ def _tqdm_kwargs(*, leave: bool = False) -> dict:
         "dynamic_ncols": True,
         "mininterval": 0.5,
     }
+
+
+def _repo_mplconfigdir(root: Path, name: str) -> str:
+    path = root / ".cache" / name
+    path.mkdir(parents=True, exist_ok=True)
+    return str(path)
 
 
 def _run_external_json_command(
@@ -254,6 +261,21 @@ def parse_args() -> argparse.Namespace:
             "Skip heavy storey model inference when share of buildings requiring prediction "
             "is below this threshold (in percent). Default: 2.0"
         ),
+    )
+    parser.add_argument(
+        "--sm-imputation",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Run space-matrix imputation on quarter-level built form after quarter clipping "
+            "(default: enabled). Use --no-sm-imputation to skip."
+        ),
+    )
+    parser.add_argument(
+        "--sm-imputation-clusters",
+        type=int,
+        default=11,
+        help="Requested number of clusters for quarter-level sm_imputation. Default: 11.",
     )
     parser.add_argument(
         "--simple-bad-is-living-restore",
@@ -587,6 +609,7 @@ def _ensure_street_grid_from_repo(
     min_total_road_length: float,
     relation_id: int | None = None,
     center_node_id: int | None = None,
+    boundary_path: Path | None = None,
     roads_path: Path | None = None,
 ) -> tuple[Path, Path, bool]:
     experiments_dir = repo_root / "segregation-by-design-experiments"
@@ -671,6 +694,8 @@ def _ensure_street_grid_from_repo(
         command.extend(["--center-node-id", str(int(center_node_id))])
     if relation_id is not None:
         command.extend(["--relation-id", str(int(relation_id))])
+    if boundary_path is not None and boundary_path.exists():
+        command.extend(["--boundary-path", str(boundary_path)])
     if no_cache:
         command.append("--no-cache")
 
@@ -879,10 +904,11 @@ def _resolve_analysis_buffer_from_osm(
         if relation_geom.is_empty:
             raise ValueError(f"Empty boundary for relation {relation_id}")
         if float(buffer_m) > 0.0:
-            relation_gdf = gpd.GeoDataFrame({"geometry": [relation_geom]}, crs=4326)
-            buffered = relation_gdf.to_crs(3857).buffer(float(buffer_m))
+            representative = relation_geom.representative_point()
+            point_gdf = gpd.GeoDataFrame({"geometry": [representative]}, crs=4326)
+            buffered = point_gdf.to_crs(3857).buffer(float(buffer_m))
             buffer_geom = gpd.GeoSeries(buffered, crs=3857).to_crs(4326).iloc[0]
-            territory_mode = "relation_buffer"
+            territory_mode = "place_center_buffer" if place else "relation_buffer"
         else:
             buffer_geom = relation_geom
             territory_mode = "relation"
@@ -1317,7 +1343,9 @@ def _save_collection_previews(
     buffered_quarters_path: Path,
     street_grid_path: Path,
     floor_enriched_path: Path,
+    sm_imputed_path: Path | None = None,
     floor_metrics: dict | None = None,
+    sm_imputation_metrics: dict | None = None,
     stage_label: str = "stage",
     clear_existing: bool = False,
 ) -> list[Path]:
@@ -1423,21 +1451,55 @@ def _save_collection_previews(
             return
         try:
             minx, miny, maxx, maxy = boundary_layer.total_bounds
-            pad_x = max((maxx - minx) * 0.08, 250.0)
-            pad_y = max((maxy - miny) * 0.08, 250.0)
+            span_x = maxx - minx
+            span_y = maxy - miny
+            span = max(span_x, span_y)
+            pad = max(span * 0.08, 250.0)
+            center_x = (minx + maxx) / 2.0
+            center_y = (miny + maxy) / 2.0
+            half_span = span / 2.0
+            frame_minx = center_x - half_span - pad
+            frame_maxx = center_x + half_span + pad
+            frame_miny = center_y - half_span - pad
+            frame_maxy = center_y + half_span + pad
             outer = gpd.GeoDataFrame(
-                {"geometry": [box(minx - pad_x, miny - pad_y, maxx + pad_x, maxy + pad_y)]},
+                {"geometry": [box(frame_minx, frame_miny, frame_maxx, frame_maxy)]},
                 crs=boundary_layer.crs,
             )
             outer.plot(ax=ax, facecolor="#6b6b6b", edgecolor="none", alpha=1.0, zorder=-20)
             boundary_layer.plot(ax=ax, facecolor="#f7f0dd", edgecolor="none", linewidth=0.0, alpha=1.0, zorder=-10)
             boundary_layer.boundary.plot(ax=ax, color="#ffffff", linewidth=1.4, zorder=20)
-            ax.set_xlim(minx - pad_x, maxx + pad_x)
-            ax.set_ylim(miny - pad_y, maxy + pad_y)
+            ax.set_xlim(frame_minx, frame_maxx)
+            ax.set_ylim(frame_miny, frame_maxy)
+            ax.set_aspect("equal", adjustable="box")
         except Exception:
             pass
         if title:
             ax.set_title(title, fontsize=19, fontweight="bold", color="#ffffff", pad=18)
+
+    def _clip_to_preview_boundary(
+        gdf: gpd.GeoDataFrame | None,
+        boundary_layer: gpd.GeoDataFrame | None,
+    ) -> gpd.GeoDataFrame | None:
+        if gdf is None or gdf.empty or boundary_layer is None or boundary_layer.empty:
+            return gdf
+        try:
+            work = gdf.copy()
+            boundary = boundary_layer.copy()
+            if work.crs is not None and boundary.crs is not None and work.crs != boundary.crs:
+                boundary = boundary.to_crs(work.crs)
+            geom_types = set(work.geom_type.astype(str))
+            if any("Point" in geom for geom in geom_types):
+                boundary_union = boundary.union_all()
+                clipped = work[work.geometry.within(boundary_union) | work.geometry.intersects(boundary_union)].copy()
+            else:
+                clipped = gpd.clip(work, boundary)
+            if clipped is None or clipped.empty:
+                return gdf
+            clipped = clipped[clipped.geometry.notna() & ~clipped.geometry.is_empty].copy()
+            return clipped if not clipped.empty else gdf
+        except Exception:
+            return gdf
 
     def _plot(
         output_path: Path,
@@ -1450,23 +1512,32 @@ def _save_collection_previews(
             return None
         # Normalize all layers to a single CRS for correct overlay/scale in previews.
         target_crs = "EPSG:3857"
+        boundary_norm = None
+        if buffer_gdf is not None and not buffer_gdf.empty:
+            try:
+                boundary_norm = buffer_gdf.to_crs(target_crs) if buffer_gdf.crs is not None else buffer_gdf
+            except Exception:
+                boundary_norm = buffer_gdf
         normalized_layers: list[tuple[gpd.GeoDataFrame, dict]] = []
         for gdf, style in valid_layers:
             try:
                 if gdf.crs is None:
-                    normalized_layers.append((gdf, style))
+                    normalized_layers.append((_clip_to_preview_boundary(gdf, boundary_norm), style))
                 else:
-                    normalized_layers.append((gdf.to_crs(target_crs), style))
+                    normalized_layers.append((_clip_to_preview_boundary(gdf.to_crs(target_crs), boundary_norm), style))
             except Exception:
-                normalized_layers.append((gdf, style))
+                normalized_layers.append((_clip_to_preview_boundary(gdf, boundary_norm), style))
         fig, ax = plt.subplots(figsize=(12, 12))
         legend_handles = []
         for gdf, style in normalized_layers:
             plot_style = dict(style)
             label = plot_style.pop("label", None)
+            geom_types = set(gdf.geom_type.astype(str))
+            if any("Polygon" in geom for geom in geom_types):
+                plot_style.setdefault("edgecolor", "#d1d5db")
+                plot_style.setdefault("linewidth", 0.05)
             gdf.plot(ax=ax, **plot_style)
             if label:
-                geom_types = set(gdf.geom_type.astype(str))
                 if any("Point" in g for g in geom_types):
                     marker_color = plot_style.get("color", "#111111")
                     legend_handles.append(
@@ -1478,12 +1549,6 @@ def _save_collection_previews(
                 else:
                     patch_color = plot_style.get("color", plot_style.get("facecolor", "#777777"))
                     legend_handles.append(Patch(facecolor=patch_color, edgecolor="none", label=label, alpha=0.6))
-        boundary_norm = None
-        if buffer_gdf is not None and not buffer_gdf.empty:
-            try:
-                boundary_norm = buffer_gdf.to_crs(target_crs) if buffer_gdf.crs is not None else buffer_gdf
-            except Exception:
-                boundary_norm = buffer_gdf
         _apply_preview_theme(fig, ax, boundary_norm, title=title)
         _legend_bottom(ax, legend_handles)
         ax.set_axis_off()
@@ -1509,7 +1574,12 @@ def _save_collection_previews(
         if "Point" in geom_type:
             style["markersize"] = markersize
         else:
-            style["linewidth"] = linewidth
+            if "Polygon" in geom_type:
+                style["linewidth"] = 0.05
+                style["edgecolor"] = "#d1d5db"
+                style["alpha"] = 0.92
+            else:
+                style["linewidth"] = linewidth
         return _plot(
             _preview_path(output_stem),
             layers=[
@@ -1518,6 +1588,16 @@ def _save_collection_previews(
             ],
             title=title,
         )
+
+    def _filter_accessibility_blocks(gdf: gpd.GeoDataFrame | None) -> gpd.GeoDataFrame | None:
+        if gdf is None or gdf.empty:
+            return gdf
+        for column in ("population_total", "population", "population_proxy", "pop_total", "residents", "res_population"):
+            if column in gdf.columns:
+                population = pd.to_numeric(gdf[column], errors="coerce").fillna(0.0)
+                selected = gdf[population > 0].copy()
+                return selected if not selected.empty else gdf
+        return gdf
 
     def _plot_status(
         output_stem: str,
@@ -1545,10 +1625,11 @@ def _save_collection_previews(
                 buffer_norm = buffer_gdf.to_crs(target_crs)
             except Exception:
                 buffer_norm = buffer_gdf
+        normalized_valid = [(_clip_to_preview_boundary(gdf, buffer_norm), color, label) for gdf, color, label in normalized_valid]
         fig, ax = plt.subplots(figsize=(12, 12))
         legend_handles = []
         for gdf, color, label in normalized_valid:
-            gdf.plot(ax=ax, color=color, alpha=0.45, linewidth=0.05)
+            gdf.plot(ax=ax, color=color, alpha=0.92, linewidth=0.05, edgecolor="#d1d5db")
             legend_handles.append(Patch(facecolor=color, edgecolor="none", label=label))
         if buffer_norm is not None and not buffer_norm.empty:
             _apply_preview_theme(fig, ax, buffer_norm, title=title)
@@ -1586,11 +1667,12 @@ def _save_collection_previews(
         "raw_collection": {"raw", "intermodal", "connectpt"},
         "floor_enrichment": {"floor"},
         "quarters_ready": {"quarters", "services"},
+        "sm_imputation_ready": {"sm_imputation"},
         "street_pattern_ready": {"street_pattern"},
     }
     enabled_groups = stage_groups.get(
         stage_label,
-        {"raw", "intermodal", "connectpt", "floor", "quarters", "services", "street_pattern"},
+        {"raw", "intermodal", "connectpt", "floor", "quarters", "services", "sm_imputation", "street_pattern"},
     )
 
     def _should_render(group: str) -> bool:
@@ -1641,19 +1723,20 @@ def _save_collection_previews(
     blocks_files = blocks_manifest.get("files", {})
     blocks_gdf = _read(Path(blocks_files.get("blocks", ""))) if blocks_files.get("blocks") else None
     quarters_gdf = _read(buffered_quarters_path)
+    active_quarters_gdf = _filter_accessibility_blocks(quarters_gdf)
     street_grid_gdf = _read(street_grid_path)
     if _should_render("quarters"):
         prep_png = _plot(
-            _preview_path("overview_prepared_quarters_and_street_grid"),
+            _preview_path("overview_prepared_blocks_and_street_grid"),
             layers=[
-                (quarters_gdf, {"color": "#93c5fd", "alpha": 0.35, "linewidth": 0.1, "label": "quarters (clipped)"}),
+                (active_quarters_gdf, {"color": "#93c5fd", "alpha": 0.45, "linewidth": 0.1, "label": "blocks (accessibility set)"}),
                 (street_grid_gdf, {"color": "#ef4444", "alpha": 0.25, "linewidth": 0.1, "label": "street grid"}),
                 (blocks_gdf, {"facecolor": "none", "edgecolor": "#1f2937", "linewidth": 0.2, "alpha": 0.7, "label": "blocks"}),
                 (buffer_gdf, {"facecolor": "none", "edgecolor": "#111111", "linewidth": 1.1, "label": "analysis buffer"}),
             ],
-            title="Prepared Quarters + Street Grid",
+            title="Prepared Blocks + Street Grid",
         )
-        _remember_preview(prep_png, "prepared quarters + street grid")
+        _remember_preview(prep_png, "prepared blocks + street grid")
 
     intermodal_manifest = _try_load_json(intermodal_manifest_path) if intermodal_manifest_path else None
     if _should_render("intermodal") and isinstance(intermodal_manifest, dict):
@@ -2007,9 +2090,91 @@ def _save_collection_previews(
     if _should_render("quarters"):
         for item in [
             _single_layer("blocksnet_blocks", blocks_gdf, color="#334155", linewidth=0.2, alpha=0.75, title="BlocksNet Blocks"),
-            _single_layer("quarters_clipped", quarters_gdf, color="#2563eb", linewidth=0.15, alpha=0.45, title="Quarters Clipped To Analysis Buffer"),
+            _single_layer("blocks_clipped", active_quarters_gdf, color="#2563eb", linewidth=0.15, alpha=0.55, title="Blocks Used For Accessibility"),
         ]:
             _remember_preview(item, item.stem if item is not None else "")
+
+    sm_imputed_gdf = _read(sm_imputed_path) if sm_imputed_path is not None else None
+    if _should_render("sm_imputation") and sm_imputed_gdf is not None and not sm_imputed_gdf.empty:
+        status_footer: list[str] = []
+        if isinstance(sm_imputation_metrics, dict):
+            status_footer.append(
+                "targeted="
+                f"{int(sm_imputation_metrics.get('target_rows', 0))}, "
+                f"imputed={int(sm_imputation_metrics.get('imputed_rows', 0))}, "
+                f"known={int(sm_imputation_metrics.get('known_rows', 0))}"
+            )
+            if sm_imputation_metrics.get("skipped"):
+                status_footer.append(f"skipped: {sm_imputation_metrics.get('skip_reason') or 'unknown'}")
+        status_png = _plot_status(
+            "sm_imputation_status",
+            title="SM Imputation Status",
+            groups=[
+                (sm_imputed_gdf[pd.to_numeric(sm_imputed_gdf.get("sm_imputation_used"), errors="coerce").fillna(0) >= 0.5], "#f59e0b", "imputed"),
+                (
+                    sm_imputed_gdf[
+                        (pd.to_numeric(sm_imputed_gdf.get("sm_imputation_target"), errors="coerce").fillna(0) >= 0.5)
+                        & (pd.to_numeric(sm_imputed_gdf.get("sm_imputation_used"), errors="coerce").fillna(0) < 0.5)
+                    ],
+                    "#dc2626",
+                    "targeted but unresolved",
+                ),
+                (
+                    sm_imputed_gdf[pd.to_numeric(sm_imputed_gdf.get("sm_imputation_target"), errors="coerce").fillna(0) < 0.5],
+                    "#93c5fd",
+                    "existing built form",
+                ),
+            ],
+            footer_lines=status_footer,
+        )
+        _remember_preview(status_png, "sm-imputation status")
+
+        for column_name, output_stem, title, cmap_name in [
+            ("sm_fsi_final", "sm_imputation_fsi_final", "SM Imputation Final FSI", "YlOrRd"),
+            ("sm_gsi_final", "sm_imputation_gsi_final", "SM Imputation Final GSI", "PuBuGn"),
+        ]:
+            if column_name not in sm_imputed_gdf.columns:
+                continue
+            plot_gdf = sm_imputed_gdf.copy()
+            plot_gdf[column_name] = pd.to_numeric(plot_gdf[column_name], errors="coerce")
+            plot_gdf = plot_gdf[plot_gdf[column_name].notna() & plot_gdf[column_name].gt(0)].copy()
+            if plot_gdf.empty:
+                continue
+            if plot_gdf.crs is not None:
+                try:
+                    plot_gdf = plot_gdf.to_crs("EPSG:3857")
+                except Exception:
+                    pass
+            buffer_plot = buffer_gdf
+            if buffer_plot is not None and not buffer_plot.empty and buffer_plot.crs is not None:
+                try:
+                    buffer_plot = buffer_plot.to_crs("EPSG:3857")
+                except Exception:
+                    pass
+            fig, ax = plt.subplots(figsize=(12, 12))
+            plot_gdf.plot(
+                ax=ax,
+                column=column_name,
+                cmap=cmap_name,
+                linewidth=0.08,
+                edgecolor="#f8fafc",
+                alpha=0.85,
+                legend=True,
+                legend_kwds={"shrink": 0.72, "label": column_name},
+            )
+            if buffer_plot is not None and not buffer_plot.empty:
+                buffer_plot.plot(ax=ax, facecolor="none", edgecolor="#111111", linewidth=1.1)
+            footer_lines = [
+                f"positive quarters: {int(plot_gdf[column_name].gt(0).sum())}",
+                f"median={float(plot_gdf[column_name].median()):.3f}",
+            ]
+            _apply_preview_theme(fig, ax, buffer_plot, title=title)
+            ax.set_axis_off()
+            _footer_text(fig, footer_lines)
+            out = _preview_path(output_stem)
+            fig.savefig(out, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
+            plt.close(fig)
+            _remember_preview(out, output_stem)
 
     # Land-use categorical legend preview.
     if _should_render("raw") and land_use_gdf is not None and not land_use_gdf.empty:
@@ -2435,7 +2600,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         _log(
             "ConnectPT stop policy: derive modality stops from intermodal iduedu graph first, "
             "aggregate them with connectpt logic, store raw->aggregated mapping, "
-            "and fall back to direct OSM stop collection only if derivation fails. "
+            "and use the intermodal-expanded stop layer as the only stop source. "
             "PT lines are still collected per modality; bus road geometry reuses the shared drive graph."
         )
         started = time.time()
@@ -2461,7 +2626,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
                 "--intermodal-nodes-path",
                 str(intermodal_nodes_path),
             ],
-            mplconfigdir="/tmp/mpl-connectpt",
+            mplconfigdir=_repo_mplconfigdir(repo_root, "mpl-connectpt"),
         )
         _log(f"ConnectPT bundle collected in {time.time() - started:.1f}s: {_log_name(connectpt_manifest_path)}")
         downloaded_in_this_run = True
@@ -2470,9 +2635,16 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
 
     floor_output_path = derived_dir / "buildings_floor_enriched.parquet"
     buffered_quarters_path = derived_dir / "quarters_clipped.parquet"
+    sm_imputed_quarters_path = derived_dir / "quarters_sm_imputed.parquet"
+    sm_imputation_summary_path = derived_dir / "sm_imputation_summary.json"
     clipped_street_grid_path = derived_dir / "street_grid_buffered.parquet"
 
-    def _refresh_collection_previews(stage_label: str, *, floor_metrics_for_preview: dict | None = None) -> None:
+    def _refresh_collection_previews(
+        stage_label: str,
+        *,
+        floor_metrics_for_preview: dict | None = None,
+        sm_imputation_metrics_for_preview: dict | None = None,
+    ) -> None:
         started = time.time()
         preview_paths = _save_collection_previews(
             data_root=data_root,
@@ -2484,7 +2656,9 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             buffered_quarters_path=buffered_quarters_path,
             street_grid_path=clipped_street_grid_path,
             floor_enriched_path=floor_output_path,
+            sm_imputed_path=sm_imputed_quarters_path,
             floor_metrics=floor_metrics_for_preview,
+            sm_imputation_metrics=sm_imputation_metrics_for_preview,
             stage_label=stage_label,
             clear_existing=(stage_label == "raw_collection"),
         )
@@ -2536,7 +2710,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             module="aggregated_spatial_pipeline.pipeline.run_floor_predictor_external",
             repo_root=repo_root,
             args=floor_args,
-            mplconfigdir="/tmp/mpl-floor-predictor",
+            mplconfigdir=_repo_mplconfigdir(repo_root, "mpl-floor-predictor"),
         )
         _log(
             "Floor-predictor done: "
@@ -2582,7 +2756,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
                 "--buildings-override-path",
                 str(floor_output_path),
             ],
-            mplconfigdir="/tmp/mpl-blocksnet",
+            mplconfigdir=_repo_mplconfigdir(repo_root, "mpl-blocksnet"),
         )
         _log(f"BlocksNet bundle built in {time.time() - started:.1f}s: {_log_name(blocks_manifest_path)}")
         downloaded_in_this_run = True
@@ -2595,19 +2769,75 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
     files = blocks_manifest.get("files", {})
     blocks_path = Path(files["blocks"]).resolve()
     if args.no_cache or not buffered_quarters_path.exists():
-        _log("Clipping blocks quarters to analysis buffer...")
+        _log("Clipping blocks to analysis buffer...")
         buffered_quarters_path, buffered_quarters_count = _build_buffered_quarters(
             blocks_path=blocks_path,
             buffer_path=buffer_path,
             output_path=buffered_quarters_path,
         )
-        _log(f"Clipped quarters ready: {buffered_quarters_count} features")
+        _log(f"Clipped blocks ready: {buffered_quarters_count} features")
     else:
         buffered_quarters_count = len(read_geodata(buffered_quarters_path))
-        _log(f"Using cached clipped quarters: {_log_name(buffered_quarters_path)} ({buffered_quarters_count} features)")
+        _log(f"Using cached clipped blocks: {_log_name(buffered_quarters_path)} ({buffered_quarters_count} features)")
 
-    _log("Refreshing previews after quarter preparation...")
+    _log("Refreshing previews after block preparation...")
     _refresh_collection_previews("quarters_ready", floor_metrics_for_preview=floor_metrics)
+
+    sm_imputation_metrics: dict
+    if not bool(args.sm_imputation):
+        _log("SM-imputation step is disabled for this run (--no-sm-imputation).")
+        sm_imputation_metrics = {
+            "output_path": str(sm_imputed_quarters_path),
+            "summary_path": str(sm_imputation_summary_path),
+            "skipped": True,
+            "skip_reason": "disabled_by_flag",
+        }
+    elif args.no_cache or not sm_imputed_quarters_path.exists() or not sm_imputation_summary_path.exists():
+        _log(
+            "SM-imputation step: estimating expected built form for blocks with missing/zero footprint or floor area "
+            "using block land-use shares and existing built-form patterns."
+        )
+        sm_imputation_metrics = _run_external_json_command(
+            python_path=sm_imputation_python(repo_root),
+            module="aggregated_spatial_pipeline.pipeline.run_sm_imputation_external",
+            repo_root=repo_root,
+            args=[
+                "--quarters-path",
+                str(buffered_quarters_path),
+                "--output-path",
+                str(sm_imputed_quarters_path),
+                "--summary-path",
+                str(sm_imputation_summary_path),
+                "--n-clusters",
+                str(int(args.sm_imputation_clusters)),
+            ],
+            mplconfigdir=_repo_mplconfigdir(repo_root, "mpl-sm-imputer"),
+        )
+        _log(
+            "SM-imputation done: "
+            f"target={int(sm_imputation_metrics.get('target_rows', 0))}, "
+            f"imputed={int(sm_imputation_metrics.get('imputed_rows', 0))}, "
+            f"known={int(sm_imputation_metrics.get('known_rows', 0))}"
+        )
+        downloaded_in_this_run = True
+        _log("Refreshing previews after sm-imputation...")
+        _refresh_collection_previews(
+            "sm_imputation_ready",
+            floor_metrics_for_preview=floor_metrics,
+            sm_imputation_metrics_for_preview=sm_imputation_metrics,
+        )
+    else:
+        _log(f"Using cached sm-imputation output: {_log_name(sm_imputed_quarters_path)}")
+        sm_imputation_metrics = _try_load_json(sm_imputation_summary_path) or {
+            "output_path": str(sm_imputed_quarters_path),
+            "summary_path": str(sm_imputation_summary_path),
+        }
+        _log("Refreshing previews after cached sm-imputation...")
+        _refresh_collection_previews(
+            "sm_imputation_ready",
+            floor_metrics_for_preview=floor_metrics,
+            sm_imputation_metrics_for_preview=sm_imputation_metrics,
+        )
 
     _log("Classification step: building street-pattern grid for the same territory policy.")
     street_relation_id = detected_relation_id
@@ -2638,6 +2868,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         min_total_road_length=float(args.street_min_total_road_length),
         relation_id=street_relation_id,
         center_node_id=street_center_node_id,
+        boundary_path=collection_boundary_path,
         roads_path=shared_roads_path,
     )
     if args.no_cache or street_rebuilt or not clipped_street_grid_path.exists():
@@ -2688,6 +2919,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         "climate_grid_step_m": args.climate_grid_step_m,
         "files": {
             "quarters": str(buffered_quarters_path),
+            "quarters_sm_imputed": str(sm_imputed_quarters_path),
             "cities": str(buffer_path),
             "cities_collection": str(collection_boundary_path),
             "blocks_processed": str(blocks_path),
@@ -2705,8 +2937,10 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             "street_pattern_summary": str(street_summary_path),
             "street_pattern_buffer": str(collection_boundary_path),
             "shared_drive_roads": str(shared_roads_path),
+            "sm_imputation_summary": str(sm_imputation_summary_path),
         },
         "floor_predictor": floor_metrics,
+        "sm_imputation": sm_imputation_metrics,
     }
     derived_manifest_path.write_text(json.dumps(derived_manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
