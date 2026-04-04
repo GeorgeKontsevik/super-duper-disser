@@ -19,6 +19,7 @@ from shapely.geometry import Point
 from torch_geometric.loader import DataLoader
 
 from aggregated_spatial_pipeline.geodata_io import prepare_geodata_for_parquet
+from aggregated_spatial_pipeline.runtime_config import configure_logger, repo_mplconfigdir
 from aggregated_spatial_pipeline.visualization import apply_preview_canvas, normalize_preview_gdf, save_preview_figure
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -33,12 +34,6 @@ from connectpt.routes_generator.utils import get_eval_cfg  # noqa: E402
 import connectpt.routes_generator.utils as lrnu  # noqa: E402
 
 
-LOG_FORMAT = (
-    "<green>{time:DD MMM HH:mm}</green> | "
-    "<level>{level: <7}</level> | "
-    "<magenta>{extra[tag]}</magenta> "
-    "{message}"
-)
 LAND_USE_SHARE_COLUMNS = [
     "residential",
     "business",
@@ -59,9 +54,7 @@ POPULATION_COLUMNS = [
 
 
 def _configure_logging() -> None:
-    logger.remove()
-    logger.configure(patcher=lambda record: record["extra"].setdefault("tag", "[connectpt-routes]"))
-    logger.add(sys.stderr, level="INFO", format=LOG_FORMAT, colorize=sys.stderr.isatty())
+    configure_logger("[connectpt-routes]")
 
 
 def _log(message: str) -> None:
@@ -414,7 +407,7 @@ def _recompute_accessibility_with_root_env(
     ]
     env = dict(os.environ)
     env["PYTHONPATH"] = str(ROOT)
-    env["MPLCONFIGDIR"] = str(ROOT / ".cache" / "mpl-connectpt-access")
+    env["MPLCONFIGDIR"] = repo_mplconfigdir("mpl-connectpt-access", root=ROOT)
     subprocess.run(command, check=True, env=env, cwd=str(ROOT))
 
     local_preview_path = preview_output_dir / "30_accessibility_mean_time_map.png"

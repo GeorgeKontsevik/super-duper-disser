@@ -20,6 +20,7 @@ import pandas as pd
 from loguru import logger
 
 from aggregated_spatial_pipeline.geodata_io import prepare_geodata_for_parquet, read_geodata
+from aggregated_spatial_pipeline.runtime_config import configure_logger, ensure_repo_mplconfigdir
 from aggregated_spatial_pipeline.visualization import (
     apply_preview_canvas,
     footer_text,
@@ -35,7 +36,7 @@ SUPPORTED_SERVICES = ("hospital", "polyclinic", "school")
 LP_BLOCK_SELECTION_POLICY = "has_living_buildings_or_service_capacity"
 
 # Keep matplotlib/tqdm ecosystem caches in writable workspace path.
-os.environ.setdefault("MPLCONFIGDIR", "/tmp/mpl-asp-pipeline2")
+ensure_repo_mplconfigdir("mpl-asp-pipeline2")
 
 @dataclass(frozen=True)
 class ServiceSpec:
@@ -211,14 +212,6 @@ DEFAULT_MIN_NEW_CAPACITY_BY_SERVICE = {
     "polyclinic": 50.0,
     "school": 1500.0,
 }
-LOG_FORMAT = (
-    "<green>{time:DD MMM HH:mm}</green> | "
-    "<level>{level: <7}</level> | "
-    "<magenta>{extra[tag]}</magenta> "
-    "{message}"
-)
-
-
 def _log_name(path: Path | str | None) -> str:
     if path is None:
         return "none"
@@ -237,14 +230,7 @@ def _warn(message: str) -> None:
 
 
 def _configure_logging() -> None:
-    logger.remove()
-    logger.configure(patcher=lambda record: record["extra"].setdefault("tag", "[log]"))
-    logger.add(
-        sys.stderr,
-        level="INFO",
-        format=LOG_FORMAT,
-        colorize=True,
-    )
+    configure_logger("[pipeline_2_prepare]")
 
 
 def _configure_osmnx(args: argparse.Namespace) -> None:

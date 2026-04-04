@@ -12,6 +12,7 @@ import pandas as pd
 from loguru import logger
 
 from aggregated_spatial_pipeline.geodata_io import prepare_geodata_for_parquet, read_geodata
+from aggregated_spatial_pipeline.runtime_config import configure_logger
 from aggregated_spatial_pipeline.visualization import (
     apply_preview_canvas,
     clip_to_preview_boundary,
@@ -22,12 +23,6 @@ from aggregated_spatial_pipeline.visualization import (
 )
 
 
-LOG_FORMAT = (
-    "<green>{time:DD MMM HH:mm}</green> | "
-    "<level>{level: <7}</level> | "
-    "<magenta>{extra[tag]}</magenta> "
-    "{message}"
-)
 ADDITIONAL_COLUMNS = [
     "residential",
     "business",
@@ -48,31 +43,31 @@ def _positive_quantile(series: pd.Series, q: float) -> float | None:
     return float(clean.quantile(q))
 
 
+def _slugify(value: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "_", value.strip().lower()).strip("_")
+    return slug or "city"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run space-matrix imputation in dedicated sm_imputation runtime.")
+    parser.add_argument("--place")
+    parser.add_argument("--joint-input-dir")
     parser.add_argument("--blocks-path", dest="blocks_path")
     parser.add_argument("--quarters-path", dest="blocks_path_legacy")
-    parser.add_argument("--output-path", required=True)
-    parser.add_argument("--summary-path", required=True)
+    parser.add_argument("--output-path")
+    parser.add_argument("--summary-path")
     parser.add_argument("--boundary-path")
     parser.add_argument("--preview-dir")
     parser.add_argument("--n-clusters", type=int, default=11)
     args = parser.parse_args()
     args.blocks_path = args.blocks_path or args.blocks_path_legacy
-    if not args.blocks_path:
-        parser.error("one of --blocks-path or --quarters-path is required")
+    if not any([args.place, args.joint_input_dir, args.blocks_path]):
+        parser.error("Provide --place or --joint-input-dir or explicit --blocks-path/--output-path/--summary-path.")
     return args
 
 
 def _configure_logging() -> None:
-    logger.remove()
-    logger.configure(extra={"tag": "[sm-imputer]"})
-    logger.add(
-        sys.stderr,
-        level="INFO",
-        format=LOG_FORMAT,
-        colorize=sys.stderr.isatty(),
-    )
+    configure_logger("[sm-imputer]")
 
 
 def _compute_site_area_m2(blocks: gpd.GeoDataFrame) -> pd.Series:
@@ -309,6 +304,46 @@ def _read_optional_geodata(path: Path | None) -> gpd.GeoDataFrame | None:
     if gdf is None or gdf.empty:
         return None
     return gdf
+
+
+def _resolve_city_dir(place: str | None, joint_input_dir: str | None) -> Path | None:
+    if joint_input_dir:
+        return Path(joint_input_dir).resolve()
+    if place:
+        return (Path(__file__).resolve().parents[2] / "aggregated_spatial_pipeline" / "outputs" / "joint_inputs" / _slugify(place)).resolve()
+    return None
+
+
+def _resolve_run_paths(args: argparse.Namespace) -> tuple[Path, Path, Path, Path | None, str | None]:
+    city_bundle = _resolve_city_dir(args.place, args.joint_input_dir)
+    if args.blocks_path:
+        blocks_path = Path(args.blocks_path).resolve()
+    elif city_bundle is not None:
+        blocks_path = (city_bundle / "derived_layers" / "quarters_clipped.parquet").resolve()
+    else:
+        raise ValueError("Could not resolve blocks path.")
+
+    if args.output_path:
+        output_path = Path(args.output_path).resolve()
+    elif city_bundle is not None:
+        output_path = (city_bundle / "derived_layers" / "quarters_sm_imputed.parquet").resolve()
+    else:
+        raise ValueError("Could not resolve output path.")
+
+    if args.summary_path:
+        summary_path = Path(args.summary_path).resolve()
+    elif city_bundle is not None:
+        summary_path = (city_bundle / "derived_layers" / "sm_imputation_summary.json").resolve()
+    else:
+        raise ValueError("Could not resolve summary path.")
+
+    preview_dir = args.preview_dir
+    boundary_path = args.boundary_path
+    if boundary_path is None and city_bundle is not None:
+        candidate = city_bundle / "analysis_territory" / "buffer.parquet"
+        if candidate.exists():
+            boundary_path = str(candidate)
+    return blocks_path, output_path, summary_path, city_bundle, preview_dir or None
 
 
 def _derive_city_bundle(output_path: Path) -> Path | None:
@@ -569,18 +604,16 @@ def main() -> None:
     _configure_logging()
     os.environ.setdefault("LOKY_MAX_CPU_COUNT", "1")
     args = parse_args()
+    blocks_path, output_path, summary_path, city_bundle, resolved_preview_dir = _resolve_run_paths(args)
     logger.info(
         "Starting dedicated sm-imputation: blocks={}, output={}",
-        Path(args.blocks_path).name,
-        Path(args.output_path).name,
+        blocks_path.name,
+        output_path.name,
     )
 
     from sm_imputation.examples.imputers.sm import SmImputer
 
-    blocks_path = Path(args.blocks_path).resolve()
-    output_path = Path(args.output_path).resolve()
-    summary_path = Path(args.summary_path).resolve()
-    preview_dir, stage_dir = _resolve_preview_dir(output_path, args.preview_dir)
+    preview_dir, stage_dir = _resolve_preview_dir(output_path, resolved_preview_dir)
     boundary_path = _resolve_boundary_path(output_path, args.boundary_path)
 
     blocks = read_geodata(blocks_path)

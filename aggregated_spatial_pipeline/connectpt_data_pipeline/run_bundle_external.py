@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -10,6 +11,7 @@ from loguru import logger
 
 from aggregated_spatial_pipeline.geodata_io import read_geodata
 from aggregated_spatial_pipeline.connectpt_data_pipeline.pipeline import build_connectpt_osm_bundle, parse_modalities
+from aggregated_spatial_pipeline.runtime_config import configure_logger
 from aggregated_spatial_pipeline.visualization import (
     apply_preview_canvas,
     legend_bottom,
@@ -18,20 +20,16 @@ from aggregated_spatial_pipeline.visualization import (
 )
 
 
-LOG_FORMAT = (
-    "<green>{time:DD MMM HH:mm}</green> | "
-    "<level>{level: <7}</level> | "
-    "<magenta>{extra[tag]}</magenta> "
-    "{message}"
-)
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Build connectpt bundle in dedicated connectpt runtime.")
-    parser.add_argument("--place", required=True)
+    parser.add_argument("--place")
+    parser.add_argument("--joint-input-dir")
     parser.add_argument("--modalities", nargs="+", required=True)
-    parser.add_argument("--output-dir", required=True)
-    parser.add_argument("--speed-kmh", type=float, required=True)
+    parser.add_argument("--output-dir")
+    parser.add_argument("--speed-kmh", type=float, default=20.0)
     parser.add_argument("--boundary-path")
     parser.add_argument("--drive-roads-path")
     parser.add_argument("--buildings-path")
@@ -39,15 +37,13 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _slugify(value: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "_", value.strip().lower()).strip("_")
+    return slug or "city"
+
+
 def _configure_logging() -> None:
-    logger.remove()
-    logger.configure(extra={"tag": "[connectpt]"})
-    logger.add(
-        sys.stderr,
-        level="INFO",
-        format=LOG_FORMAT,
-        colorize=sys.stderr.isatty(),
-    )
+    configure_logger("[connectpt]")
 
 
 def _derive_preview_dirs(output_dir: Path) -> tuple[Path, Path | None]:
@@ -57,6 +53,50 @@ def _derive_preview_dirs(output_dir: Path) -> tuple[Path, Path | None]:
         candidate = output_dir.parent / "preview_png" / "all_together"
         shared_dir = candidate
     return local_dir, shared_dir
+
+
+def _resolve_city_dir(args: argparse.Namespace) -> Path | None:
+    if args.joint_input_dir:
+        return Path(args.joint_input_dir).resolve()
+    if args.place:
+        return (ROOT / "aggregated_spatial_pipeline" / "outputs" / "joint_inputs" / _slugify(str(args.place))).resolve()
+    return None
+
+
+def _resolve_run_args(args: argparse.Namespace) -> dict:
+    city_dir = _resolve_city_dir(args)
+    place = str(args.place) if args.place else (city_dir.name if city_dir is not None else None)
+    if not place:
+        raise ValueError("Provide --place or --joint-input-dir.")
+    resolved = {
+        "place": place,
+        "output_dir": args.output_dir or (str((city_dir / "connectpt_osm").resolve()) if city_dir is not None else None),
+        "speed_kmh": float(args.speed_kmh),
+        "boundary_path": args.boundary_path,
+        "drive_roads_path": args.drive_roads_path,
+        "buildings_path": args.buildings_path,
+        "intermodal_nodes_path": args.intermodal_nodes_path,
+    }
+    if city_dir is not None:
+        if resolved["boundary_path"] is None:
+            candidate = city_dir / "analysis_territory" / "buffer_collection.parquet"
+            if candidate.exists():
+                resolved["boundary_path"] = str(candidate.resolve())
+        if resolved["drive_roads_path"] is None:
+            candidate = city_dir / "derived_layers" / "roads_drive_osmnx.parquet"
+            if candidate.exists():
+                resolved["drive_roads_path"] = str(candidate.resolve())
+        if resolved["buildings_path"] is None:
+            candidate = city_dir / "derived_layers" / "buildings_floor_enriched.parquet"
+            if candidate.exists():
+                resolved["buildings_path"] = str(candidate.resolve())
+        if resolved["intermodal_nodes_path"] is None:
+            candidate = city_dir / "intermodal_graph_iduedu" / "graph_nodes.parquet"
+            if candidate.exists():
+                resolved["intermodal_nodes_path"] = str(candidate.resolve())
+    if resolved["output_dir"] is None:
+        raise ValueError("Could not resolve connectpt output dir. Provide --joint-input-dir or explicit --output-dir.")
+    return resolved
 
 
 def _save_connectpt_previews(manifest: dict, output_dir: Path) -> dict[str, str]:
@@ -147,17 +187,18 @@ def _save_connectpt_previews(manifest: dict, output_dir: Path) -> dict[str, str]
 def main() -> None:
     _configure_logging()
     args = parse_args()
+    resolved = _resolve_run_args(args)
     manifest = build_connectpt_osm_bundle(
-        place=args.place,
+        place=resolved["place"],
         modalities=parse_modalities(args.modalities),
-        output_dir=args.output_dir,
-        speed_kmh=float(args.speed_kmh),
-        boundary_path=args.boundary_path,
-        drive_roads_path=args.drive_roads_path,
-        buildings_path=args.buildings_path,
-        intermodal_nodes_path=args.intermodal_nodes_path,
+        output_dir=resolved["output_dir"],
+        speed_kmh=float(resolved["speed_kmh"]),
+        boundary_path=resolved["boundary_path"],
+        drive_roads_path=resolved["drive_roads_path"],
+        buildings_path=resolved["buildings_path"],
+        intermodal_nodes_path=resolved["intermodal_nodes_path"],
     )
-    output_dir = Path(args.output_dir).resolve()
+    output_dir = Path(resolved["output_dir"]).resolve()
     preview_outputs = _save_connectpt_previews(manifest, output_dir)
     if preview_outputs:
         manifest = {**manifest, "preview_outputs": preview_outputs}

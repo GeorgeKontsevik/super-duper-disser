@@ -12,14 +12,7 @@ from loguru import logger
 from blocksnet.relations import calculate_accessibility_matrix
 
 from aggregated_spatial_pipeline.pipeline.run_pipeline2_prepare_solver_inputs import _plot_accessibility_previews
-
-
-LOG_FORMAT = (
-    "<green>{time:DD MMM HH:mm}</green> | "
-    "<level>{level: <7}</level> | "
-    "<magenta>{extra[tag]}</magenta> "
-    "{message}"
-)
+from aggregated_spatial_pipeline.runtime_config import configure_logger
 
 
 def parse_args() -> argparse.Namespace:
@@ -33,9 +26,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def _configure_logging() -> None:
-    logger.remove()
-    logger.configure(patcher=lambda record: record["extra"].setdefault("tag", "[log]"))
-    logger.add(sys.stderr, level="INFO", format=LOG_FORMAT, colorize=True)
+    configure_logger("[connectpt-access]")
 
 
 def _log(message: str) -> None:

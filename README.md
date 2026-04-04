@@ -88,6 +88,130 @@ If a preview changes visually, check the rendered PNGs in:
 - `.../preview_png/all_together/`
 - `.../preview_png/stages/<stage>/`
 
+## Shared Runtime Config
+
+One shared runtime module now owns the default logger format and workspace-local cache settings:
+
+- [aggregated_spatial_pipeline/runtime_config.py](/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/runtime_config.py)
+
+Use it instead of per-file `LOG_FORMAT`, ad-hoc `logger.remove()` setup, or `/tmp`-based `MPLCONFIGDIR` defaults.
+
+Core helpers:
+- `configure_logger(...)`
+- `repo_cache_dir(...)`
+- `repo_mplconfigdir(...)`
+- `ensure_repo_mplconfigdir(...)`
+
+## Standalone Steps
+
+Each major step can now be invoked directly for a city bundle or territory.
+
+Phase 1 only:
+
+```bash
+cd /Users/gk/Code/super-duper-disser
+PYTHONPATH=/Users/gk/Code/super-duper-disser \
+.venv/bin/python -m aggregated_spatial_pipeline.pipeline.run_joint \
+  --place "Tartu, Estonia" \
+  --buffer-m 1000 \
+  --street-grid-step 300 \
+  --collect-only \
+  --no-cache
+```
+
+Floor enrichment only:
+
+```bash
+cd /Users/gk/Code/super-duper-disser
+PYTHONPATH=/Users/gk/Code/super-duper-disser \
+floor-predictor/.venv/bin/python -m aggregated_spatial_pipeline.pipeline.run_floor_predictor_external \
+  --place "Tartu, Estonia"
+```
+
+Intermodal graph only:
+
+```bash
+cd /Users/gk/Code/super-duper-disser
+PYTHONPATH=/Users/gk/Code/super-duper-disser \
+iduedu-fork/.venv/bin/python -m aggregated_spatial_pipeline.intermodal_graph_data_pipeline.run_bundle_external \
+  --place "Tartu, Estonia"
+```
+
+BlocksNet bundle only:
+
+```bash
+cd /Users/gk/Code/super-duper-disser
+PYTHONPATH=/Users/gk/Code/super-duper-disser \
+blocksnet/.venv/bin/python -m aggregated_spatial_pipeline.blocksnet_data_pipeline.run_bundle_external \
+  --place "Tartu, Estonia"
+```
+
+ConnectPT bundle only:
+
+```bash
+cd /Users/gk/Code/super-duper-disser
+PYTHONPATH=/Users/gk/Code/super-duper-disser \
+connectpt/.venv/bin/python -m aggregated_spatial_pipeline.connectpt_data_pipeline.run_bundle_external \
+  --place "Tartu, Estonia" \
+  --modalities bus tram trolleybus subway
+```
+
+SM imputation only:
+
+```bash
+cd /Users/gk/Code/super-duper-disser
+PYTHONPATH=/Users/gk/Code/super-duper-disser \
+sm_imputation/.venv/bin/python -m aggregated_spatial_pipeline.pipeline.run_sm_imputation_external \
+  --place "Tartu, Estonia"
+```
+
+Solver inputs and accessibility:
+
+```bash
+cd /Users/gk/Code/super-duper-disser
+PYTHONPATH=/Users/gk/Code/super-duper-disser \
+blocksnet/.venv/bin/python -m aggregated_spatial_pipeline.pipeline.run_pipeline2_prepare_solver_inputs \
+  --place tartu_estonia \
+  --placement-exact
+```
+
+Street-pattern transfer to blocks:
+
+```bash
+cd /Users/gk/Code/super-duper-disser
+PYTHONPATH=/Users/gk/Code/super-duper-disser \
+.venv/bin/python -m aggregated_spatial_pipeline.pipeline.run_pipeline3_street_pattern_to_quarters \
+  --place tartu_estonia
+```
+
+ConnectPT route generation on existing city bundle:
+
+```bash
+cd /Users/gk/Code/super-duper-disser
+PYTHONPATH=/Users/gk/Code/super-duper-disser \
+connectpt/.venv/bin/python -m aggregated_spatial_pipeline.connectpt_data_pipeline.run_route_generator_external \
+  --place "Tartu, Estonia" \
+  --modality bus \
+  --replace-in-intermodal \
+  --recompute-accessibility
+```
+
+Batch phase 1 for many cities:
+
+```bash
+cd /Users/gk/Code/super-duper-disser
+PYTHONPATH=/Users/gk/Code/super-duper-disser \
+.venv/bin/python -m aggregated_spatial_pipeline.pipeline.run_phase1_batch \
+  --regions europe usa australia_oceania africa asia \
+  --limit-per-region 25 \
+  --buffer-m 1000 \
+  --street-grid-step 300 \
+  --no-cache
+```
+
+Regional city lists live here:
+- [aggregated_spatial_pipeline/config/phase1_city_batches.json](/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/config/phase1_city_batches.json)
+
 ## Temporary Heuristics And Fallbacks
 
 The root repo contains a few explicitly temporary guardrails. If you add a new workaround,

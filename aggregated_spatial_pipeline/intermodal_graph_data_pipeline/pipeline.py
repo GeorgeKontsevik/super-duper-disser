@@ -7,6 +7,7 @@ import subprocess
 from pathlib import Path
 
 from aggregated_spatial_pipeline.runtime_paths import intermodal_python
+from aggregated_spatial_pipeline.runtime_config import repo_mplconfigdir
 
 
 def slugify_place(place: str) -> str:
@@ -53,7 +54,7 @@ def build_intermodal_graph_bundle(
     env["PYTHONPATH"] = (
         f"{repo_root_path}{os.pathsep}{env['PYTHONPATH']}" if env.get("PYTHONPATH") else str(repo_root_path)
     )
-    env.setdefault("MPLCONFIGDIR", "/tmp/mpl-iduedu121")
+    env.setdefault("MPLCONFIGDIR", repo_mplconfigdir("mpl-iduedu121", root=repo_root_path))
     subprocess.run(command, check=True, cwd=str(repo_root_path), env=env)
 
     manifest_path = output_path / "manifest.json"

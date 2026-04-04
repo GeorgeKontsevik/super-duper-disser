@@ -12,12 +12,7 @@ import iduedu
 from loguru import logger
 
 from aggregated_spatial_pipeline.geodata_io import prepare_geodata_for_parquet, read_geodata
-LOG_FORMAT = (
-    "<green>{time:DD MMM HH:mm}</green> | "
-    "<level>{level: <7}</level> | "
-    "<magenta>{extra[tag]}</magenta> "
-    "{message}"
-)
+from aggregated_spatial_pipeline.runtime_config import LOG_FORMAT, configure_logger
 
 CONNECTPT_COMPAT_EXTRA_STOP_TAGS = {
     "bus": [{"highway": "bus_stop"}],
@@ -64,25 +59,11 @@ def parse_args() -> argparse.Namespace:
 
 
 def _configure_logging() -> None:
-    logger.remove()
-    logger.configure(patcher=lambda record: record["extra"].setdefault("tag", "[log]"))
-    logger.add(
-        sys.stderr,
-        level="INFO",
-        format=LOG_FORMAT,
-        colorize=True,
-    )
+    configure_logger("[intermodal-builder]")
     try:
-        iduedu.config.logger.configure(patcher=lambda record: record["extra"].setdefault("tag", "[iduedu]"))
         iduedu.config.logger.remove()
-        iduedu.config.logger.add(
-            sys.stderr,
-            level="INFO",
-            format=LOG_FORMAT,
-            colorize=True,
-            backtrace=True,
-            diagnose=False,
-        )
+        iduedu.config.logger.configure(patcher=lambda record: record["extra"].setdefault("tag", "[iduedu]"))
+        iduedu.config.logger.add(sys.stderr, level="INFO", format=LOG_FORMAT, colorize=sys.stderr.isatty(), backtrace=True, diagnose=False)
         iduedu.config.set_enable_tqdm(False)
     except Exception:
         pass

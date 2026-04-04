@@ -31,6 +31,7 @@ from aggregated_spatial_pipeline.runtime_paths import (
     sm_imputation_python,
     street_pattern_python,
 )
+from aggregated_spatial_pipeline.runtime_config import configure_logger, repo_mplconfigdir
 from aggregated_spatial_pipeline.spec import CONFIG_DIR, PipelineSpec
 from aggregated_spatial_pipeline.visualization import (
     apply_preview_canvas,
@@ -49,12 +50,6 @@ from .scenarios import run_scenarios
 JOINT_SCENARIO_ID = "joint_optimization"
 ORIGINAL_LIVING_BUILDING_TAGS = {"residential", "house", "apartments", "detached", "terrace", "dormitory"}
 TQDM_DISABLE = not sys.stderr.isatty()
-LOG_FORMAT = (
-    "<green>{time:DD MMM HH:mm}</green> | "
-    "<level>{level: <7}</level> | "
-    "<magenta>{extra[tag]}</magenta> "
-    "{message}"
-)
 
 
 @dataclass(frozen=True)
@@ -100,9 +95,7 @@ def _tqdm_kwargs(*, leave: bool = False) -> dict:
 
 
 def _repo_mplconfigdir(root: Path, name: str) -> str:
-    path = root / ".cache" / name
-    path.mkdir(parents=True, exist_ok=True)
-    return str(path)
+    return repo_mplconfigdir(name, root=root)
 
 
 def _run_external_json_command(
@@ -431,14 +424,7 @@ def _log_data_sources_summary(source_details: dict[str, dict]) -> None:
 
 
 def _configure_logging() -> None:
-    logger.remove()
-    logger.configure(patcher=lambda record: record["extra"].setdefault("tag", "[log]"))
-    logger.add(
-        sys.stderr,
-        level="INFO",
-        format=LOG_FORMAT,
-        colorize=True,
-    )
+    configure_logger("[joint-pipeline]")
 
 
 def _clear_terminal() -> None:

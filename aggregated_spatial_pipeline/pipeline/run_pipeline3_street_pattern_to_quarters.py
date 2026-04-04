@@ -12,6 +12,7 @@ import pandas as pd
 from loguru import logger
 
 from aggregated_spatial_pipeline.geodata_io import prepare_geodata_for_parquet, read_geodata
+from aggregated_spatial_pipeline.runtime_config import configure_logger, ensure_repo_mplconfigdir
 from aggregated_spatial_pipeline.visualization import (
     apply_preview_canvas,
     legend_bottom,
@@ -23,7 +24,7 @@ from .crosswalks import build_crosswalk
 from .transfers import apply_transfer_rule
 
 
-os.environ.setdefault("MPLCONFIGDIR", "/tmp/mpl-asp-pipeline3")
+ensure_repo_mplconfigdir("mpl-asp-pipeline3")
 
 CLASS_LABELS = {
     "prob_0": "Loops & Lollipops",
@@ -43,14 +44,6 @@ CLASS_COLORS = {
     "Broken Grid": "#dc2626",
     "unknown": "#d1d5db",
 }
-LOG_FORMAT = (
-    "<green>{time:DD MMM HH:mm}</green> | "
-    "<level>{level: <7}</level> | "
-    "<magenta>{extra[tag]}</magenta> "
-    "{message}"
-)
-
-
 def _log_name(path: Path | str | None) -> str:
     if path is None:
         return "none"
@@ -134,14 +127,7 @@ def _warn(message: str) -> None:
 
 
 def _configure_logging() -> None:
-    logger.remove()
-    logger.configure(patcher=lambda record: record["extra"].setdefault("tag", "[log]"))
-    logger.add(
-        sys.stderr,
-        level="INFO",
-        format=LOG_FORMAT,
-        colorize=True,
-    )
+    configure_logger("[pipeline_3_street_pattern]")
 
 
 def _apply_low_coverage_mask(
