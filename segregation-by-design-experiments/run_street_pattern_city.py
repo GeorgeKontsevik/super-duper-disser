@@ -28,9 +28,12 @@ EXPERIMENTS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = EXPERIMENTS_DIR.parent
 CLASSIFIER_DIR = REPO_ROOT / "street-pattern-classifier"
 
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 if str(CLASSIFIER_DIR) not in sys.path:
     sys.path.insert(0, str(CLASSIFIER_DIR))
 
+from aggregated_spatial_pipeline.visualization import apply_preview_canvas, normalize_preview_gdf, save_preview_figure
 from block_dataset import BlockDataset
 from classification import classify_blocks
 from model import class_names
@@ -991,6 +994,10 @@ def render_city_map(
     from matplotlib.patches import Patch
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    roads_plot = normalize_preview_gdf(roads_wgs84, target_crs="EPSG:3857")
+    buffer_plot = normalize_preview_gdf(buffer_gdf, target_crs="EPSG:3857")
+    centre_plot = normalize_preview_gdf(centre_gdf, buffer_plot, target_crs="EPSG:3857")
+    prediction_plot_base = normalize_preview_gdf(prediction_gdf, buffer_plot, target_crs="EPSG:3857")
     if map_coloring == "vba":
         fig = plt.figure(figsize=(16.0, 10.0))
         grid = fig.add_gridspec(2, 1, height_ratios=(4.9, 1.3), hspace=0.2)
@@ -1000,11 +1007,12 @@ def render_city_map(
         fig, ax = plt.subplots(figsize=(11.5, 10))
         legend_ax = None
     color_lookup = _class_color_lookup()
+    apply_preview_canvas(fig, ax, buffer_plot, title=None, min_pad=120.0)
 
-    if not roads_wgs84.empty:
-        roads_wgs84.plot(ax=ax, color="#7f8c8d", linewidth=0.4, alpha=0.7)
-    if not prediction_gdf.empty:
-        prediction_plot_gdf = prediction_gdf.copy()
+    if roads_plot is not None and not roads_plot.empty:
+        roads_plot.plot(ax=ax, color="#7f8c8d", linewidth=0.4, alpha=0.7)
+    if prediction_plot_base is not None and not prediction_plot_base.empty:
+        prediction_plot_gdf = prediction_plot_base.copy()
         if map_coloring == "vba":
             try:
                 import mapclassify
@@ -1110,8 +1118,10 @@ def render_city_map(
                 edgecolor="#1f1f1f",
                 linewidth=0.35,
             )
-    buffer_gdf.boundary.plot(ax=ax, color="#111111", linewidth=1.0)
-    centre_gdf.plot(ax=ax, color="#c0392b", markersize=20, zorder=5)
+    if buffer_plot is not None and not buffer_plot.empty:
+        buffer_plot.boundary.plot(ax=ax, color="#111111", linewidth=1.0)
+    if centre_plot is not None and not centre_plot.empty:
+        centre_plot.plot(ax=ax, color="#c0392b", markersize=20, zorder=5)
 
     if map_coloring != "vba":
         if map_coloring == "top1":
@@ -1155,7 +1165,7 @@ def render_city_map(
         fig.subplots_adjust(left=0.04, right=0.99, top=0.94, bottom=0.06, hspace=0.15)
     else:
         fig.tight_layout()
-    fig.savefig(output_path, dpi=200, bbox_inches="tight")
+    save_preview_figure(fig, output_path, dpi=200)
     plt.close(fig)
 
 
@@ -1173,14 +1183,19 @@ def render_comparison_map(
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig, ax = plt.subplots(figsize=(10, 10))
+    roads_plot = normalize_preview_gdf(roads_wgs84, target_crs="EPSG:3857")
+    buffer_plot = normalize_preview_gdf(buffer_gdf, target_crs="EPSG:3857")
+    centre_plot = normalize_preview_gdf(centre_gdf, buffer_plot, target_crs="EPSG:3857")
+    comparison_plot = normalize_preview_gdf(comparison_gdf, buffer_plot, target_crs="EPSG:3857")
+    apply_preview_canvas(fig, ax, buffer_plot, title=None, min_pad=120.0)
 
-    if not roads_wgs84.empty:
-        roads_wgs84.plot(ax=ax, color="#7f8c8d", linewidth=0.35, alpha=0.6)
+    if roads_plot is not None and not roads_plot.empty:
+        roads_plot.plot(ax=ax, color="#7f8c8d", linewidth=0.35, alpha=0.6)
 
-    if not comparison_gdf.empty:
-        values = comparison_gdf[column].fillna("missing").astype(str).tolist()
+    if comparison_plot is not None and not comparison_plot.empty:
+        values = comparison_plot[column].fillna("missing").astype(str).tolist()
         color_lookup = _category_color_lookup(values)
-        plot_gdf = comparison_gdf.copy()
+        plot_gdf = comparison_plot.copy()
         plot_gdf["plot_color"] = plot_gdf[column].fillna("missing").astype(str).map(color_lookup)
         plot_gdf.plot(
             ax=ax,
@@ -1200,16 +1215,18 @@ def render_comparison_map(
             bbox_to_anchor=(1.02, 1.0),
             borderaxespad=0.0,
             frameon=True,
-            fontsize=8,
-            title_fontsize=9,
+                fontsize=8,
+                title_fontsize=9,
         )
 
-    buffer_gdf.boundary.plot(ax=ax, color="#111111", linewidth=1.0)
-    centre_gdf.plot(ax=ax, color="#c0392b", markersize=20, zorder=5)
+    if buffer_plot is not None and not buffer_plot.empty:
+        buffer_plot.boundary.plot(ax=ax, color="#111111", linewidth=1.0)
+    if centre_plot is not None and not centre_plot.empty:
+        centre_plot.plot(ax=ax, color="#c0392b", markersize=20, zorder=5)
     ax.set_title(title)
     ax.set_axis_off()
     fig.tight_layout()
-    fig.savefig(output_path, dpi=200, bbox_inches="tight")
+    save_preview_figure(fig, output_path, dpi=200)
     plt.close(fig)
 
 
