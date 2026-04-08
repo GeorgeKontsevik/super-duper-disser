@@ -26,6 +26,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run phase-1 city preparation in batch mode: collection, floor, blocks, and street-pattern source."
     )
+    parser.add_argument(
+        "--config-path",
+        default=str(CONFIG_PATH),
+        help="Path to JSON file with named city batches.",
+    )
     parser.add_argument("--regions", nargs="+", default=list(DEFAULT_BATCH_REGIONS))
     parser.add_argument("--limit-per-region", type=int)
     parser.add_argument("--buffer-m", type=float, default=None)
@@ -41,8 +46,8 @@ def _configure_logging() -> None:
     configure_logger("[phase1-batch]")
 
 
-def _load_city_batches() -> dict[str, list[str]]:
-    return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+def _load_city_batches(config_path: Path) -> dict[str, list[str]]:
+    return json.loads(config_path.read_text(encoding="utf-8"))
 
 
 def _summary_path(override: str | None) -> Path:
@@ -76,7 +81,8 @@ def _build_command(args: argparse.Namespace, place: str) -> list[str]:
 def main() -> None:
     _configure_logging()
     args = parse_args()
-    batches = _load_city_batches()
+    config_path = Path(args.config_path).resolve()
+    batches = _load_city_batches(config_path)
     summary_path = _summary_path(args.summary_path)
     summary_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -120,6 +126,7 @@ def main() -> None:
                 logger.warning("Phase 1 failed: {} (returncode={}, {}s)", place, completed.returncode, elapsed_s)
             results.append(result)
             summary = {
+                "config_path": str(config_path),
                 "regions": selected_regions,
                 "buffer_m": args.buffer_m,
                 "street_grid_step": float(args.street_grid_step),

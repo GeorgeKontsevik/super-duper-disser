@@ -1,5 +1,22 @@
 # Street Pattern Experiments
 
+## North Star
+
+Это главный концептуальный ориентир для всех экспериментов в этой папке:
+
+- Города исторически отличаются по street pattern.
+- Эти паттерны не mode-neutral.
+- Из-за этого доступность по кварталам системно различается.
+- Значит часть transport inequality буквально встроена в urban form.
+- Именно это и есть `segregated by design`.
+
+И связанный с этим второй тезис:
+
+- `provision and accessibility cannot be understood without context`
+- потому что сами услуги и транспорт работают не в пустоте, а внутри уже заданной морфологической среды.
+
+Все новые эксперименты, картинки и формулировки здесь стоит проверять относительно этого north star. Если шаг уводит слишком далеко в техническую механику и перестает работать на этот тезис, его лучше считать вторичным или выносить в appendix/mechanism layer.
+
 Скрипт [run_street_pattern_city.py](/Users/gk/Code/super-duper-disser/segregation-by-design-experiments/run_street_pattern_city.py) умеет:
 
 - брать центр города через `osmapi` из OSM relation;

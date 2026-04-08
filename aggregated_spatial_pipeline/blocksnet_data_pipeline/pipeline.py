@@ -324,6 +324,7 @@ def collect_blocksnet_raw_osm_bundle(
     place: str,
     output_dir: str | Path,
     boundary_path: str | Path | None = None,
+    roads_override_path: str | Path | None = None,
 ) -> dict:
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -340,7 +341,22 @@ def collect_blocksnet_raw_osm_bundle(
     saved_boundary_path = output_path / "boundary.parquet"
     _save_geodata(boundaries_gdf, saved_boundary_path)
 
-    water_gdf, roads_gdf, railways_gdf = _get_urban_objects(boundary_geom)
+    if roads_override_path is not None:
+        roads_gdf = read_geodata(Path(roads_override_path))
+        if roads_gdf.empty:
+            raise ValueError(f"Shared roads override is empty: {roads_override_path}")
+        logger.info(
+            "[blocksnet-raw] Reusing shared roads layer: {} (features={})",
+            Path(roads_override_path).name,
+            len(roads_gdf),
+        )
+        water_gdf = _features_from_polygon_or_empty(boundary_geom, BC_TAGS["water"], "water")
+        railways_gdf = _features_from_polygon_or_empty(boundary_geom, BC_TAGS["railways"], "railways")
+        water_gdf = water_gdf[water_gdf.geom_type.isin(["Polygon", "MultiPolygon", "LineString", "MultiLineString"])].reset_index(drop=True)
+        roads_gdf = roads_gdf[roads_gdf.geom_type.isin(["LineString", "MultiLineString"])].reset_index(drop=True)
+        railways_gdf = railways_gdf[railways_gdf.geom_type.isin(["LineString", "MultiLineString"])].reset_index(drop=True)
+    else:
+        water_gdf, roads_gdf, railways_gdf = _get_urban_objects(boundary_geom)
     land_use_gdf = _get_land_use(boundary_geom)
     buildings_gdf = _get_buildings_raw(boundary_geom)
 
@@ -376,6 +392,7 @@ def collect_blocksnet_raw_osm_bundle(
         "place": place,
         "slug": slugify_place(place),
         "boundary_source": str(Path(boundary_path).resolve()) if boundary_path is not None else "osmnx_geocode",
+        "roads_source": str(Path(roads_override_path).resolve()) if roads_override_path is not None else "osmnx_drive_graph",
         "files": {
             "boundary": str(saved_boundary_path),
             "water": str(water_path),

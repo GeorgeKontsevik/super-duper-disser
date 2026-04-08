@@ -240,15 +240,6 @@ def parse_args() -> argparse.Namespace:
         help="Skip street-grid cells whose total clipped road length is below this threshold.",
     )
     parser.add_argument(
-        "--analysis-margin-m",
-        type=float,
-        default=None,
-        help=(
-            "Outer collection margin in meters around the main --buffer-m circle. "
-            "Default: 20%% of --buffer-m. Final quarter/street-pattern clipping still uses --buffer-m."
-        ),
-    )
-    parser.add_argument(
         "--floor-min-buffer-m",
         type=float,
         default=25000.0,
@@ -266,10 +257,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--sm-imputation",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=False,
         help=(
             "Run space-matrix imputation on quarter-level built form after quarter clipping "
-            "(default: enabled). Use --no-sm-imputation to skip."
+            "(default: disabled). Use --sm-imputation to enable."
         ),
     )
     parser.add_argument(
@@ -302,6 +293,24 @@ def parse_args() -> argparse.Namespace:
         "--collect-only",
         action="store_true",
         help="Run only phase 1 (data collection/preparation) and stop before any joint calculations.",
+    )
+    parser.add_argument(
+        "--roads-coverage-buffer-m",
+        type=float,
+        default=8.0,
+        help=(
+            "Buffer radius in meters around road centerlines for data-coverage proxy "
+            "(used in buildings+roads territory coverage checks)."
+        ),
+    )
+    parser.add_argument(
+        "--min-data-coverage-pct",
+        type=float,
+        default=5.0,
+        help=(
+            "Warning threshold for combined buildings+roads area coverage (% of analysis territory). "
+            "Run continues even if below this threshold."
+        ),
     )
     parser.add_argument(
         "--spec-dir",
@@ -708,10 +717,21 @@ def _ensure_street_grid_from_repo(
         f"{time.time() - started:.1f}s. Summary: {_log_name(summary_output)}"
     )
 
+    summary_data = _try_load_json(summary_output) or {}
+    num_predictions = int(pd.to_numeric(summary_data.get("num_predictions"), errors="coerce") or 0)
+    num_subgraphs = int(pd.to_numeric(summary_data.get("num_subgraphs"), errors="coerce") or 0)
+    if num_predictions <= 0:
+        raise RuntimeError(
+            "Street-pattern pipeline finished with zero predicted cells "
+            f"(num_subgraphs={num_subgraphs}, num_predictions={num_predictions}, summary={summary_output}). "
+            "This usually means the current territory/filtering is too sparse for classification; "
+            "try a larger buffer or lower street-pattern thresholds."
+        )
+
     if not predicted_cells_path.exists():
         raise RuntimeError(
             "Street-pattern pipeline finished, but predicted_cells.geojson was not found at "
-            f"{predicted_cells_path}"
+            f"{predicted_cells_path} even though num_predictions={num_predictions}."
         )
     _log(f"Classification artifact: {_log_name(predicted_cells_path)}")
     return predicted_cells_path, summary_output, True
@@ -764,6 +784,93 @@ def _ensure_shared_drive_roads(
     prepare_geodata_for_parquet(edges).to_parquet(output_path)
     edges.to_file(compat_geojson, driver="GeoJSON")
     return output_path, int(len(edges)), True
+
+
+def _compute_data_coverage_metrics(
+    *,
+    territory_path: Path,
+    buildings_path: Path,
+    roads_path: Path,
+    roads_buffer_m: float,
+) -> dict:
+    territory = read_geodata(territory_path)
+    if territory.empty:
+        raise RuntimeError(f"Coverage check failed: empty analysis territory ({territory_path}).")
+
+    local_crs = territory.estimate_utm_crs() or "EPSG:3857"
+    territory_local = territory.to_crs(local_crs)
+    territory_geom = territory_local.union_all()
+    territory_area_m2 = float(territory_geom.area)
+    if territory_area_m2 <= 0.0:
+        raise RuntimeError(f"Coverage check failed: non-positive territory area ({territory_path}).")
+    territory_frame = gpd.GeoDataFrame({"geometry": [territory_geom]}, crs=local_crs)
+
+    buildings_clip = gpd.GeoDataFrame(geometry=[], crs=local_crs)
+    buildings_raw = read_geodata(buildings_path)
+    if buildings_raw.empty:
+        buildings_count = 0
+        buildings_area_m2 = 0.0
+    else:
+        buildings_local = buildings_raw.to_crs(local_crs)
+        buildings_local = buildings_local[buildings_local.geometry.notna() & ~buildings_local.geometry.is_empty].copy()
+        buildings_local = buildings_local[
+            buildings_local.geometry.geom_type.isin(["Polygon", "MultiPolygon"])
+        ].copy()
+        buildings_count = int(len(buildings_local))
+        if buildings_local.empty:
+            buildings_area_m2 = 0.0
+        else:
+            buildings_clip = gpd.clip(buildings_local[["geometry"]], territory_frame, keep_geom_type=False)
+            buildings_clip = buildings_clip[buildings_clip.geometry.notna() & ~buildings_clip.geometry.is_empty].copy()
+            buildings_area_m2 = float(buildings_clip.union_all().area) if not buildings_clip.empty else 0.0
+
+    roads_buffer_clip = gpd.GeoDataFrame(geometry=[], crs=local_crs)
+    roads_raw = read_geodata(roads_path)
+    if roads_raw.empty:
+        roads_count = 0
+        roads_area_m2 = 0.0
+    else:
+        roads_local = roads_raw.to_crs(local_crs)
+        roads_local = roads_local[roads_local.geometry.notna() & ~roads_local.geometry.is_empty].copy()
+        roads_local = roads_local[roads_local.geometry.geom_type.isin(["LineString", "MultiLineString"])].copy()
+        roads_count = int(len(roads_local))
+        if roads_local.empty:
+            roads_area_m2 = 0.0
+        else:
+            roads_buffer = roads_local.copy()
+            roads_buffer["geometry"] = roads_buffer.geometry.buffer(float(roads_buffer_m))
+            roads_buffer = roads_buffer[roads_buffer.geometry.notna() & ~roads_buffer.geometry.is_empty].copy()
+            roads_buffer_clip = gpd.clip(roads_buffer[["geometry"]], territory_frame, keep_geom_type=False)
+            roads_buffer_clip = roads_buffer_clip[
+                roads_buffer_clip.geometry.notna() & ~roads_buffer_clip.geometry.is_empty
+            ].copy()
+            roads_area_m2 = float(roads_buffer_clip.union_all().area) if not roads_buffer_clip.empty else 0.0
+
+    combined_geoms = []
+    if not buildings_clip.empty:
+        combined_geoms.append(buildings_clip.union_all())
+    if not roads_buffer_clip.empty:
+        combined_geoms.append(roads_buffer_clip.union_all())
+    if combined_geoms:
+        combined_area_m2 = float(gpd.GeoSeries(combined_geoms, crs=local_crs).union_all().area)
+    else:
+        combined_area_m2 = 0.0
+
+    return {
+        "territory_path": str(territory_path),
+        "buildings_path": str(buildings_path),
+        "roads_path": str(roads_path),
+        "roads_buffer_m": float(roads_buffer_m),
+        "territory_area_m2": territory_area_m2,
+        "buildings_count": int(buildings_count),
+        "roads_count": int(roads_count),
+        "buildings_coverage_area_m2": buildings_area_m2,
+        "roads_coverage_area_m2": roads_area_m2,
+        "combined_data_coverage_area_m2": combined_area_m2,
+        "buildings_coverage_pct": (buildings_area_m2 / territory_area_m2) * 100.0,
+        "roads_coverage_pct": (roads_area_m2 / territory_area_m2) * 100.0,
+        "combined_data_coverage_pct": (combined_area_m2 / territory_area_m2) * 100.0,
+    }
 
 
 def _clip_street_grid_to_buffer(
@@ -988,14 +1095,6 @@ def _analysis_buffer_matches(path: Path, expected_buffer_m: float) -> bool:
         return abs(float(value.iloc[0]) - float(expected_buffer_m)) <= 1e-6
     except Exception:
         return False
-
-
-def _effective_analysis_margin_m(args: argparse.Namespace, base_buffer_m: float) -> float:
-    if args.analysis_margin_m is None:
-        return float(base_buffer_m) * 0.2
-    return max(0.0, float(args.analysis_margin_m))
-
-
 def _build_climate_grid(
     *,
     boundary_path: Path,
@@ -2342,11 +2441,8 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
 
     if relation_mode:
         effective_buffer_m = 0.0
-        analysis_margin_m = 0.0
     else:
         effective_buffer_m = float(args.buffer_m) if args.buffer_m is not None else 20000.0
-        analysis_margin_m = _effective_analysis_margin_m(args, effective_buffer_m)
-    collection_buffer_m = 0.0 if relation_mode else float(effective_buffer_m + analysis_margin_m)
     if relation_mode:
         relation_log_id = f"relation_id={int(detected_relation_id)}" if detected_relation_id is not None else "relation_id=unknown"
         _log(
@@ -2355,8 +2451,8 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         )
     else:
         _log(
-            "Analysis territory policy: main circle + outer collection margin "
-            f"(core={effective_buffer_m}m, margin={analysis_margin_m}m, collection={collection_buffer_m}m)."
+            "Analysis territory policy: exact fixed buffer with no outer margin "
+            f"({effective_buffer_m}m)."
         )
     floor_context_radius_m = None if relation_mode else effective_buffer_m
     if floor_context_radius_m is not None and floor_context_radius_m < float(args.floor_min_buffer_m):
@@ -2370,9 +2466,8 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
     analysis_buffer_path = analysis_dir / "buffer.parquet"
     collection_buffer_path = analysis_dir / "buffer_collection.parquet"
     main_territory_buffer_m = 0.0 if relation_mode else effective_buffer_m
-    collection_territory_buffer_m = 0.0 if relation_mode else collection_buffer_m
     buffer_matches = _analysis_buffer_matches(analysis_buffer_path, main_territory_buffer_m)
-    collection_buffer_matches = _analysis_buffer_matches(collection_buffer_path, collection_territory_buffer_m)
+    collection_buffer_matches = _analysis_buffer_matches(collection_buffer_path, main_territory_buffer_m)
     if (not args.no_cache) and analysis_buffer_path.exists() and (not buffer_matches):
         _warn(
             "Cached analysis buffer radius does not match current --buffer-m "
@@ -2380,8 +2475,8 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         )
     if (not relation_mode) and (not args.no_cache) and collection_buffer_path.exists() and (not collection_buffer_matches):
         _warn(
-            "Cached outer collection buffer radius does not match current buffer+margin "
-            f"(requested={collection_territory_buffer_m}m). Rebuilding collection buffer."
+            "Cached collection territory radius does not match current exact --buffer-m "
+            f"(requested={main_territory_buffer_m}m). Rebuilding collection territory."
         )
     if args.no_cache or not analysis_buffer_path.exists() or (not buffer_matches):
         if relation_mode:
@@ -2416,43 +2511,23 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             _log(f"Relation territory reused in 0.0s: {collection_buffer_path.name}")
         else:
             _log(f"Using cached relation territory reuse: {collection_buffer_path.name}")
-    elif args.no_cache or not collection_buffer_path.exists() or (not collection_buffer_matches):
-        _log("OSM territory step: building outer collection buffer with margin.")
-        started = time.time()
-        center_node_id = args.center_node_id
-        relation_id = args.relation_id
-        if center_node_id is None and relation_id is None:
-            core_buffer_gdf = read_geodata(analysis_buffer_path)
-            if not core_buffer_gdf.empty and "relation_id" in core_buffer_gdf.columns:
-                relation_values = pd.to_numeric(core_buffer_gdf["relation_id"], errors="coerce").dropna()
-                if not relation_values.empty:
-                    relation_id = int(relation_values.iloc[0])
-            if center_node_id is None and relation_id is None:
-                if core_buffer_gdf.empty or "centre_node_id" not in core_buffer_gdf.columns:
-                    raise RuntimeError(
-                        f"Cannot derive centre node id / relation id from main analysis buffer: {analysis_buffer_path}"
-                    )
-                center_values = pd.to_numeric(core_buffer_gdf["centre_node_id"], errors="coerce").dropna()
-                if center_values.empty:
-                    raise RuntimeError(
-                        f"Main analysis buffer does not contain a valid centre node id or relation id: {analysis_buffer_path}"
-                    )
-                center_node_id = int(center_values.iloc[0])
-        _resolve_analysis_buffer_from_osm(
-            place=args.place,
-            buffer_m=collection_buffer_m,
-            output_path=collection_buffer_path,
-            center_node_id=center_node_id,
-            relation_id=relation_id,
-            relation_geometry=Path(args.relation_geometry).resolve() if args.relation_geometry else None,
-        )
-        _log(f"Collection buffer built in {time.time() - started:.1f}s: {collection_buffer_path.name}")
-        downloaded_in_this_run = True
     else:
-        _log(f"Using cached outer collection buffer: {collection_buffer_path.name}")
+        _log("OSM territory step: exact analysis buffer reused for collection territory.")
+        if args.no_cache or not collection_buffer_path.exists() or (not collection_buffer_matches):
+            analysis_buffer_gdf = read_geodata(analysis_buffer_path)
+            analysis_buffer_path.parent.mkdir(parents=True, exist_ok=True)
+            analysis_buffer_gdf.to_parquet(collection_buffer_path)
+            _log(f"Exact collection territory reused in 0.0s: {collection_buffer_path.name}")
+        else:
+            _log(f"Using cached exact collection territory reuse: {collection_buffer_path.name}")
     buffer_path = analysis_buffer_path
-    collection_boundary_path = analysis_buffer_path if relation_mode else collection_buffer_path
+    collection_boundary_path = collection_buffer_path
     shared_roads_path = derived_dir / "roads_drive_osmnx.parquet"
+    if args.no_cache or not shared_roads_path.exists():
+        _log(
+            "Preparing shared drive roads from OSMnx drive graph "
+            "(this may take time before the next network log appears)..."
+        )
     shared_roads_path, shared_roads_count, shared_roads_rebuilt = _ensure_shared_drive_roads(
         buffer_path=collection_boundary_path,
         output_path=shared_roads_path,
@@ -2471,11 +2546,17 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         _log("Collecting raw OSM layers for blocks/buildings preprocessing...")
         _log(
             "OSM download (raw): "
-            "requesting urban objects (water/roads/railways/landuse/buildings) via Overpass "
-            f"inside the outer {collection_buffer_m}m collection buffer."
+            "requesting water/railways/landuse/buildings via Overpass "
+            "inside the exact analysis territory, "
+            "while reusing the already prepared shared drive roads layer."
         )
         started = time.time()
-        collect_blocksnet_raw_osm_bundle(place, output_dir=blocks_raw_dir, boundary_path=collection_boundary_path)
+        collect_blocksnet_raw_osm_bundle(
+            place,
+            output_dir=blocks_raw_dir,
+            boundary_path=collection_boundary_path,
+            roads_override_path=shared_roads_path,
+        )
         _log(f"Raw OSM bundle collected in {time.time() - started:.1f}s: {_log_name(blocks_raw_manifest_path)}")
         downloaded_in_this_run = True
     else:
@@ -2489,6 +2570,31 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
     boundary_path = Path(raw_files["boundary"]).resolve()
     buildings_path = Path(raw_files["buildings"]).resolve()
     land_use_path = Path(raw_files["land_use"]).resolve()
+    data_coverage_metrics: dict | None = None
+    try:
+        data_coverage_metrics = _compute_data_coverage_metrics(
+            territory_path=buffer_path,
+            buildings_path=buildings_path,
+            roads_path=shared_roads_path,
+            roads_buffer_m=float(args.roads_coverage_buffer_m),
+        )
+        _log(
+            "Data coverage check: "
+            f"buildings={data_coverage_metrics['buildings_coverage_pct']:.2f}%, "
+            f"roads(buffer)={data_coverage_metrics['roads_coverage_pct']:.2f}%, "
+            f"combined={data_coverage_metrics['combined_data_coverage_pct']:.2f}% "
+            f"(threshold={float(args.min_data_coverage_pct):.2f}%)."
+        )
+        if float(data_coverage_metrics["combined_data_coverage_pct"]) < float(args.min_data_coverage_pct):
+            _warn(
+                "Low data coverage detected for selected territory: "
+                f"combined buildings+roads coverage is {data_coverage_metrics['combined_data_coverage_pct']:.2f}% "
+                f"(< {float(args.min_data_coverage_pct):.2f}%). "
+                "This often indicates wrong place relation/centre or incomplete source layers."
+            )
+    except Exception as exc:
+        data_coverage_metrics = {"error": str(exc)}
+        _warn(f"Data coverage check skipped due to error: {exc}")
 
     parsed_modalities = parse_modalities(args.modalities)
     if args.no_cache or not intermodal_manifest_path.exists():
@@ -2783,7 +2889,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         repo_root=repo_root,
         data_root=data_root,
         no_cache=args.no_cache,
-        buffer_m=collection_buffer_m,
+        buffer_m=effective_buffer_m,
         grid_step=float(args.street_grid_step),
         min_road_count=int(args.street_min_road_count),
         min_total_road_length=float(args.street_min_total_road_length),
@@ -2834,9 +2940,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         "street_grid_step": args.street_grid_step,
         "street_min_road_count": args.street_min_road_count,
         "street_min_total_road_length": args.street_min_total_road_length,
-        "analysis_margin_m": analysis_margin_m,
         "effective_buffer_m": effective_buffer_m,
-        "collection_buffer_m": collection_buffer_m,
         "climate_grid_step_m": args.climate_grid_step_m,
         "files": {
             "quarters": str(buffered_quarters_path),
@@ -2862,6 +2966,10 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         },
         "floor_predictor": floor_metrics,
         "sm_imputation": sm_imputation_metrics,
+        "data_coverage_check": {
+            "min_data_coverage_pct_threshold": float(args.min_data_coverage_pct),
+            "metrics": data_coverage_metrics,
+        },
     }
     derived_manifest_path.write_text(json.dumps(derived_manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -2898,10 +3006,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             "origin": (
                 "segregation-by-design-experiments predicted_cells.geojson built on relation polygon"
                 if relation_mode
-                else (
-                    "segregation-by-design-experiments predicted_cells.geojson "
-                    f"built on {collection_buffer_m}m collection buffer and clipped to {effective_buffer_m}m analysis buffer"
-                )
+                else f"segregation-by-design-experiments predicted_cells.geojson built and clipped on the same exact {effective_buffer_m}m analysis buffer"
             ),
         },
         **(
@@ -2925,7 +3030,11 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             "slug": slug,
             "downloaded_in_this_run": downloaded_in_this_run,
             "cached": (not args.no_cache and buffer_path.exists()),
-            "origin": "main analysis relation polygon" if relation_mode else f"main analysis buffer polygon ({effective_buffer_m}m) with collection margin {analysis_margin_m}m",
+            "origin": "main analysis relation polygon" if relation_mode else f"main analysis buffer polygon ({effective_buffer_m}m)",
+            "data_coverage_check": {
+                "min_data_coverage_pct_threshold": float(args.min_data_coverage_pct),
+                "metrics": data_coverage_metrics,
+            },
         },
     }
     return PreparedInputs(

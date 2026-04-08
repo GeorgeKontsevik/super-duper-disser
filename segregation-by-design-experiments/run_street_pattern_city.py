@@ -1256,9 +1256,8 @@ def save_city_outputs(
     _prepare_geojson_export(roads_wgs84).to_file(city_dir / "roads.geojson", driver="GeoJSON")
     _prepare_geojson_export(buffer_gdf).to_file(city_dir / "buffer.geojson", driver="GeoJSON")
     _prepare_geojson_export(centre_gdf).to_file(city_dir / "centre.geojson", driver="GeoJSON")
-    if not prediction_gdf.empty:
-        _prepare_geojson_export(prediction_gdf).to_file(city_dir / "predicted_cells.geojson", driver="GeoJSON")
-        prediction_gdf.drop(columns="geometry").to_csv(city_dir / "predicted_cells.csv", index=False)
+    _prepare_geojson_export(prediction_gdf).to_file(city_dir / "predicted_cells.geojson", driver="GeoJSON")
+    prediction_gdf.drop(columns="geometry", errors="ignore").to_csv(city_dir / "predicted_cells.csv", index=False)
 
     render_city_map(
         roads_wgs84=roads_wgs84,
