@@ -72,6 +72,7 @@ LOCAL_MORAN_MIN_GLOBAL_I = 0.6
 EFFECT_HIGHLIGHT_MIN_ABS = 0.3
 ACCESSIBILITY_ATLAS_SAMPLE_SIZE = 16
 ACCESSIBILITY_ATLAS_RANDOM_SEED = 42
+NEAREST_SERVICE_UNREACHABLE_MIN = 120.0
 
 ensure_repo_mplconfigdir("mpl-sbd-service-accessibility", root=REPO_ROOT)
 
@@ -684,6 +685,7 @@ def _compute_service_assigned_accessibility(
     metrics[f"service_provision_{service}_{context_label}"] = np.nan
     metrics[f"assigned_service_time_{service}_{context_label}"] = np.nan
     metrics[f"assigned_service_targets_{service}_{context_label}"] = np.nan
+    metrics[f"nearest_service_time_{service}_{context_label}"] = np.nan
 
     capacity_col = f"service_capacity_{service}"
     if capacity_col not in blocks.columns:
@@ -833,6 +835,30 @@ def _compute_service_assigned_accessibility(
         _save_dataframe(service_matrix, matrix_path)
         _normalize_provision_links(links_df).to_csv(links_path, index=False)
         solver_blocks = solver_blocks.set_index("solver_index")
+
+    # Pure accessibility metric (independent from provision/assignment):
+    # minimal travel time from each selected block to nearest block that has service capacity.
+    service_capacity_selected = pd.to_numeric(capacity.loc[select_mask], errors="coerce").fillna(0.0)
+    service_targets = service_capacity_selected[service_capacity_selected > 0.0].index.astype(int).tolist()
+    if service_targets:
+        matrix_numeric_for_nearest = service_matrix.apply(pd.to_numeric, errors="coerce")
+        try:
+            nearest = matrix_numeric_for_nearest[service_targets].min(axis=1, skipna=True)
+            nearest = pd.to_numeric(nearest, errors="coerce")
+            metrics[f"nearest_service_time_{service}_{context_label}"] = common_block_ids.map(nearest)
+        except Exception:
+            pass
+    # Keep this metric strictly residential/populated.
+    residential = pd.to_numeric(population, errors="coerce").fillna(0.0) > 0.0
+    non_residential = ~residential
+    nearest_col = f"nearest_service_time_{service}_{context_label}"
+    nearest_vals = pd.to_numeric(metrics[nearest_col], errors="coerce")
+    nearest_vals = nearest_vals.where(np.isfinite(nearest_vals), np.nan)
+    # Do not drop underserved residential blocks from city-level distributions:
+    # if nearest service is unreachable/undefined, keep them with a capped high travel time.
+    nearest_vals = nearest_vals.where(~residential, nearest_vals.fillna(float(NEAREST_SERVICE_UNREACHABLE_MIN)))
+    nearest_vals = nearest_vals.where(~non_residential, np.nan)
+    metrics[nearest_col] = nearest_vals
 
     solver_blocks.index = solver_blocks.index.astype(int)
     common_block_ids = pd.Index(blocks.index)
@@ -2335,17 +2361,29 @@ def _plot_accessibility_between_city_distribution(frame: pd.DataFrame, output_pa
             if col.startswith("assigned_service_time_") and col.endswith("_intermodal")
         }
     )
+    nearest_service_names = sorted(
+        {
+            col.removeprefix("nearest_service_time_").removesuffix("_intermodal")
+            for col in frame.columns
+            if col.startswith("nearest_service_time_") and col.endswith("_intermodal")
+        }
+    )
+    if nearest_service_names:
+        service_names = sorted(set(service_names).union(set(nearest_service_names)))
     for service_name in service_names:
-        service_cols = [
-            col
-            for col in [
-                f"assigned_service_time_{service_name}_intermodal",
-                f"assigned_service_time_{service_name}_walk",
+        # Figure 15 uses pure accessibility to nearest service (no provision/solver assignment).
+        service_cols = [col for col in [f"nearest_service_time_{service_name}_intermodal", f"nearest_service_time_{service_name}_walk"] if col in frame.columns]
+        if not service_cols:
+            service_cols = [
+                col
+                for col in [
+                    f"assigned_service_time_{service_name}_intermodal",
+                    f"assigned_service_time_{service_name}_walk",
+                ]
+                if col in frame.columns
             ]
-            if col in frame.columns
-        ]
         if service_cols:
-            panels.append((f"Assigned {service_name} accessibility", service_cols))
+            panels.append((f"Nearest {service_name} accessibility", service_cols))
 
     if not panels:
         return
@@ -2655,6 +2693,12 @@ def _transport_response_label(response_col: str) -> str:
         "assigned_service_time_school_intermodal": "Assigned school accessibility (intermodal)",
         "assigned_service_time_school_walk": "Assigned school accessibility (walk)",
     }
+    if response_col.startswith("nearest_service_time_"):
+        suffix = response_col.removeprefix("nearest_service_time_")
+        parts = suffix.rsplit("_", 1)
+        if len(parts) == 2:
+            service, context = parts
+            return f"Nearest {service} accessibility ({context})"
     return labels.get(response_col, response_col)
 
 
@@ -3455,6 +3499,7 @@ def _prepare_city_dataset(
             "accessibility_time_mean_pt_walk",
             *{f"assigned_service_time_{service}_{context}" for service in services for context in ("intermodal", "walk")},
             *{f"service_provision_{service}_{context}" for service in services for context in ("intermodal", "walk")},
+            *{f"nearest_service_time_{service}_{context}" for service in services for context in ("intermodal", "walk")},
         }
         cached_access = pd.to_numeric(
             cached_blocks.get("accessibility_time_mean_pt_intermodal"),
@@ -3612,10 +3657,13 @@ def _prepare_city_dataset(
                 blocks[col] = service_metrics[col].reindex(blocks.index)
             assigned_col = f"assigned_service_time_{service}_{context_label}"
             provision_col = f"service_provision_{service}_{context_label}"
+            nearest_col = f"nearest_service_time_{service}_{context_label}"
             context_stats[context_label] = {
                 "assigned_time_nonnull_blocks": int(pd.to_numeric(blocks[assigned_col], errors="coerce").notna().sum()),
                 "assigned_time_median": float(pd.to_numeric(blocks[assigned_col], errors="coerce").dropna().median()) if pd.to_numeric(blocks[assigned_col], errors="coerce").notna().any() else np.nan,
                 "provision_mean": float(pd.to_numeric(blocks[provision_col], errors="coerce").dropna().mean()) if pd.to_numeric(blocks[provision_col], errors="coerce").notna().any() else np.nan,
+                "nearest_time_nonnull_blocks": int(pd.to_numeric(blocks[nearest_col], errors="coerce").notna().sum()) if nearest_col in blocks.columns else 0,
+                "nearest_time_median": float(pd.to_numeric(blocks[nearest_col], errors="coerce").dropna().median()) if (nearest_col in blocks.columns and pd.to_numeric(blocks[nearest_col], errors="coerce").notna().any()) else np.nan,
             }
         service_accessibility_stats[service] = context_stats
 
