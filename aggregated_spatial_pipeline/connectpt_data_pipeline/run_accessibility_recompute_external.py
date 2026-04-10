@@ -9,9 +9,10 @@ import geopandas as gpd
 import pandas as pd
 from loguru import logger
 
-from blocksnet.relations import calculate_accessibility_matrix
-
-from aggregated_spatial_pipeline.pipeline.run_pipeline2_prepare_solver_inputs import _plot_accessibility_previews
+from aggregated_spatial_pipeline.pipeline.run_pipeline2_prepare_solver_inputs import (
+    _calculate_accessibility_matrix_native,
+    _plot_accessibility_previews,
+)
 from aggregated_spatial_pipeline.runtime_config import configure_logger
 
 
@@ -56,7 +57,7 @@ def main() -> None:
         f"Recomputing accessibility matrix: units={len(units)}, "
         f"graph_nodes={graph.number_of_nodes()}, graph_edges={graph.number_of_edges()}"
     )
-    matrix = calculate_accessibility_matrix(units[["geometry"]].copy(), graph, weight_key="time_min")
+    matrix = _calculate_accessibility_matrix_native(units[["geometry"]].copy(), graph, weight_key="time_min")
     matrix_output_path.parent.mkdir(parents=True, exist_ok=True)
     matrix.to_parquet(matrix_output_path)
     previews = _plot_accessibility_previews(

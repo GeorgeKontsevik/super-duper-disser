@@ -374,7 +374,7 @@ FLOOR_PREDICTOR_DIR=/Users/gk/Code/somewhere/floor-predictor \
 
 1. `data_collection`: скачать raw OSM сервисы внутри той же analysis territory (`buffer.parquet`).
 2. `capacity_aggregation`: агрегировать сервисные capacity по кварталам.
-3. `matrix_build`: посчитать матрицу доступности между кварталами через `blocksnet.relations.calculate_accessibility_matrix`.
+3. `matrix_build`: посчитать матрицу доступности между блоками через native shortest-path расчёт по intermodal graph.
 4. `solver_prep`: сохранить solver-ready таблицы по каждому сервису (`demand`, `demand_within`, `demand_without`, `capacity`, `capacity_left`, `provision`).
 
 Теги, которые используются на шаге `data_collection`:

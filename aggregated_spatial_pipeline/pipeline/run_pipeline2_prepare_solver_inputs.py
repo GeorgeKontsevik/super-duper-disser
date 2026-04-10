@@ -28,8 +28,6 @@ from aggregated_spatial_pipeline.visualization import (
     normalize_preview_gdf,
     save_preview_figure,
 )
-from blocksnet.analysis.provision import competitive_provision
-from blocksnet.relations import calculate_accessibility_matrix
 
 
 SUPPORTED_SERVICES = ("hospital", "polyclinic", "school")
@@ -41,7 +39,6 @@ ensure_repo_mplconfigdir("mpl-asp-pipeline2")
 @dataclass(frozen=True)
 class ServiceSpec:
     tags: list[dict]
-    blocksnet_name: str
     fallback_capacity: float = 600.0
 
 
@@ -51,20 +48,17 @@ SERVICE_SPECS: dict[str, ServiceSpec] = {
             {"amenity": "hospital"},
             {"healthcare": "hospital"},
         ],
-        blocksnet_name="hospital",
     ),
     "polyclinic": ServiceSpec(
         tags=[
-            {"amenity": ["clinic", "doctors"]},
-            {"healthcare": ["clinic", "doctor", "doctors"]},
+            {"amenity": "clinic"},
+            {"healthcare": ["clinic", "centre"]},
         ],
-        blocksnet_name="polyclinic",
     ),
     "school": ServiceSpec(
         tags=[
             {"amenity": "school"},
         ],
-        blocksnet_name="school",
     ),
 }
 
@@ -79,13 +73,23 @@ ARCTIC_DEFAULT_POPULATION = 120.0
 DEFAULT_CAPACITY_BY_SERVICE = {
     service: spec.fallback_capacity for service, spec in SERVICE_SPECS.items()
 }
+DEFAULT_ACCESSIBILITY_MIN_BY_SERVICE = {
+    "hospital": 60.0,
+    "polyclinic": 10.0,
+    "school": 15.0,
+}
+DEFAULT_DEMAND_PER_1000_BY_SERVICE = {
+    "hospital": 9.0,
+    "polyclinic": 13.0,
+    "school": 120.0,
+}
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Pipeline_2 input preparation on top of pipeline_1 territory: "
-            "download OSM services, aggregate to quarters, compute accessibility matrix, "
+            "download OSM services, aggregate to blocks, compute accessibility matrix, "
             "save solver-ready tables."
         )
     )
@@ -127,7 +131,16 @@ def parse_args() -> argparse.Namespace:
         "--provision-max-depth",
         type=int,
         default=1,
-        help="Max depth for blocksnet competitive_provision.",
+        help="Reserved option (kept for CLI compatibility; ignored in arctic lp_coverage mode).",
+    )
+    parser.add_argument(
+        "--capacity-default-fallback",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Use fallback capacity defaults when OSM objects miss explicit capacity/beds "
+            "(default: enabled). Set --no-capacity-default-fallback for strict fail-fast."
+        ),
     )
     parser.add_argument(
         "--population-default",
@@ -187,21 +200,6 @@ def _resolve_city_dir(args: argparse.Namespace) -> Path:
     raise ValueError("Provide either --joint-input-dir or --place.")
 
 
-def _load_blocksnet_service_defaults() -> dict[str, dict]:
-    config_path = (
-        Path(__file__).resolve().parents[2]
-        / "blocksnet"
-        / "blocksnet"
-        / "config"
-        / "service_types"
-        / "common"
-        / "default.json"
-    )
-    items = json.loads(config_path.read_text(encoding="utf-8"))
-    return {str(item.get("name")): item for item in items if item.get("name")}
-
-
-BLOCKSNET_SERVICE_DEFAULTS = _load_blocksnet_service_defaults()
 DEFAULT_POPULATION_SHARE_BY_SERVICE = {
     "hospital": 1.0,
     "polyclinic": 1.0,
@@ -261,33 +259,30 @@ def _read_boundary(boundary_path: Path) -> gpd.GeoDataFrame:
     return boundary
 
 
-def _read_quarters(quarters_path: Path) -> gpd.GeoDataFrame:
-    quarters = read_geodata(quarters_path)
-    if quarters.empty:
-        raise ValueError(f"Quarters layer is empty: {quarters_path}")
-    return quarters
+def _read_blocks(blocks_path: Path) -> gpd.GeoDataFrame:
+    blocks = read_geodata(blocks_path)
+    if blocks.empty:
+        raise ValueError(f"Blocks layer is empty: {blocks_path}")
+    return blocks
 
 
 def _derive_has_living_from_buildings(units: gpd.GeoDataFrame, city_dir: Path) -> pd.Series:
     flags = pd.Series(False, index=units.index, dtype=bool)
     buildings_path = city_dir / "derived_layers" / "buildings_floor_enriched.parquet"
     if not buildings_path.exists():
-        _warn(
-            "buildings_floor_enriched.parquet not found; "
-            "falling back to quarter-level residential proxies for accessibility preview mask."
+        raise FileNotFoundError(
+            "Missing required buildings layer for strict living-mask derivation: "
+            f"{buildings_path}"
         )
-        return flags
     try:
         buildings = read_geodata(buildings_path)
     except Exception as exc:  # noqa: BLE001
-        _warn(f"Could not read buildings_floor_enriched: {exc}")
-        return flags
+        raise RuntimeError(f"Could not read required buildings_floor_enriched: {exc}") from exc
     if buildings.empty or "is_living" not in buildings.columns:
-        _warn(
-            "No is_living column in buildings_floor_enriched; "
-            "falling back to quarter-level residential proxies for accessibility preview mask."
+        raise ValueError(
+            "Required column is_living is missing in buildings_floor_enriched.parquet; "
+            "strict mode does not allow fallback proxies."
         )
-        return flags
 
     living = pd.to_numeric(buildings["is_living"], errors="coerce")
     living_gdf = buildings.loc[living >= 0.5, ["geometry"]].copy()
@@ -312,6 +307,47 @@ def _read_graph_pickle(graph_path: Path) -> nx.MultiDiGraph:
     graph = graph.copy()
     graph.graph["crs"] = _to_epsg_int(graph.graph.get("crs"))
     return graph
+
+
+def _calculate_accessibility_matrix_native(
+    units: gpd.GeoDataFrame,
+    graph: nx.Graph,
+    *,
+    weight_key: str = "time_min",
+) -> pd.DataFrame:
+    if units.empty:
+        return pd.DataFrame()
+    work = units[["geometry"]].copy()
+    if work.crs is None:
+        work = work.set_crs(4326)
+    graph_crs = graph.graph.get("crs")
+    if graph_crs is None:
+        raise ValueError("Graph CRS is missing for native accessibility matrix build.")
+    work = work.to_crs(graph_crs)
+    pts = work.geometry.representative_point()
+    node_ids = ox.distance.nearest_nodes(graph, X=pts.x.to_numpy(), Y=pts.y.to_numpy())
+    idx = list(units.index)
+    node_by_unit = {unit_idx: node_ids[pos] for pos, unit_idx in enumerate(idx)}
+    unique_nodes = sorted(set(node_ids))
+    lengths_by_source: dict = {}
+    for source in unique_nodes:
+        lengths_by_source[source] = nx.single_source_dijkstra_path_length(
+            graph,
+            source,
+            weight=weight_key,
+        )
+
+    matrix = pd.DataFrame(np.inf, index=idx, columns=idx, dtype=float)
+    np.fill_diagonal(matrix.values, 0.0)
+    for src_unit in idx:
+        src_node = node_by_unit[src_unit]
+        lengths = lengths_by_source[src_node]
+        for dst_unit in idx:
+            dst_node = node_by_unit[dst_unit]
+            distance = lengths.get(dst_node)
+            if distance is not None:
+                matrix.loc[src_unit, dst_unit] = float(distance)
+    return matrix
 
 
 def _first_number(value) -> float | None:
@@ -348,7 +384,7 @@ def _normalize_raw_osm(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 
 def _download_service_raw(boundary_gdf: gpd.GeoDataFrame, service: str) -> gpd.GeoDataFrame:
     boundary_wgs84 = boundary_gdf.to_crs(4326)
-    polygon = boundary_wgs84.union_all().convex_hull
+    polygon = boundary_wgs84.union_all()
     queries = SERVICE_SPECS[service].tags
     frames: list[gpd.GeoDataFrame] = []
     for idx, tags in enumerate(queries, start=1):
@@ -371,7 +407,12 @@ def _download_service_raw(boundary_gdf: gpd.GeoDataFrame, service: str) -> gpd.G
     return merged
 
 
-def _capacity_from_row(row: pd.Series, service: str) -> float:
+def _capacity_from_row(
+    row: pd.Series,
+    service: str,
+    *,
+    allow_default_fallback: bool,
+) -> float:
     if service == "hospital":
         beds = _first_number(row.get("beds"))
         if beds is not None and beds > 0:
@@ -379,23 +420,25 @@ def _capacity_from_row(row: pd.Series, service: str) -> float:
     cap = _first_number(row.get("capacity"))
     if cap is not None and cap > 0:
         return cap
-    return float(DEFAULT_CAPACITY_BY_SERVICE[service])
+    if allow_default_fallback:
+        return float(DEFAULT_CAPACITY_BY_SERVICE[service])
+    source_uid = str(row.get("source_uid", "<unknown>"))
+    raise ValueError(
+        f"Missing explicit capacity for service [{service}] at OSM object {source_uid}. "
+        "Fail-fast mode is active (no fallback defaults)."
+    )
 
 
 def _service_accessibility_min(service: str, args: argparse.Namespace) -> float:
     if args.service_radius_min is not None:
         return float(args.service_radius_min)
-    blocksnet_name = SERVICE_SPECS[service].blocksnet_name
-    config = BLOCKSNET_SERVICE_DEFAULTS.get(blocksnet_name, {})
-    return float(config.get("accessibility", 60.0))
+    return float(DEFAULT_ACCESSIBILITY_MIN_BY_SERVICE.get(service, 60.0))
 
 
 def _service_demand_per_1000(service: str, args: argparse.Namespace) -> float:
     if args.demand_per_1000 is not None:
         return float(args.demand_per_1000)
-    blocksnet_name = SERVICE_SPECS[service].blocksnet_name
-    config = BLOCKSNET_SERVICE_DEFAULTS.get(blocksnet_name, {})
-    return float(config.get("demand", ARCTIC_DEFAULT_POPULATION))
+    return float(DEFAULT_DEMAND_PER_1000_BY_SERVICE.get(service, ARCTIC_DEFAULT_POPULATION))
 
 
 def _service_population_share(service: str) -> float:
@@ -412,23 +455,159 @@ def _to_points(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     return points
 
 
-def _aggregate_capacity_to_quarters(service_points: gpd.GeoDataFrame, quarters_gdf: gpd.GeoDataFrame) -> pd.Series:
+def _aggregate_capacity_to_blocks(service_points: gpd.GeoDataFrame, blocks_gdf: gpd.GeoDataFrame) -> pd.Series:
     if service_points.empty:
-        return pd.Series(0.0, index=quarters_gdf.index, dtype=float)
-    points = service_points.to_crs(quarters_gdf.crs)
-    quarters_geom = quarters_gdf[["geometry"]].copy()
-    joined = gpd.sjoin(points[["capacity_est", "geometry"]], quarters_geom, how="inner", predicate="intersects")
+        return pd.Series(0.0, index=blocks_gdf.index, dtype=float)
+    points = service_points.to_crs(blocks_gdf.crs)
+    blocks_geom = blocks_gdf[["geometry"]].copy()
+    joined = gpd.sjoin(points[["capacity_est", "geometry"]], blocks_geom, how="inner", predicate="intersects")
     if joined.empty:
-        return pd.Series(0.0, index=quarters_gdf.index, dtype=float)
-    by_quarter = joined.groupby("index_right")["capacity_est"].sum()
-    return by_quarter.reindex(quarters_gdf.index).fillna(0.0).astype(float)
+        return pd.Series(0.0, index=blocks_gdf.index, dtype=float)
+    by_block = joined.groupby("index_right")["capacity_est"].sum()
+    return by_block.reindex(blocks_gdf.index).fillna(0.0).astype(float)
 
 
-def _detect_population_column(quarters: gpd.GeoDataFrame) -> str | None:
+def _detect_population_column(blocks: gpd.GeoDataFrame) -> str | None:
     for col in ("population_total", "population_proxy", "population"):
-        if col in quarters.columns:
+        if col in blocks.columns:
             return col
     return None
+
+
+def _load_arctic_calculate_provision():
+    repo_root = Path(__file__).resolve().parents[2]
+    arctic_path = repo_root / "arctic_access"
+    if str(arctic_path) not in sys.path:
+        sys.path.insert(0, str(arctic_path))
+    from scripts.model.model import calculate_provision  # type: ignore
+
+    return calculate_provision
+
+
+def _build_city_graph_dict_from_matrix(matrix: pd.DataFrame) -> dict:
+    graph: dict = {}
+    for source in matrix.index:
+        source_key = source.item() if hasattr(source, "item") else source
+        edges = {}
+        for target in matrix.columns:
+            if source == target:
+                continue
+            weight = pd.to_numeric(matrix.loc[source, target], errors="coerce")
+            if pd.isna(weight):
+                continue
+            target_key = target.item() if hasattr(target, "item") else target
+            edges[target_key] = {"weight": float(weight)}
+        graph[source_key] = edges
+    return graph
+
+
+def _assignment_matrix_to_links(assignments: pd.DataFrame) -> pd.DataFrame:
+    if assignments is None or assignments.empty:
+        return pd.DataFrame(columns=["source", "target", "value"])
+    links: list[dict] = []
+    for source in assignments.index:
+        row = assignments.loc[source]
+        for target, value in row.items():
+            flow = pd.to_numeric(value, errors="coerce")
+            if pd.isna(flow) or float(flow) <= 0.0:
+                continue
+            links.append(
+                {
+                    "source": source.item() if hasattr(source, "item") else source,
+                    "target": target.item() if hasattr(target, "item") else target,
+                    "value": float(flow),
+                }
+            )
+    return pd.DataFrame(links, columns=["source", "target", "value"])
+
+
+def _run_arctic_lp_provision(
+    blocks_df: gpd.GeoDataFrame,
+    accessibility_matrix: pd.DataFrame,
+    *,
+    service: str,
+    service_radius_min: float,
+    service_demand_per_1000: float,
+) -> tuple[gpd.GeoDataFrame, pd.DataFrame]:
+    def _safe_float(value) -> float:
+        parsed = pd.to_numeric(value, errors="coerce")
+        if pd.isna(parsed):
+            return 0.0
+        return float(parsed)
+
+    calculate_provision = _load_arctic_calculate_provision()
+    work = blocks_df.copy()
+    if "name" in work.columns:
+        work["name"] = work["name"].astype(str)
+        work = work.set_index("name", drop=False)
+    else:
+        work["name"] = work.index.astype(str)
+        work = work.set_index("name", drop=False)
+
+    if "demand" not in work.columns:
+        work["demand"] = 0.0
+    if "capacity" not in work.columns:
+        work["capacity"] = 0.0
+    work["demand"] = pd.to_numeric(work["demand"], errors="coerce").fillna(0.0).astype(float)
+    work["capacity"] = pd.to_numeric(work["capacity"], errors="coerce").fillna(0.0).astype(float)
+    if "population" not in work.columns:
+        work["population"] = 0.0
+    work["population"] = pd.to_numeric(work["population"], errors="coerce").fillna(0.0).astype(float)
+
+    if work.crs is None:
+        work = work.set_crs(4326)
+    epsg = _to_epsg_int(work.crs)
+    matrix = accessibility_matrix.copy()
+    matrix.index = work.index
+    matrix.columns = work.index
+    service_capacity_col = f"capacity_{service}"
+    city_model = {
+        "epsg": epsg,
+        "blocks": [
+            {
+                "id": str(name),
+                "name": str(name),
+                "geometry": row.geometry,
+                "population": _safe_float(row.get("population")),
+                "demand": _safe_float(row.get("demand")),
+                service_capacity_col: _safe_float(row.get("capacity")),
+            }
+            for name, row in work.iterrows()
+        ],
+        "graph": _build_city_graph_dict_from_matrix(matrix),
+        "service_types": {
+            service: {
+                "accessibility": float(service_radius_min),
+                "demand": float(service_demand_per_1000),
+            }
+        },
+    }
+    provision_df, assignments = calculate_provision(
+        city_model=city_model,
+        service_type=service,
+        method="lp",
+    )
+    provision_df = provision_df.copy()
+    provision_df.index = provision_df.index.astype(str)
+    work = work.copy()
+    work.index = work.index.astype(str)
+    for col in ("demand_within", "demand_without", "capacity_left", "provision"):
+        if col in provision_df.columns:
+            work[col] = pd.to_numeric(provision_df[col], errors="coerce").fillna(0.0)
+        else:
+            work[col] = 0.0
+    work["demand_left"] = (
+        pd.to_numeric(work["demand"], errors="coerce").fillna(0.0)
+        - pd.to_numeric(work["demand_within"], errors="coerce").fillna(0.0)
+        - pd.to_numeric(work["demand_without"], errors="coerce").fillna(0.0)
+    ).clip(lower=0.0)
+    work["capacity_within"] = 0.0
+    work["capacity_without"] = 0.0
+    work["provision_strong"] = pd.to_numeric(work["provision"], errors="coerce").fillna(0.0)
+    work["provision_weak"] = work["provision_strong"]
+    links_df = _assignment_matrix_to_links(assignments)
+    result = gpd.GeoDataFrame(work, geometry="geometry", crs=work.crs)
+    return result, links_df
 
 
 def _save_geodata(gdf: gpd.GeoDataFrame, path: Path) -> None:
@@ -551,7 +730,7 @@ def _plot_accessibility_previews(
     row_mean = matrix_numeric.mean(axis=1, skipna=True)
 
     units_plot = units[["geometry"]].copy()
-    # Accessibility map policy: color only quarters with residential stock.
+    # Accessibility map policy: color only blocks with residential stock.
     residential_mask = pd.Series(False, index=units.index, dtype=bool)
     if "has_living_buildings" in units.columns:
         residential_mask = units["has_living_buildings"].fillna(False).astype(bool)
@@ -593,7 +772,7 @@ def _plot_accessibility_previews(
                 zorder=3,
             )
         ax.set_title(
-            "Accessibility: mean travel time (residential quarters only)",
+            "Accessibility: mean travel time (residential blocks only)",
             fontsize=19,
             fontweight="bold",
             color="#ffffff",
@@ -660,19 +839,19 @@ def _plot_block_selection_status(
 def _coerce_solver_blocks_geodataframe(
     solver_blocks: pd.DataFrame | gpd.GeoDataFrame,
     *,
-    quarters_ref: gpd.GeoDataFrame | None = None,
+    blocks_ref: gpd.GeoDataFrame | None = None,
 ) -> gpd.GeoDataFrame | None:
     gdf = solver_blocks.copy()
     if isinstance(gdf, gpd.GeoDataFrame) and "geometry" in gdf.columns:
         return gdf
 
-    if "geometry" not in gdf.columns and quarters_ref is not None and "name" in gdf.columns:
-        name_to_geom = {str(idx): geom for idx, geom in quarters_ref.geometry.items()}
+    if "geometry" not in gdf.columns and blocks_ref is not None and "name" in gdf.columns:
+        name_to_geom = {str(idx): geom for idx, geom in blocks_ref.geometry.items()}
         gdf["geometry"] = gdf["name"].astype(str).map(name_to_geom)
 
     if "geometry" not in gdf.columns:
         return None
-    return gpd.GeoDataFrame(gdf, geometry="geometry", crs=(quarters_ref.crs if quarters_ref is not None else 4326))
+    return gpd.GeoDataFrame(gdf, geometry="geometry", crs=(blocks_ref.crs if blocks_ref is not None else 4326))
 
 
 def _plot_service_lp_preview(
@@ -680,7 +859,7 @@ def _plot_service_lp_preview(
     service: str,
     out_path: Path,
     *,
-    quarters_ref: gpd.GeoDataFrame | None = None,
+    blocks_ref: gpd.GeoDataFrame | None = None,
     boundary: gpd.GeoDataFrame | None = None,
 ) -> str | None:
     import matplotlib
@@ -692,7 +871,7 @@ def _plot_service_lp_preview(
         return None
     _log(f"Preview step: rendering LP map for service [{service}]...")
 
-    gdf = _coerce_solver_blocks_geodataframe(solver_blocks, quarters_ref=quarters_ref)
+    gdf = _coerce_solver_blocks_geodataframe(solver_blocks, blocks_ref=blocks_ref)
     if gdf is None:
         return None
     gdf = gdf[gdf.geometry.notna() & ~gdf.geometry.is_empty].copy()
@@ -822,7 +1001,7 @@ def _plot_placement_status_preview(
     service: str,
     out_path: Path,
     *,
-    quarters_ref: gpd.GeoDataFrame | None = None,
+    blocks_ref: gpd.GeoDataFrame | None = None,
     boundary: gpd.GeoDataFrame | None = None,
 ) -> str | None:
     import matplotlib
@@ -831,7 +1010,7 @@ def _plot_placement_status_preview(
     import matplotlib.pyplot as plt
     from shapely.geometry import box
 
-    gdf = _coerce_solver_blocks_geodataframe(blocks_after, quarters_ref=quarters_ref)
+    gdf = _coerce_solver_blocks_geodataframe(blocks_after, blocks_ref=blocks_ref)
     if gdf is None or gdf.empty:
         return None
     gdf = gdf[gdf.geometry.notna() & ~gdf.geometry.is_empty].copy()
@@ -874,7 +1053,7 @@ def _plot_placement_status_preview(
         "existing": "existing service kept",
         "expanded": "existing service expanded",
         "new": "new service added",
-        "inactive": "no service in quarter",
+        "inactive": "no service in block",
     }
     fig, ax = plt.subplots(figsize=(12, 10))
     fig.patch.set_facecolor("#6b6b6b")
@@ -939,7 +1118,7 @@ def _plot_placement_after_preview(
     service: str,
     out_path: Path,
     *,
-    quarters_ref: gpd.GeoDataFrame | None = None,
+    blocks_ref: gpd.GeoDataFrame | None = None,
     boundary: gpd.GeoDataFrame | None = None,
 ) -> str | None:
     after = blocks_after.copy()
@@ -947,7 +1126,7 @@ def _plot_placement_after_preview(
         after["provision_strong"] = after["provision_strong_after"]
     if "demand_without_after" in after.columns:
         after["demand_without"] = after["demand_without_after"]
-    return _plot_service_lp_preview(after, f"{service} exact-after", out_path, quarters_ref=quarters_ref, boundary=boundary)
+    return _plot_service_lp_preview(after, f"{service} exact-after", out_path, blocks_ref=blocks_ref, boundary=boundary)
 
 
 def _run_exact_placement_for_service(
@@ -957,7 +1136,7 @@ def _run_exact_placement_for_service(
     output_dir: Path,
     *,
     preview_dir: Path,
-    quarters_ref: gpd.GeoDataFrame,
+    blocks_ref: gpd.GeoDataFrame,
     boundary: gpd.GeoDataFrame,
     use_cache: bool = True,
 ) -> dict:
@@ -1037,16 +1216,15 @@ def _run_exact_placement_for_service(
     target_demand = target_demand_full.reindex(blocks_after.index).fillna(0.0)
     blocks_after["target_unmet_demand"] = target_demand
 
-    # Re-evaluate post-placement provision using the same mechanism as the base solver inputs.
-    reprovision_input = blocks_after[["demand", "geometry"]].copy()
-    reprovision_input["capacity"] = blocks_after["optimized_capacity_total"]
-    provision_after_df, links_after_df = competitive_provision(
-        blocks_df=reprovision_input,
+    # Re-evaluate post-placement provision using the same arctic lp_coverage solver.
+    reprovision_input = blocks_after[["name", "population", "demand", "geometry"]].copy()
+    reprovision_input["capacity"] = pd.to_numeric(blocks_after["optimized_capacity_total"], errors="coerce").fillna(0.0)
+    provision_after_df, links_after_df = _run_arctic_lp_provision(
+        blocks_df=gpd.GeoDataFrame(reprovision_input, geometry="geometry", crs=blocks_after.crs),
         accessibility_matrix=sub_mx,
-        accessibility=int(math.ceil(float(solver_blocks["service_radius_min"].iloc[0]))),
-        demand=None,
-        self_supply=True,
-        max_depth=1,
+        service=service,
+        service_radius_min=float(solver_blocks["service_radius_min"].iloc[0]),
+        service_demand_per_1000=float(solver_blocks["service_demand_per_1000"].iloc[0]),
     )
     for before_col, after_col in (
         ("demand_within", "demand_within_after"),
@@ -1067,7 +1245,7 @@ def _run_exact_placement_for_service(
     assignment_links.to_csv(assignment_links_path, index=False)
     provision_links_after_path = output_dir / "provision_links_after.csv"
     provision_links_after_path.parent.mkdir(parents=True, exist_ok=True)
-    links_after_df.reset_index().to_csv(provision_links_after_path, index=False)
+    links_after_df.to_csv(provision_links_after_path, index=False)
 
     status_png = None
     after_png = None
@@ -1076,7 +1254,7 @@ def _run_exact_placement_for_service(
             blocks_after,
             service,
             preview_dir / gallery_targets["status"],
-            quarters_ref=quarters_ref,
+            blocks_ref=blocks_ref,
             boundary=boundary,
         )
     if gallery_targets.get("after"):
@@ -1084,7 +1262,7 @@ def _run_exact_placement_for_service(
             blocks_after,
             service,
             preview_dir / gallery_targets["after"],
-            quarters_ref=quarters_ref,
+            blocks_ref=blocks_ref,
             boundary=boundary,
         )
 
@@ -1142,7 +1320,7 @@ def main() -> None:
     city_dir = _resolve_city_dir(args)
 
     boundary_path = city_dir / "analysis_territory" / "buffer.parquet"
-    quarters_path = city_dir / "derived_layers" / "quarters_clipped.parquet"
+    blocks_layer_path = city_dir / "derived_layers" / "blocks_clipped.parquet"
     graph_path = city_dir / "intermodal_graph_iduedu" / "graph.pkl"
 
     output_root = city_dir / "pipeline_2"
@@ -1164,24 +1342,24 @@ def main() -> None:
         _log("Cache mode: enabled")
 
     boundary = _read_boundary(boundary_path)
-    quarters = _read_quarters(quarters_path)
+    blocks = _read_blocks(blocks_layer_path)
     graph = _read_graph_pickle(graph_path)
 
-    population_col = _detect_population_column(quarters)
+    population_col = _detect_population_column(blocks)
     if population_col is None:
-        _warn(
-            "No population columns found in quarters. "
-            f"Using arctic default population={args.population_default} for all units."
+        raise ValueError(
+            "No population columns found in blocks. Strict mode requires one of: "
+            "population_total, population_proxy, population."
         )
     else:
         _log(f"Population source column: {population_col}")
-    _log(f"Quarters features: {len(quarters)}")
+    _log(f"Blocks features: {len(blocks)}")
     _log(f"Intermodal graph: nodes={graph.number_of_nodes()}, edges={graph.number_of_edges()}")
 
     _log("STEP data_collection: downloading/caching raw OSM service layers inside analysis territory.")
-    _log("STEP capacity_aggregation: converting raw service objects to per-quarter capacities.")
+    _log("STEP capacity_aggregation: converting raw service objects to per-block capacities.")
 
-    # 1) Download/cache raw service layers and aggregate capacities to quarters.
+    # 1) Download/cache raw service layers and aggregate capacities to blocks.
     capacity_columns: dict[str, pd.Series] = {}
     raw_stats: dict[str, dict] = {}
     for service in services:
@@ -1194,23 +1372,41 @@ def main() -> None:
             if raw.empty:
                 _warn(f"Raw service layer [{service}] is empty.")
             else:
-                raw["capacity_est"] = raw.apply(lambda row: _capacity_from_row(row, service), axis=1)
+                raw["capacity_est"] = raw.apply(
+                    lambda row: _capacity_from_row(
+                        row,
+                        service,
+                        allow_default_fallback=bool(args.capacity_default_fallback),
+                    ),
+                    axis=1,
+                )
             _save_geodata(raw, raw_path)
             _log(f"Saved raw service layer [{service}]: {_log_name(raw_path)} ({len(raw)} features)")
 
         if "capacity_est" not in raw.columns:
             raw = raw.copy()
-            raw["capacity_est"] = raw.apply(lambda row: _capacity_from_row(row, service), axis=1) if not raw.empty else 0.0
+            raw["capacity_est"] = (
+                raw.apply(
+                    lambda row: _capacity_from_row(
+                        row,
+                        service,
+                        allow_default_fallback=bool(args.capacity_default_fallback),
+                    ),
+                    axis=1,
+                )
+                if not raw.empty
+                else 0.0
+            )
             _save_geodata(raw, raw_path)
 
         points = _to_points(raw) if not raw.empty else raw
-        aggregated = _aggregate_capacity_to_quarters(points, quarters)
+        aggregated = _aggregate_capacity_to_blocks(points, blocks)
         cap_col = f"capacity_{service}"
         capacity_columns[cap_col] = aggregated
 
         raw_stats[service] = {
             "raw_features": int(len(raw)),
-            "quarters_with_capacity": int((aggregated > 0).sum()),
+            "blocks_with_capacity": int((aggregated > 0).sum()),
             "capacity_total": float(aggregated.sum()),
             "raw_path": str(raw_path),
         }
@@ -1218,22 +1414,18 @@ def main() -> None:
     _log("STEP matrix_build: preparing unified spatial units for accessibility matrix.")
 
     # 2) Build a unified spatial-units layer for matrix + solver prep.
-    if population_col is None:
-        units_all = quarters[["geometry"]].copy()
-        units_all["population"] = float(args.population_default)
-    else:
-        units_all = quarters[[population_col, "geometry"]].copy()
-        units_all = units_all.rename(columns={population_col: "population"})
-        units_all["population"] = pd.to_numeric(units_all["population"], errors="coerce").fillna(0.0)
+    units_all = blocks[[population_col, "geometry"]].copy()
+    units_all = units_all.rename(columns={population_col: "population"})
+    units_all["population"] = pd.to_numeric(units_all["population"], errors="coerce").fillna(0.0)
     # Keep residential context for accessibility-map styling.
     for residential_col in ("residential", "living_area", "living_area_proxy"):
-        if residential_col in quarters.columns:
-            units_all[residential_col] = quarters[residential_col].reindex(units_all.index)
+        if residential_col in blocks.columns:
+            units_all[residential_col] = blocks[residential_col].reindex(units_all.index)
 
     for cap_col, series in capacity_columns.items():
         units_all[cap_col] = series.reindex(units_all.index).fillna(0.0).astype(float)
 
-    # Strict rule: quarters without population are excluded from all pipeline_2 calculations.
+    # Strict rule: blocks without population are excluded from all pipeline_2 calculations.
     units_mask = units_all["population"] > 0
     units = units_all[units_mask].copy()
     units["has_living_buildings"] = _derive_has_living_from_buildings(units, city_dir)
@@ -1280,13 +1472,13 @@ def main() -> None:
         n_units = int(len(units))
         approx_pairs = n_units * n_units
         _log(
-            "Computing accessibility matrix via blocksnet.relations.calculate_accessibility_matrix "
+            "Computing accessibility matrix via native graph shortest-path routine "
             f"for n_units={n_units} (~{approx_pairs:,} pair entries). This can take time."
         )
         started = time.time()
         matrix_union = _run_with_heartbeat(
             "Matrix build",
-            lambda: calculate_accessibility_matrix(units[["geometry"]].copy(), graph, weight_key="time_min"),
+            lambda: _calculate_accessibility_matrix_native(units[["geometry"]].copy(), graph, weight_key="time_min"),
             interval_s=20.0,
         )
         _save_dataframe(matrix_union, matrix_path)
@@ -1415,7 +1607,7 @@ def main() -> None:
                             cached_blocks,
                             service,
                             lp_preview_target,
-                            quarters_ref=quarters,
+                            blocks_ref=blocks,
                             boundary=boundary,
                         )
                     except Exception:
@@ -1439,7 +1631,7 @@ def main() -> None:
                             service,
                             output_root / "placement_exact" / service,
                             preview_dir=preview_dir,
-                            quarters_ref=quarters,
+                            blocks_ref=blocks,
                             boundary=boundary,
                             use_cache=(not args.no_cache),
                         )
@@ -1452,7 +1644,7 @@ def main() -> None:
         service_demand_per_1000 = _service_demand_per_1000(service, args)
         service_radius_min = _service_accessibility_min(service, args)
         blocks["demand"] = _calc_service_demand(blocks["population"], service, service_demand_per_1000)
-        # LP policy: include only quarters with living buildings OR own service capacity.
+        # LP policy: include only blocks with living buildings OR own service capacity.
         blocks["has_living_buildings"] = blocks["has_living_buildings"].fillna(False).astype(bool)
         blocks = blocks[blocks["has_living_buildings"] | (blocks["capacity"] > 0)].copy()
         if blocks.empty:
@@ -1472,15 +1664,18 @@ def main() -> None:
         )
         sub_mx = matrix_union.loc[blocks.index, blocks.index].copy()
         provision_started = time.time()
-        provision_df, links_df = competitive_provision(
-            blocks_df=blocks[["population", "demand", "capacity", "geometry"]].copy(),
+        provision_df, links_df = _run_arctic_lp_provision(
+            blocks_df=gpd.GeoDataFrame(
+                blocks[["population", "demand", "capacity", "geometry"]].copy().assign(name=blocks["unit_name"].astype(str)),
+                geometry="geometry",
+                crs=blocks.crs,
+            ),
             accessibility_matrix=sub_mx,
-            accessibility=int(math.ceil(service_radius_min)),
-            demand=None,
-            self_supply=True,
-            max_depth=int(args.provision_max_depth),
+            service=service,
+            service_radius_min=float(service_radius_min),
+            service_demand_per_1000=float(service_demand_per_1000),
         )
-        _log(f"Service [{service}] competitive_provision finished in {time.time() - provision_started:.1f}s")
+        _log(f"Service [{service}] arctic lp_coverage provision finished in {time.time() - provision_started:.1f}s")
         solver_blocks = provision_df.copy()
         if "geometry" not in solver_blocks.columns and "geometry" in blocks.columns:
             solver_blocks = solver_blocks.join(blocks[["geometry"]], how="left")
@@ -1497,7 +1692,7 @@ def main() -> None:
         _save_geodata(solver_blocks, blocks_path)
         _save_dataframe(sub_mx, matrix_service_path)
         links_path.parent.mkdir(parents=True, exist_ok=True)
-        links_df.reset_index().to_csv(links_path, index=False)
+        links_df.to_csv(links_path, index=False)
         if (not args.no_cache) and lp_preview_target.exists():
             lp_preview_path = str(lp_preview_target)
         else:
@@ -1505,7 +1700,7 @@ def main() -> None:
                 solver_blocks,
                 service,
                 lp_preview_target,
-                quarters_ref=quarters,
+                blocks_ref=blocks,
                 boundary=boundary,
             )
         summary = {
@@ -1556,7 +1751,7 @@ def main() -> None:
                     service,
                     output_root / "placement_exact" / service,
                     preview_dir=preview_dir,
-                    quarters_ref=quarters,
+                    blocks_ref=blocks,
                     boundary=boundary,
                     use_cache=(not args.no_cache),
                 )
@@ -1570,7 +1765,7 @@ def main() -> None:
     manifest = {
         "city_bundle": str(city_dir),
         "boundary": str(boundary_path),
-        "quarters": str(quarters_path),
+        "blocks": str(blocks_layer_path),
         "graph": str(graph_path),
         "services": services,
         "service_radius_min": float(args.service_radius_min) if args.service_radius_min is not None else None,

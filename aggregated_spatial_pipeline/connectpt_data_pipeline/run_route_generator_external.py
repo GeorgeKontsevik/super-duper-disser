@@ -100,8 +100,8 @@ def _resolve_blocks_path(city_dir: Path, override: str | None) -> Path:
     if override:
         return Path(override).resolve()
     candidates = [
-        city_dir / "derived_layers" / "quarters_clipped.parquet",
-        city_dir / "derived_layers" / "quarters_sm_imputed.parquet",
+        city_dir / "derived_layers" / "blocks_clipped.parquet",
+        city_dir / "derived_layers" / "blocks_sm_imputed.parquet",
     ]
     for candidate in candidates:
         if candidate.exists():

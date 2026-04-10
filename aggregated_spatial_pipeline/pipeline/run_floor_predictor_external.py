@@ -41,8 +41,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--summary-path")
     parser.add_argument("--boundary-path")
     parser.add_argument("--preview-dir")
-    parser.add_argument("--simple-bad-is-living-restore", action="store_true")
+    parser.add_argument("--is-living-model-path")
+    parser.add_argument("--overpass-url", default=None)
+    parser.add_argument("--osm-timeout-s", type=int, default=180)
     parser.add_argument("--floor-ignore-missing-below-pct", type=float, default=2.0)
+    parser.add_argument("--is-living-only", action="store_true")
     args = parser.parse_args()
     if not any([args.place, args.joint_input_dir, args.buildings_path]):
         parser.error("Provide --place or --joint-input-dir or explicit --buildings-path/--land-use-path/--output-path.")
@@ -151,10 +154,15 @@ def _save_floor_previews(
     if enriched_norm is None or enriched_norm.empty:
         return outputs
 
-    before_is_living = pd.to_numeric(source_buildings.get("is_living"), errors="coerce")
-    before_storey = pd.to_numeric(source_buildings.get("storey"), errors="coerce")
-    after_is_living = pd.to_numeric(enriched_buildings.get("is_living"), errors="coerce")
-    after_storey = pd.to_numeric(enriched_buildings.get("storey"), errors="coerce")
+    def _numeric_col(frame: gpd.GeoDataFrame, column: str) -> pd.Series:
+        if column in frame.columns:
+            return pd.to_numeric(frame[column], errors="coerce")
+        return pd.Series(pd.NA, index=frame.index, dtype="Float64")
+
+    before_is_living = _numeric_col(source_buildings, "is_living").reindex(enriched_buildings.index)
+    before_storey = _numeric_col(source_buildings, "storey").reindex(enriched_buildings.index)
+    after_is_living = _numeric_col(enriched_buildings, "is_living")
+    after_storey = _numeric_col(enriched_buildings, "storey")
 
     target_mask = (
         before_is_living.isna()
@@ -163,7 +171,6 @@ def _save_floor_previews(
     ).fillna(False)
     resolved_mask = target_mask & after_is_living.notna() & after_storey.notna() & after_storey.gt(0)
     unresolved_mask = target_mask & ~resolved_mask
-    untouched_mask = ~target_mask
 
     status = enriched_norm.copy()
     status["floor_status"] = "usable building record"
@@ -198,6 +205,12 @@ def _save_floor_previews(
         [
             f"rows={int(len(enriched_buildings))}, targeted={int(target_mask.sum())}, resolved={int(resolved_mask.sum())}",
             f"is_living missing {metrics.get('is_living_missing_before')} -> {metrics.get('is_living_missing_after')}, storey missing {metrics.get('storey_missing_before_model')} -> {metrics.get('storey_missing_after_model')}",
+            (
+                "storey missing after split: "
+                f"living={metrics.get('storey_missing_after_model_living')}, "
+                f"non-living={metrics.get('storey_missing_after_model_non_living')} (often OK), "
+                f"unknown_living={metrics.get('storey_missing_after_model_unknown_living')}"
+            ),
         ],
     )
     ax.set_axis_off()
@@ -246,8 +259,11 @@ def main() -> None:
         buildings_path=buildings_path,
         land_use_path=land_use_path,
         output_path=output_path,
-        simple_bad_is_living_restore=bool(args.simple_bad_is_living_restore),
+        is_living_model_path=str(args.is_living_model_path) if args.is_living_model_path else None,
+        overpass_url=str(args.overpass_url) if args.overpass_url else None,
+        osm_timeout_s=int(args.osm_timeout_s),
         floor_ignore_missing_below_pct=float(args.floor_ignore_missing_below_pct),
+        is_living_only=bool(args.is_living_only),
     )
 
     source_buildings = read_geodata(buildings_path)
