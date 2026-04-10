@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import pickle
 import re
 import subprocess
 import sys
@@ -72,9 +73,27 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--n-routes", type=int, default=2)
     parser.add_argument("--top-k", type=int, default=50)
     parser.add_argument("--generate-routes", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--align-route-len-to-existing-mean-max",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "For ConnectPT route generation, align route-length bounds to existing routes: "
+            "min >= ceil(mean existing stops), max <= max existing stops."
+        ),
+    )
     parser.add_argument("--replace-in-intermodal", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--recompute-accessibility", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--recompute-provision", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--recompute-provision-only-access-problem-services",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Recompute provision after routes only for services where baseline accessibility "
+            "gap (demand_without) is positive."
+        ),
+    )
     parser.add_argument("--min-route-len", type=int, default=2)
     parser.add_argument("--max-route-len", type=int, default=8)
     parser.add_argument("--demand-time-weight", type=float, default=0.33)
@@ -221,6 +240,55 @@ def _run_route_generator(
     if not python_path.exists():
         raise FileNotFoundError(f"Missing project runtime: {python_path}")
 
+    min_route_len = int(args.min_route_len)
+    max_route_len = int(args.max_route_len)
+    route_len_policy: dict | None = None
+
+    if args.align_route_len_to_existing_mean_max:
+        stats = _compute_existing_route_stop_stats(city_dir=city_dir, modality=str(args.modality))
+        if stats is not None:
+            req_min = max(2, min_route_len)
+            req_max = max(req_min, max_route_len)
+            mean_floor_min = max(2, int(np.ceil(float(stats["mean_stops"]) - 1e-9)))
+            existing_max = max(2, int(stats["max_stops"]))
+            eff_min = max(req_min, mean_floor_min)
+            eff_max = min(req_max, existing_max)
+            conflict = False
+            if eff_max < eff_min:
+                conflict = True
+                if eff_min <= existing_max:
+                    eff_max = eff_min
+                else:
+                    eff_min = existing_max
+                    eff_max = existing_max
+
+            min_route_len = int(eff_min)
+            max_route_len = int(eff_max)
+            route_len_policy = {
+                "enabled": True,
+                "requested_min_route_len": int(req_min),
+                "requested_max_route_len": int(req_max),
+                "existing_route_count": int(stats["route_count"]),
+                "existing_mean_stops": float(stats["mean_stops"]),
+                "existing_median_stops": float(stats["median_stops"]),
+                "existing_min_stops": int(stats["min_stops"]),
+                "existing_max_stops": int(stats["max_stops"]),
+                "effective_min_route_len": int(min_route_len),
+                "effective_max_route_len": int(max_route_len),
+                "requested_bounds_conflicted_with_existing_stats": bool(conflict),
+            }
+            _log(
+                "Route-length policy aligned to existing routes: "
+                f"requested=[{req_min},{req_max}], "
+                f"existing_mean={stats['mean_stops']:.2f}, existing_max={existing_max}, "
+                f"effective=[{min_route_len},{max_route_len}]"
+            )
+        else:
+            route_len_policy = {"enabled": True, "stats_available": False}
+            _log("Route-length policy alignment requested, but existing route stats are unavailable; using requested bounds.")
+    else:
+        route_len_policy = {"enabled": False}
+
     cmd = [
         str(python_path),
         "-m",
@@ -232,9 +300,9 @@ def _run_route_generator(
         "--n-routes",
         str(int(args.n_routes)),
         "--min-route-len",
-        str(int(args.min_route_len)),
+        str(int(min_route_len)),
         "--max-route-len",
-        str(int(args.max_route_len)),
+        str(int(max_route_len)),
         "--demand-time-weight",
         str(float(args.demand_time_weight)),
         "--route-time-weight",
@@ -256,7 +324,42 @@ def _run_route_generator(
     summary_path = city_dir / "connectpt_routes_generator" / str(args.modality) / "summary.json"
     if not summary_path.exists():
         raise FileNotFoundError(f"Missing route-generator summary after run: {summary_path}")
-    return json.loads(summary_path.read_text(encoding="utf-8"))
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    summary["pipeline_route_length_policy"] = route_len_policy
+    return summary
+
+
+def _compute_existing_route_stop_stats(city_dir: Path, modality: str) -> dict | None:
+    intermodal_graph_path = city_dir / "intermodal_graph_iduedu" / "graph.pkl"
+    if not intermodal_graph_path.exists():
+        return None
+    with intermodal_graph_path.open("rb") as fh:
+        intermodal_graph = pickle.load(fh)
+
+    route_nodes: dict[str, set[int]] = {}
+    for u, v, _key, data in intermodal_graph.edges(keys=True, data=True):
+        if str(data.get("type")) != str(modality):
+            continue
+        route_key = data.get("name") or data.get("route")
+        if route_key is None:
+            continue
+        key = str(route_key)
+        if key not in route_nodes:
+            route_nodes[key] = set()
+        route_nodes[key].add(int(u))
+        route_nodes[key].add(int(v))
+
+    if not route_nodes:
+        return None
+
+    counts = np.array([len(nodes_set) for nodes_set in route_nodes.values()], dtype=float)
+    return {
+        "route_count": int(len(counts)),
+        "mean_stops": float(np.mean(counts)),
+        "median_stops": float(np.median(counts)),
+        "min_stops": int(np.min(counts)),
+        "max_stops": int(np.max(counts)),
+    }
 
 
 def _recompute_provision_after_routes(
@@ -368,12 +471,37 @@ def main() -> None:
     route_summary = None
     after_route_summaries: dict[str, dict] | None = None
     after_summary = None
+    services_for_recompute: list[str] = list(services)
+    skipped_services_no_access_problem: list[str] = []
+    if args.recompute_provision_only_access_problem_services:
+        service_gaps = baseline_summary.get("service_gaps") or {}
+        services_for_recompute = [
+            service
+            for service in services
+            if float((service_gaps.get(service) or {}).get("accessibility_gap_total", 0.0)) > 0.0
+        ]
+        skipped_services_no_access_problem = [service for service in services if service not in services_for_recompute]
+        if services_for_recompute:
+            _log(
+                "Provision recompute will run only for services with accessibility gap > 0: "
+                f"{services_for_recompute} (skipped={skipped_services_no_access_problem})"
+            )
+        else:
+            _log(
+                "No services with accessibility gap > 0 were found in baseline. "
+                "Provision recompute is skipped."
+            )
+
     if args.generate_routes:
         route_summary = _run_route_generator(repo_root=repo_root, city_dir=city_dir, args=args)
-        if args.recompute_provision and route_summary.get("recomputed_accessibility", {}).get("matrix_path"):
+        if (
+            args.recompute_provision
+            and services_for_recompute
+            and route_summary.get("recomputed_accessibility", {}).get("matrix_path")
+        ):
             after_route_summaries = _recompute_provision_after_routes(
                 city_dir=city_dir,
-                services=services,
+                services=services_for_recompute,
                 route_summary=route_summary,
                 output_root=output_root,
             )
@@ -403,6 +531,9 @@ def main() -> None:
         "provision_engine": PROVISION_ENGINE_NAME,
         "connectpt_modality": str(args.modality),
         "connectpt_n_routes": int(args.n_routes),
+        "recompute_provision_only_access_problem_services": bool(args.recompute_provision_only_access_problem_services),
+        "services_for_recompute": services_for_recompute,
+        "services_skipped_no_access_problem": skipped_services_no_access_problem,
         "baseline": baseline_summary,
         "route_generation": route_summary,
         "provision_after_routes": after_route_summaries,
