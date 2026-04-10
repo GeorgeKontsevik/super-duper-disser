@@ -373,18 +373,16 @@ FLOOR_PREDICTOR_DIR=/Users/gk/Code/somewhere/floor-predictor \
 Он запускается поверх уже готового city bundle из `pipeline_1` и делает шаги строго в таком порядке:
 
 1. `data_collection`: скачать raw OSM сервисы внутри той же analysis territory (`buffer.parquet`).
-2. `capacity_aggregation`: агрегировать сервисные capacity по кварталам.
+2. `capacity_aggregation`: агрегировать сервисные capacity по blocks.
 3. `matrix_build`: посчитать матрицу доступности между блоками через native shortest-path расчёт по intermodal graph.
 4. `solver_prep`: сохранить solver-ready таблицы по каждому сервису (`demand`, `demand_within`, `demand_without`, `capacity`, `capacity_left`, `provision`).
+5. `accessibility_first` (новый шаг): собрать multi-service рейтинг «страдающих» blocks, сгенерировать небольшое число ConnectPT маршрутов и пересчитать provision после новых маршрутов.
 
 Теги, которые используются на шаге `data_collection`:
 
-- `health`: `{"amenity": ["hospital", "clinic", "doctors", "dentist"]}`, `{"healthcare": true}`
-- `post`: `{"amenity": "post_office"}`
-- `culture`: `{"amenity": ["theatre", "cinema", "arts_centre", "community_centre", "library"]}`, `{"tourism": ["museum", "gallery"]}`
-- `port`: `{"landuse": "port"}`, `{"amenity": "ferry_terminal"}`, `{"harbour": true}`
-- `airport`: `{"aeroway": ["aerodrome", "terminal"]}`
-- `marina`: `{"leisure": "marina"}`
+- `hospital`: `{"amenity": "hospital"}`, `{"healthcare": "hospital"}`
+- `polyclinic`: `{"amenity": "clinic"}`, `{"healthcare": ["clinic", "centre"]}`
+- `school`: `{"amenity": "school"}`
 
 Пример запуска:
 
@@ -406,6 +404,40 @@ PYTHONPATH=/Users/gk/Code/super-duper-disser \
 - `pipeline_2/solver_inputs/<service>/adj_matrix_time_min.parquet`
 - `pipeline_2/solver_inputs/<service>/provision_links.csv`
 - `pipeline_2/manifest_prepare_solver_inputs.json`
+
+### Pipeline_2 Accessibility-First Step
+
+Отдельный шаг:
+
+- `aggregated_spatial_pipeline/pipeline/run_pipeline2_accessibility_first.py`
+
+Логика:
+
+1. Собрать combined `suffering_blocks` по 3 сервисам:
+   - `accessibility_gap` = `demand_without`
+   - `capacity_gap` = `demand_left`
+2. Выбрать наиболее страдающие blocks.
+3. Сгенерировать небольшое число ConnectPT маршрутов (например, `n_routes=2`).
+4. Пересчитать provision после новых маршрутов на обновлённой матрице доступности.
+
+Пример запуска:
+
+```bash
+PYTHONPATH=/Users/gk/Code/super-duper-disser \
+/Users/gk/Code/super-duper-disser/.venv/bin/python -m aggregated_spatial_pipeline.pipeline.run_pipeline2_accessibility_first \
+  --joint-input-dir /Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/joint_inputs/vienna_austria \
+  --services hospital polyclinic school \
+  --modality bus \
+  --n-routes 2
+```
+
+Артефакты шага:
+
+- `pipeline_2/accessibility_first/suffering_blocks_baseline.parquet`
+- `pipeline_2/accessibility_first/top_blocks_access_gap_baseline.csv`
+- `pipeline_2/accessibility_first/top_blocks_total_gap_baseline.csv`
+- `pipeline_2/accessibility_first/provision_after_routes/<service>/blocks_solver_after_routes.parquet`
+- `pipeline_2/accessibility_first/manifest_accessibility_first.json`
 
 ## Главные сущности
 
