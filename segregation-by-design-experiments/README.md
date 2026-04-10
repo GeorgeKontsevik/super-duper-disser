@@ -1,5 +1,32 @@
 # Street Pattern Experiments
 
+## Быстрый запуск
+
+Из корня репозитория:
+
+```bash
+cd /Users/gk/Code/super-duper-disser && \
+PYTHONPATH=/Users/gk/Code/super-duper-disser \
+MPLCONFIGDIR=/Users/gk/Code/super-duper-disser/.cache/mpl-street-pattern \
+.venv/bin/python segregation-by-design-experiments/run_street_pattern_city.py \
+  --place "Portland, Oregon, USA" \
+  --buffer-m 5000 \
+  --grid-step 500 \
+  --road-source auto \
+  --map-coloring multivariate \
+  --device cpu \
+  --output aggregated_spatial_pipeline/outputs/joint_inputs_storyline_b5000_g500/portland_oregon_usa/street_pattern_b5000_g500/portland_oregon_usa_summary.json
+```
+
+Серийный прогон по storyline-списку (единые `buffer=5000`, `step=500`):
+
+```bash
+cd /Users/gk/Code/super-duper-disser && \
+XDG_CACHE_HOME=/Users/gk/Code/super-duper-disser/.cache/xdg-storyline \
+MPLCONFIGDIR=/Users/gk/Code/super-duper-disser/.cache/mpl-street-pattern-b5000-g500 \
+bash segregation-by-design-experiments/run_storyline_street_pattern_uniform_b5000_g500.sh
+```
+
 ## North Star
 
 Это главный концептуальный ориентир для всех экспериментов в этой папке:

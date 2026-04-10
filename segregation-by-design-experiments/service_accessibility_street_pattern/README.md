@@ -1,5 +1,17 @@
 # Service And Accessibility Vs Street Pattern
 
+## Быстрый запуск
+
+Из корня репозитория:
+
+```bash
+cd /Users/gk/Code/super-duper-disser && \
+PYTHONPATH=/Users/gk/Code/super-duper-disser \
+MPLCONFIGDIR=/Users/gk/Code/super-duper-disser/.cache/mpl-sbd-service-accessibility \
+.venv/bin/python segregation-by-design-experiments/service_accessibility_street_pattern/run_experiments.py \
+  --cities all
+```
+
 ## North Star
 
 Этот подпроект читается не как набор отдельных корреляций, а как часть общей истории `segregated by design`:

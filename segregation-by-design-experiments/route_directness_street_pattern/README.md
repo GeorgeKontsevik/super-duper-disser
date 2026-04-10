@@ -1,5 +1,17 @@
 # Route Directness Vs Street Pattern
 
+## Быстрый запуск
+
+Из корня репозитория:
+
+```bash
+cd /Users/gk/Code/super-duper-disser && \
+PYTHONPATH=/Users/gk/Code/super-duper-disser \
+MPLCONFIGDIR=/Users/gk/Code/super-duper-disser/.cache/mpl-route-directness-street-pattern \
+.venv/bin/python segregation-by-design-experiments/route_directness_street_pattern/run_experiments.py \
+  --cities all
+```
+
 Этот подпроект берет **существующие PT-маршруты** из `intermodal_graph_iduedu/graph.pkl` и смотрит, как их геометрия и route-time burden соотносятся со `street pattern` вдоль corridor.
 
 Ключевая идея тут специально привязана к `connectpt`:

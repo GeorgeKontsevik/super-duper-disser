@@ -432,16 +432,27 @@ def split_roads_by_grid_for_polygon(
     grid_step: float = 1000,
     min_road_count: int = 0,
     min_total_road_length: float = 0.0,
+    grid_anchor_x: float | None = None,
+    grid_anchor_y: float | None = None,
 ):
     minx, miny, maxx, maxy = polygon.bounds
 
-    x_coords = np.arange(minx, maxx, grid_step)
-    y_coords = np.arange(miny, maxy, grid_step)
+    if grid_anchor_x is None:
+        x_start = minx
+    else:
+        x_start = grid_anchor_x + np.floor((minx - grid_anchor_x) / grid_step) * grid_step
+    if grid_anchor_y is None:
+        y_start = miny
+    else:
+        y_start = grid_anchor_y + np.floor((miny - grid_anchor_y) / grid_step) * grid_step
 
-    if len(x_coords) == 0 or x_coords[-1] < maxx:
-        x_coords = np.append(x_coords, maxx)
-    if len(y_coords) == 0 or y_coords[-1] < maxy:
-        y_coords = np.append(y_coords, maxy)
+    x_coords = np.arange(x_start, maxx + grid_step, grid_step)
+    y_coords = np.arange(y_start, maxy + grid_step, grid_step)
+
+    if len(x_coords) < 2:
+        x_coords = np.array([x_start, x_start + grid_step], dtype=float)
+    if len(y_coords) < 2:
+        y_coords = np.array([y_start, y_start + grid_step], dtype=float)
 
     subgraphs = {}
     road_sindex = roads.sindex

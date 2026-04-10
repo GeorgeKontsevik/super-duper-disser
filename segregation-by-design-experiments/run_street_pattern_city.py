@@ -566,18 +566,27 @@ def split_graph_by_grid_for_polygon(
     graph: nx.MultiDiGraph,
     polygon,
     grid_step: float = 1000,
+    grid_anchor_xy: tuple[float, float] | None = None,
 ):
     nodes, _ = ox.graph_to_gdfs(graph)
 
     minx, miny, maxx, maxy = polygon.bounds
 
-    x_coords = np.arange(minx, maxx, grid_step)
-    y_coords = np.arange(miny, maxy, grid_step)
+    if grid_anchor_xy is None:
+        x_start = minx
+        y_start = miny
+    else:
+        anchor_x, anchor_y = grid_anchor_xy
+        x_start = anchor_x + np.floor((minx - anchor_x) / grid_step) * grid_step
+        y_start = anchor_y + np.floor((miny - anchor_y) / grid_step) * grid_step
 
-    if len(x_coords) == 0 or x_coords[-1] < maxx:
-        x_coords = np.append(x_coords, maxx)
-    if len(y_coords) == 0 or y_coords[-1] < maxy:
-        y_coords = np.append(y_coords, maxy)
+    x_coords = np.arange(x_start, maxx + grid_step, grid_step)
+    y_coords = np.arange(y_start, maxy + grid_step, grid_step)
+
+    if len(x_coords) < 2:
+        x_coords = np.array([x_start, x_start + grid_step], dtype=float)
+    if len(y_coords) < 2:
+        y_coords = np.array([y_start, y_start + grid_step], dtype=float)
 
     subgraphs = {}
 
@@ -1357,6 +1366,7 @@ def classify_snapshot(
     cache_dir: Path | None = None,
     roads_path: Path | None = None,
     road_source_label: str = "osm",
+    grid_anchor_xy: tuple[float, float] | None = None,
 ):
     snapshot_label = _year_label(year)
     _progress_log(f"Snapshot [{snapshot_label}]: start")
@@ -1419,6 +1429,7 @@ def classify_snapshot(
                 graph_projected,
                 polygon_projected,
                 grid_step=grid_step,
+                grid_anchor_xy=grid_anchor_xy,
             )
             subgraphs, dropped_sparse = _filter_sparse_subgraphs(
                 subgraphs,
@@ -1445,6 +1456,8 @@ def classify_snapshot(
                 grid_step=grid_step,
                 min_road_count=min_road_count,
                 min_total_road_length=min_total_road_length,
+                grid_anchor_x=None if grid_anchor_xy is None else float(grid_anchor_xy[0]),
+                grid_anchor_y=None if grid_anchor_xy is None else float(grid_anchor_xy[1]),
             )
 
         if not no_cache and roads_cache_path is not None:
