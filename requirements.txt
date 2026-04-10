@@ -7,3 +7,4 @@ pyarrow
 # Дополнительные зависимости arctic_access (не в requirements submodule)
 transliterate
 plotly
+jenkspy
