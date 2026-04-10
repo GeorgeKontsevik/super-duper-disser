@@ -164,6 +164,67 @@ def parse_args() -> argparse.Namespace:
         help="Run exact service placement after solver-input preparation and save after-placement outputs/previews.",
     )
     parser.add_argument(
+        "--placement-genetic",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Use genetic search inside solver_flp optimize_placement for exact placement "
+            "(default: disabled / deterministic non-genetic path)."
+        ),
+    )
+    parser.add_argument(
+        "--placement-progress",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Show solver_flp tqdm progress for exact placement (default: enabled).",
+    )
+    parser.add_argument(
+        "--placement-prefer-existing",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Prefer existing facilities in placement objective (default: disabled).",
+    )
+    parser.add_argument(
+        "--placement-allow-existing-expansion",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Allow expanding existing capacities during placement (default: disabled).",
+    )
+    parser.add_argument(
+        "--placement-capacity-mode",
+        choices=("service_min", "fixed_mean"),
+        default="fixed_mean",
+        help=(
+            "Capacity policy for newly opened facilities: "
+            "'fixed_mean' (default, constant rounded mean of existing capacities) or "
+            "'service_min' (use service-specific minimum capacity floor)."
+        ),
+    )
+    parser.add_argument(
+        "--placement-genetic-population-size",
+        type=int,
+        default=50,
+        help="Population size for genetic placement mode (default: 50).",
+    )
+    parser.add_argument(
+        "--placement-genetic-generations",
+        type=int,
+        default=20,
+        help="Number of generations for genetic placement mode (default: 20).",
+    )
+    parser.add_argument(
+        "--placement-genetic-mutation-rate",
+        type=float,
+        default=0.7,
+        help="Mutation rate for genetic placement mode (default: 0.7).",
+    )
+    parser.add_argument(
+        "--placement-genetic-num-parents",
+        type=int,
+        default=10,
+        help="Number of parents for genetic placement mode (default: 10).",
+    )
+    parser.add_argument(
         "--overpass-url",
         default=None,
         help="Optional custom Overpass endpoint for OSMnx.",
@@ -451,6 +512,14 @@ def _service_min_new_capacity(service: str) -> float:
     return float(DEFAULT_MIN_NEW_CAPACITY_BY_SERVICE.get(service, 50.0))
 
 
+def _service_fixed_mean_capacity(service: str, solver_blocks: pd.DataFrame | gpd.GeoDataFrame) -> float:
+    capacities = pd.to_numeric(solver_blocks.get("capacity", 0.0), errors="coerce").fillna(0.0)
+    positive = capacities[capacities > 0.0]
+    if positive.empty:
+        return float(_service_min_new_capacity(service))
+    return float(max(1, int(round(float(positive.mean())))))
+
+
 def _to_points(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     points = gdf.copy()
     points["geometry"] = points.geometry.representative_point()
@@ -605,8 +674,6 @@ def _run_arctic_lp_provision(
     ).clip(lower=0.0)
     work["capacity_within"] = 0.0
     work["capacity_without"] = 0.0
-    work["provision_strong"] = pd.to_numeric(work["provision"], errors="coerce").fillna(0.0)
-    work["provision_weak"] = work["provision_strong"]
     links_df = _assignment_matrix_to_links(assignments)
     result = gpd.GeoDataFrame(work, geometry="geometry", crs=work.crs)
     return result, links_df
@@ -883,7 +950,7 @@ def _plot_service_lp_preview(
     boundary_plot = normalize_preview_gdf(boundary, target_crs="EPSG:3857")
     gdf = normalize_preview_gdf(gdf, boundary_plot, target_crs="EPSG:3857")
 
-    provision_col = "provision_strong" if "provision_strong" in gdf.columns else "provision" if "provision" in gdf.columns else None
+    provision_col = "provision" if "provision" in gdf.columns else "provision_strong" if "provision_strong" in gdf.columns else None
     if provision_col is None:
         return None
 
@@ -1170,8 +1237,11 @@ def _plot_placement_after_preview(
     boundary: gpd.GeoDataFrame | None = None,
 ) -> str | None:
     after = blocks_after.copy()
-    if "provision_strong_after" in after.columns:
-        after["provision_strong"] = after["provision_strong_after"]
+    if "provision_after" in after.columns:
+        after["provision"] = after["provision_after"]
+    elif "provision_strong_after" in after.columns:
+        # Backward compatibility with old cached outputs.
+        after["provision"] = after["provision_strong_after"]
     if "demand_without_after" in after.columns:
         after["demand_without"] = after["demand_without_after"]
     return _plot_service_lp_preview(after, f"{service} exact-after", out_path, blocks_ref=blocks_ref, boundary=boundary)
@@ -1186,6 +1256,15 @@ def _run_exact_placement_for_service(
     preview_dir: Path,
     blocks_ref: gpd.GeoDataFrame,
     boundary: gpd.GeoDataFrame,
+    use_genetic: bool = False,
+    progress: bool = True,
+    prefer_existing: bool = False,
+    allow_existing_expansion: bool = False,
+    capacity_mode: str = "fixed_mean",
+    genetic_population_size: int = 50,
+    genetic_generations: int = 20,
+    genetic_mutation_rate: float = 0.7,
+    genetic_num_parents: int = 10,
     use_cache: bool = True,
 ) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1194,9 +1273,37 @@ def _run_exact_placement_for_service(
     assignment_links_path = output_dir / "assignment_links_after.csv"
     gallery_targets = PIPELINE2_PLACEMENT_GALLERY_FILENAMES.get(service, {})
 
-    manifest_cache_ok = use_cache and blocks_after_path.exists() and summary_after_path.exists() and assignment_links_path.exists()
+    cached_summary = _try_load_json(summary_after_path) if summary_after_path.exists() else {}
+    min_new_capacity = float(_service_min_new_capacity(service))
+    fixed_new_capacity = None
+    if capacity_mode == "fixed_mean":
+        fixed_new_capacity = float(_service_fixed_mean_capacity(service, solver_blocks))
+        min_new_capacity = float(fixed_new_capacity)
+
+    cache_mode_matches = bool(
+        cached_summary
+        and bool(cached_summary.get("use_genetic", False)) == bool(use_genetic)
+        and bool(cached_summary.get("prefer_existing", False)) == bool(prefer_existing)
+        and bool(cached_summary.get("allow_existing_expansion", False)) == bool(allow_existing_expansion)
+        and str(cached_summary.get("capacity_mode", "service_min")) == str(capacity_mode)
+        and float(cached_summary.get("min_new_capacity", -1.0)) == float(min_new_capacity)
+        and int(cached_summary.get("genetic_population_size", 50)) == int(genetic_population_size)
+        and int(cached_summary.get("genetic_generations", 20)) == int(genetic_generations)
+        and float(cached_summary.get("genetic_mutation_rate", 0.7)) == float(genetic_mutation_rate)
+        and int(cached_summary.get("genetic_num_parents", 10)) == int(genetic_num_parents)
+        and (
+            (cached_summary.get("fixed_new_capacity") is None and fixed_new_capacity is None)
+            or float(cached_summary.get("fixed_new_capacity", -1.0)) == float(fixed_new_capacity)
+        )
+    )
+    manifest_cache_ok = (
+        use_cache
+        and blocks_after_path.exists()
+        and summary_after_path.exists()
+        and assignment_links_path.exists()
+        and cache_mode_matches
+    )
     if manifest_cache_ok:
-        cached_summary = _try_load_json(summary_after_path) or {}
         return {
             "summary_after": str(summary_after_path),
             "blocks_after": str(blocks_after_path),
@@ -1206,6 +1313,7 @@ def _run_exact_placement_for_service(
             "selected_count": int(cached_summary.get("selected_count", 0)),
             "new_count": int(cached_summary.get("new_count", 0)),
             "expanded_count": int(cached_summary.get("expanded_count", 0)),
+            "use_genetic": bool(cached_summary.get("use_genetic", False)),
         }
 
     optimize_placement = _load_solver_flp_optimize()
@@ -1217,17 +1325,29 @@ def _run_exact_placement_for_service(
         unmet_mask = unmet_mask | (provision_series < 1.0)
     work = solver_blocks[unmet_mask].copy()
     work[demand_column] = target_demand_full.loc[work.index].astype(float)
-    ids = list(work.index)
+    ids = [str(idx) for idx in work.index]
     if not ids:
         raise ValueError(f"No active blocks for exact placement [{service}].")
-    matrix = sub_mx.loc[ids, ids].copy()
+    matrix_full = sub_mx.copy()
+    matrix_full.index = matrix_full.index.map(str)
+    matrix_full.columns = matrix_full.columns.map(str)
+    missing_ids = [idx for idx in ids if idx not in matrix_full.index or idx not in matrix_full.columns]
+    if missing_ids:
+        raise ValueError(
+            f"Accessibility matrix does not contain {len(missing_ids)} placement ids "
+            f"for service [{service}] (sample={missing_ids[:5]})."
+        )
+    matrix = matrix_full.loc[ids, ids].copy()
     work = work.reset_index(drop=True)
     matrix = matrix.reset_index(drop=True)
     matrix.columns = matrix.index
 
     _log(
         f"Exact placement [{service}]: blocks={len(work)}, demand_column={demand_column}, "
-        f"demand_sum={float(pd.to_numeric(work[demand_column], errors='coerce').fillna(0.0).sum()):.1f}"
+        f"demand_sum={float(pd.to_numeric(work[demand_column], errors='coerce').fillna(0.0).sum()):.1f}, "
+        f"use_genetic={bool(use_genetic)}, capacity_mode={capacity_mode}, "
+        f"fixed_new_capacity={fixed_new_capacity if fixed_new_capacity is not None else 'none'}, "
+        f"genetic(pop={int(genetic_population_size)}, gen={int(genetic_generations)})"
     )
     started = time.time()
     optimization = optimize_placement(
@@ -1235,13 +1355,19 @@ def _run_exact_placement_for_service(
         df=work,
         service_radius=float(work["service_radius_min"].iloc[0]),
         id_matrix=ids,
-        use_genetic=False,
+        use_genetic=bool(use_genetic),
         demand_column=demand_column,
-        prefer_existing=False,
+        population_size=int(genetic_population_size),
+        num_generations=int(genetic_generations),
+        mutation_rate=float(genetic_mutation_rate),
+        num_parents=int(genetic_num_parents),
+        prefer_existing=bool(prefer_existing),
         keep_existing_capacity=True,
-        allow_existing_expansion=False,
-        min_new_capacity=_service_min_new_capacity(service),
-        heartbeat_interval_sec=20.0,
+        allow_existing_expansion=bool(allow_existing_expansion),
+        min_new_capacity=float(min_new_capacity),
+        fixed_new_capacity=fixed_new_capacity,
+        heartbeat_interval_sec=1.0,
+        verbose=bool(progress),
     )
     elapsed = time.time() - started
 
@@ -1274,6 +1400,9 @@ def _run_exact_placement_for_service(
         service_radius_min=float(solver_blocks["service_radius_min"].iloc[0]),
         service_demand_per_1000=float(solver_blocks["service_demand_per_1000"].iloc[0]),
     )
+    if "provision" not in provision_after_df.columns and "provision_strong" in provision_after_df.columns:
+        provision_after_df = provision_after_df.copy()
+        provision_after_df["provision"] = provision_after_df["provision_strong"]
     for before_col, after_col in (
         ("demand_within", "demand_within_after"),
         ("demand_without", "demand_without_after"),
@@ -1281,8 +1410,7 @@ def _run_exact_placement_for_service(
         ("capacity_left", "capacity_left_after"),
         ("capacity_within", "capacity_within_after"),
         ("capacity_without", "capacity_without_after"),
-        ("provision_strong", "provision_strong_after"),
-        ("provision_weak", "provision_weak_after"),
+        ("provision", "provision_after"),
     ):
         if before_col in provision_after_df.columns:
             blocks_after[after_col] = pd.to_numeric(provision_after_df[before_col], errors="coerce").reindex(blocks_after.index)
@@ -1318,11 +1446,20 @@ def _run_exact_placement_for_service(
     summary_after = {
         "service": service,
         "mode": "exact",
+        "use_genetic": bool(use_genetic),
+        "prefer_existing": bool(prefer_existing),
+        "allow_existing_expansion": bool(allow_existing_expansion),
+        "capacity_mode": str(capacity_mode),
+        "genetic_population_size": int(genetic_population_size),
+        "genetic_generations": int(genetic_generations),
+        "genetic_mutation_rate": float(genetic_mutation_rate),
+        "genetic_num_parents": int(genetic_num_parents),
         "placement_engine": PLACEMENT_ENGINE_NAME,
         "provision_engine_recompute": PROVISION_ENGINE_NAME,
         "demand_column": demand_column,
         "elapsed_sec": float(elapsed),
-        "min_new_capacity": float(_service_min_new_capacity(service)),
+        "min_new_capacity": float(min_new_capacity),
+        "fixed_new_capacity": float(fixed_new_capacity) if fixed_new_capacity is not None else None,
         "blocks_count": int(len(blocks_after)),
         "selected_count": int((blocks_after["optimized_capacity_total"] > 0.0).sum()),
         "new_count": int((blocks_after["placement_status"] == "new").sum()),
@@ -1334,7 +1471,7 @@ def _run_exact_placement_for_service(
         "demand_target_total": float(target_demand.sum()),
         "demand_without_after_total": float(pd.to_numeric(blocks_after["demand_without_after"], errors="coerce").fillna(0.0).sum()),
         "demand_left_after_total": float(pd.to_numeric(blocks_after["demand_left_after"], errors="coerce").fillna(0.0).sum()),
-        "provision_strong_total_after": float(
+        "provision_total_after": float(
             pd.to_numeric(blocks_after["demand_within_after"], errors="coerce").fillna(0.0).sum() / total_demand.sum()
             if total_demand.sum() > 0
             else 0.0
@@ -1358,6 +1495,8 @@ def _run_exact_placement_for_service(
         "selected_count": summary_after["selected_count"],
         "new_count": summary_after["new_count"],
         "expanded_count": summary_after["expanded_count"],
+        "use_genetic": bool(use_genetic),
+        "capacity_mode": str(capacity_mode),
     }
 
 
@@ -1543,13 +1682,23 @@ def main() -> None:
     _log(f"Provision engine: {PROVISION_ENGINE_NAME}")
     _log(
         "Placement engine: "
-        f"{PLACEMENT_ENGINE_NAME} ({'enabled exact mode' if args.placement_exact else 'disabled'})"
+        f"{PLACEMENT_ENGINE_NAME} "
+        f"({'enabled exact mode' if args.placement_exact else 'disabled'}, "
+        f"use_genetic={bool(args.placement_genetic)}, progress={bool(args.placement_progress)}, "
+        f"prefer_existing={bool(args.placement_prefer_existing)}, "
+        f"allow_existing_expansion={bool(args.placement_allow_existing_expansion)}, "
+        f"capacity_mode={str(args.placement_capacity_mode)}, "
+        f"genetic(pop={int(args.placement_genetic_population_size)}, "
+        f"gen={int(args.placement_genetic_generations)}, "
+        f"mutation={float(args.placement_genetic_mutation_rate):.2f}, "
+        f"parents={int(args.placement_genetic_num_parents)}))"
     )
 
     # 4) Per-service solver-ready tables (demand_within/demand_without/capacity_left/provision).
     service_outputs: dict[str, dict] = {}
     placement_outputs: dict[str, dict] = {}
     preview_outputs: dict[str, object] = {}
+    placement_root_name = "placement_exact_genetic" if bool(args.placement_genetic) else "placement_exact"
     preview_outputs.update(
         _plot_accessibility_previews(units, matrix_union, preview_dir, boundary=boundary, use_cache=(not args.no_cache))
     )
@@ -1685,10 +1834,19 @@ def main() -> None:
                             cached_blocks,
                             cached_matrix,
                             service,
-                            output_root / "placement_exact" / service,
+                            output_root / placement_root_name / service,
                             preview_dir=preview_dir,
                             blocks_ref=blocks,
                             boundary=boundary,
+                            use_genetic=bool(args.placement_genetic),
+                            progress=bool(args.placement_progress),
+                            prefer_existing=bool(args.placement_prefer_existing),
+                            allow_existing_expansion=bool(args.placement_allow_existing_expansion),
+                            capacity_mode=str(args.placement_capacity_mode),
+                            genetic_population_size=int(args.placement_genetic_population_size),
+                            genetic_generations=int(args.placement_genetic_generations),
+                            genetic_mutation_rate=float(args.placement_genetic_mutation_rate),
+                            genetic_num_parents=int(args.placement_genetic_num_parents),
                             use_cache=(not args.no_cache),
                         )
                     except Exception as exc:  # noqa: BLE001
@@ -1742,8 +1900,11 @@ def main() -> None:
         solver_blocks["service_radius_min"] = float(service_radius_min)
         solver_blocks["service_demand_per_1000"] = float(service_demand_per_1000)
         solver_blocks["service_population_share"] = float(_service_population_share(service))
-        # Compatibility with arctic solver runner fields.
-        solver_blocks["provision"] = solver_blocks["provision_strong"].fillna(0.0)
+        if "provision" not in solver_blocks.columns and "provision_strong" in solver_blocks.columns:
+            # Backward compatibility with old cached solver files.
+            solver_blocks["provision"] = solver_blocks["provision_strong"].fillna(0.0)
+        elif "provision" in solver_blocks.columns:
+            solver_blocks["provision"] = pd.to_numeric(solver_blocks["provision"], errors="coerce").fillna(0.0)
 
         _save_geodata(solver_blocks, blocks_path)
         _save_dataframe(sub_mx, matrix_service_path)
@@ -1777,7 +1938,7 @@ def main() -> None:
             "capacity_total": float(solver_blocks["capacity"].sum()),
             "demand_within_total": float(solver_blocks["demand_within"].sum()),
             "demand_without_total": float(solver_blocks["demand_without"].sum()),
-            "provision_strong_total": float(
+            "provision_total": float(
                 solver_blocks["demand_within"].sum() / solver_blocks["demand"].sum()
                 if solver_blocks["demand"].sum() > 0
                 else 0.0
@@ -1807,10 +1968,19 @@ def main() -> None:
                     solver_blocks,
                     sub_mx,
                     service,
-                    output_root / "placement_exact" / service,
+                    output_root / placement_root_name / service,
                     preview_dir=preview_dir,
                     blocks_ref=blocks,
                     boundary=boundary,
+                    use_genetic=bool(args.placement_genetic),
+                    progress=bool(args.placement_progress),
+                    prefer_existing=bool(args.placement_prefer_existing),
+                    allow_existing_expansion=bool(args.placement_allow_existing_expansion),
+                    capacity_mode=str(args.placement_capacity_mode),
+                    genetic_population_size=int(args.placement_genetic_population_size),
+                    genetic_generations=int(args.placement_genetic_generations),
+                    genetic_mutation_rate=float(args.placement_genetic_mutation_rate),
+                    genetic_num_parents=int(args.placement_genetic_num_parents),
                     use_cache=(not args.no_cache),
                 )
             except Exception as exc:  # noqa: BLE001
@@ -1848,7 +2018,16 @@ def main() -> None:
         "placement_engine": {
             "name": PLACEMENT_ENGINE_NAME,
             "enabled": bool(args.placement_exact),
-            "mode": ("exact" if args.placement_exact else None),
+            "mode": ("exact_genetic" if (args.placement_exact and args.placement_genetic) else ("exact" if args.placement_exact else None)),
+            "use_genetic": bool(args.placement_genetic),
+            "progress": bool(args.placement_progress),
+            "prefer_existing": bool(args.placement_prefer_existing),
+            "allow_existing_expansion": bool(args.placement_allow_existing_expansion),
+            "capacity_mode": str(args.placement_capacity_mode),
+            "genetic_population_size": int(args.placement_genetic_population_size),
+            "genetic_generations": int(args.placement_genetic_generations),
+            "genetic_mutation_rate": float(args.placement_genetic_mutation_rate),
+            "genetic_num_parents": int(args.placement_genetic_num_parents),
         },
         "solver_outputs": service_outputs,
         "placement_exact_enabled": bool(args.placement_exact),

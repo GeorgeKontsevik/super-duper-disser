@@ -24,3 +24,10 @@
   - Current state: city coverage screening exists inside `service_accessibility_street_pattern` run flow, but ad hoc standalone checks with full geometry `clip/union` over all cities are too slow for quick triage.
   - Remaining work: provide a lightweight cached/precomputed CLI report (or manifest-based summary) that returns per-city coverage and exclusion candidates in seconds.
   - Why deferred: not blocking experiment correctness, but needed for faster operational triage and rerun planning.
+
+## Deferred Solver Evolution
+
+- Rework placement genetic stage to a more controllable optimization backend (`Optuna` or another Python GA framework) with support for custom inner evaluation method.
+  - Current state: genetic placement is implemented with in-repo custom GA and can be hard to tune/extend when injecting custom scoring or inner solving logic.
+  - Remaining work: evaluate migration path (keep solver contract stable), prototype Optuna-based search loop, and compare against a maintained GA framework alternative before choosing final backend.
+  - Why deferred: current flow is usable for experiments, but solver R&D and framework migration should be done explicitly as a separate task.

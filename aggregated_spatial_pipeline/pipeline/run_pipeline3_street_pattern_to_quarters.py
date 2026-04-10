@@ -337,6 +337,10 @@ def _build_quarter_enriched_layer(city_dir: Path, transferred):
         for blocks_path in sorted(solver_root.glob("*/blocks_solver.parquet")):
             service = blocks_path.parent.name
             solver_blocks = pd.read_parquet(blocks_path)
+            if "provision" not in solver_blocks.columns and "provision_strong" in solver_blocks.columns:
+                # Backward compatibility with old pipeline_2 outputs.
+                solver_blocks = solver_blocks.copy()
+                solver_blocks["provision"] = solver_blocks["provision_strong"]
             service_columns = [
                 column
                 for column in (
@@ -346,8 +350,6 @@ def _build_quarter_enriched_layer(city_dir: Path, transferred):
                     "demand_without",
                     "capacity_left",
                     "provision",
-                    "provision_strong",
-                    "provision_weak",
                 )
                 if column in solver_blocks.columns
             ]
