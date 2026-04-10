@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import time
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -138,6 +139,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--climate-grid", help="Path to climate-grid polygons and environmental attributes.")
     parser.add_argument("--cities", help="Path to city polygons.")
     parser.add_argument("--place", help="City/place for automatic data collection (e.g. 'Tianjin, China').")
+    parser.add_argument(
+        "--city-centers-csv",
+        default=None,
+        help=(
+            "Path to CSV with city centres (SimpleMaps worldcities format). "
+            "Default: <repo>/simplemaps_worldcities_basicv1/worldcities.csv."
+        ),
+    )
     parser.add_argument(
         "--center-node-id",
         "--centre-node-id",
@@ -329,24 +338,26 @@ def parse_args() -> argparse.Namespace:
 
 
 def _validate_args(args: argparse.Namespace) -> None:
-    auto_sources = [
-        bool(args.place),
-        args.center_node_id is not None,
-        args.relation_id is not None,
-    ]
-    if sum(auto_sources) > 1:
-        raise SystemExit("Use only one auto-source: --place, --center-node-id, or --relation-id.")
+    if args.center_node_id is not None and args.relation_id is not None:
+        raise SystemExit("Use at most one territory override: --center-node-id or --relation-id.")
     if args.relation_geometry and args.relation_id is None:
         raise SystemExit("--relation-geometry requires --relation-id to label outputs.")
 
     has_auto_source = bool(args.place or args.center_node_id is not None or args.relation_id is not None)
     has_min_explicit = all([args.blocks, args.street_grid, args.cities])
-    if has_auto_source or has_min_explicit:
-        if args.collect_only and not has_auto_source:
-            raise SystemExit("--collect-only is supported only with auto-source mode (--place/--center-node-id/--relation-id).")
+    if has_auto_source:
+        if not args.place:
+            raise SystemExit(
+                "Automatic data collection now requires --place because city centres are resolved only "
+                "from SimpleMaps worldcities.csv."
+            )
+        return
+    if has_min_explicit:
+        if args.collect_only:
+            raise SystemExit("--collect-only is supported only with automatic data collection mode.")
         return
     raise SystemExit(
-        "Provide either --place/--center-node-id/--relation-id for automatic data collection OR explicit layer paths: "
+        "Provide --place (optionally with --center-node-id/--relation-id override) for automatic data collection OR explicit layer paths: "
         "--blocks --street-grid --cities [--climate-grid]."
     )
 
@@ -486,6 +497,155 @@ def _validate_layer_input_path(path: Path, layer_id: str) -> None:
 def _slugify(value: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9]+", "_", value.strip().lower()).strip("_")
     return slug or "city"
+
+
+def _normalize_lookup_token(value: str | None) -> str:
+    if value is None:
+        return ""
+    text = str(value).strip().lower()
+    if not text:
+        return ""
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = re.sub(r"[^a-z0-9]+", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+_COUNTRY_ALIASES = {
+    "us": "united states",
+    "usa": "united states",
+    "u s a": "united states",
+    "united states of america": "united states",
+    "uk": "united kingdom",
+    "u k": "united kingdom",
+    "uae": "united arab emirates",
+    "u a e": "united arab emirates",
+    "czech republic": "czechia",
+}
+
+
+def _normalize_country_token(value: str | None) -> str:
+    key = _normalize_lookup_token(value)
+    if not key:
+        return ""
+    return _COUNTRY_ALIASES.get(key, key)
+
+
+def _parse_place_tokens(place: str) -> tuple[str, str, str, set[str]]:
+    parts = [part.strip() for part in str(place).split(",") if part.strip()]
+    if not parts:
+        return "", "", "", set()
+
+    city_key = _normalize_lookup_token(parts[0])
+    admin_key = ""
+    country_key = ""
+    region_tokens: set[str] = set()
+    if len(parts) >= 3:
+        admin_key = _normalize_lookup_token(parts[-2])
+        country_key = _normalize_country_token(parts[-1])
+        region_tokens.add(_normalize_lookup_token(parts[-1]))
+        region_tokens.add(_normalize_country_token(parts[-1]))
+    elif len(parts) == 2:
+        admin_key = _normalize_lookup_token(parts[-1])
+        country_key = _normalize_country_token(parts[-1])
+        region_tokens.add(_normalize_lookup_token(parts[-1]))
+        region_tokens.add(_normalize_country_token(parts[-1]))
+
+    region_tokens.discard("")
+    return city_key, admin_key, country_key, region_tokens
+
+
+def _resolve_city_center_from_worldcities(
+    *,
+    place: str,
+    city_centers_csv: Path,
+) -> dict:
+    if not city_centers_csv.exists():
+        raise FileNotFoundError(
+            f"City centres CSV was not found: {city_centers_csv}. "
+            "Expected SimpleMaps worldcities.csv."
+        )
+    required_columns = [
+        "city",
+        "city_ascii",
+        "lat",
+        "lng",
+        "country",
+        "iso2",
+        "iso3",
+        "admin_name",
+        "capital",
+        "population",
+        "id",
+    ]
+    cities = pd.read_csv(city_centers_csv, usecols=required_columns, dtype=str)
+    if cities.empty:
+        raise ValueError(f"City centres CSV is empty: {city_centers_csv}")
+
+    cities["lat_num"] = pd.to_numeric(cities["lat"], errors="coerce")
+    cities["lng_num"] = pd.to_numeric(cities["lng"], errors="coerce")
+    cities = cities[
+        cities["lat_num"].between(-90.0, 90.0)
+        & cities["lng_num"].between(-180.0, 180.0)
+    ].copy()
+    if cities.empty:
+        raise ValueError(f"City centres CSV has no valid coordinate rows: {city_centers_csv}")
+
+    city_source = cities["city_ascii"].fillna("").astype(str).str.strip()
+    city_fallback = cities["city"].fillna("").astype(str).str.strip()
+    cities["city_key"] = city_source.where(city_source.ne(""), city_fallback).map(_normalize_lookup_token)
+    cities["admin_key"] = cities["admin_name"].map(_normalize_lookup_token)
+    cities["country_key"] = cities["country"].map(_normalize_country_token)
+    cities["iso2_key"] = cities["iso2"].map(_normalize_lookup_token)
+    cities["iso3_key"] = cities["iso3"].map(_normalize_lookup_token)
+    cities["population_num"] = pd.to_numeric(cities["population"], errors="coerce").fillna(-1.0)
+
+    city_key, admin_key, country_key, region_tokens = _parse_place_tokens(place)
+    if not city_key:
+        raise ValueError(f"Cannot parse city token from place: {place!r}")
+
+    candidates = cities[cities["city_key"] == city_key].copy()
+    if candidates.empty:
+        raise ValueError(
+            "City centre lookup in worldcities.csv failed: "
+            f"no city match for {place!r}."
+        )
+
+    candidates["score"] = 0
+    if country_key:
+        candidates.loc[candidates["country_key"] == country_key, "score"] += 50
+    if region_tokens:
+        candidates.loc[candidates["country_key"].isin(region_tokens), "score"] += 30
+        candidates.loc[candidates["iso2_key"].isin(region_tokens), "score"] += 30
+        candidates.loc[candidates["iso3_key"].isin(region_tokens), "score"] += 30
+    if admin_key:
+        candidates.loc[candidates["admin_key"] == admin_key, "score"] += 20
+
+    capital_rank = (
+        candidates["capital"]
+        .fillna("")
+        .str.strip()
+        .str.lower()
+        .map({"primary": 2, "admin": 1})
+        .fillna(0)
+    )
+    candidates["capital_rank"] = pd.to_numeric(capital_rank, errors="coerce").fillna(0).astype(int)
+
+    candidates = candidates.sort_values(
+        by=["score", "population_num", "capital_rank"],
+        ascending=[False, False, False],
+    ).reset_index(drop=True)
+    top = candidates.iloc[0]
+    return {
+        "place_query": place,
+        "matched_city": str(top.get("city_ascii") or top.get("city") or "").strip(),
+        "matched_admin": str(top.get("admin_name") or "").strip(),
+        "matched_country": str(top.get("country") or "").strip(),
+        "matched_row_id": str(top.get("id") or "").strip(),
+        "lon": float(top["lng_num"]),
+        "lat": float(top["lat_num"]),
+        "source_csv": str(city_centers_csv),
+    }
 
 
 def _resolve_joint_output_dir(args: argparse.Namespace) -> Path:
@@ -973,11 +1133,24 @@ def _resolve_analysis_buffer_from_osm(
     place: str | None,
     buffer_m: float,
     output_path: Path,
+    city_centers_csv: Path,
     center_node_id: int | None = None,
     relation_id: int | None = None,
     relation_geometry: Path | None = None,
 ) -> Path:
     import osmnx as ox
+    if not place or not str(place).strip():
+        raise ValueError(
+            "City centre lookup requires --place because centres are resolved from worldcities.csv."
+        )
+    city_center = _resolve_city_center_from_worldcities(
+        place=str(place).strip(),
+        city_centers_csv=city_centers_csv,
+    )
+    centre_lon = float(city_center["lon"])
+    centre_lat = float(city_center["lat"])
+    center_point = Point(centre_lon, centre_lat)
+    centre_node_id = None
     territory_mode = "node_buffer"
     if relation_geometry is not None:
         relation_gdf = read_geodata(relation_geometry)
@@ -994,42 +1167,24 @@ def _resolve_analysis_buffer_from_osm(
         else:
             buffer_geom = relation_geom
             territory_mode = "relation"
-        representative = relation_geom.representative_point()
-        centre_node_id = None
-        centre_lon = float(representative.x)
-        centre_lat = float(representative.y)
     elif relation_id is not None:
         relation_geom = _get_relation_boundary_via_overpass(int(relation_id))
         if relation_geom.is_empty:
             raise ValueError(f"Empty boundary for relation {relation_id}")
         if float(buffer_m) > 0.0:
-            representative = relation_geom.representative_point()
-            point_gdf = gpd.GeoDataFrame({"geometry": [representative]}, crs=4326)
+            point_gdf = gpd.GeoDataFrame({"geometry": [center_point]}, crs=4326)
             buffered = point_gdf.to_crs(3857).buffer(float(buffer_m))
             buffer_geom = gpd.GeoSeries(buffered, crs=3857).to_crs(4326).iloc[0]
             territory_mode = "place_center_buffer" if place else "relation_buffer"
         else:
             buffer_geom = relation_geom
             territory_mode = "relation"
-        representative = relation_geom.representative_point()
-        centre_node_id = None
-        centre_lon = float(representative.x)
-        centre_lat = float(representative.y)
     elif center_node_id is not None:
-        import osmapi as osm
-
-        api = osm.OsmApi()
-        node = _node_get(api, int(center_node_id))
         relation_id = None
-        point = Point(float(node["lon"]), float(node["lat"]))
-        point_gdf = gpd.GeoDataFrame({"geometry": [point]}, crs=4326)
+        point_gdf = gpd.GeoDataFrame({"geometry": [center_point]}, crs=4326)
         buffer_geom = gpd.GeoSeries(point_gdf.to_crs(3857).buffer(float(buffer_m)), crs=3857).to_crs(4326).iloc[0]
-        centre_node_id = int(node.get("id"))
-        centre_lon = float(node["lon"])
-        centre_lat = float(node["lat"])
+        territory_mode = "place_center_buffer"
     else:
-        if not place:
-            raise ValueError("place is required when --center-node-id is not provided.")
         geocoded = ox.geocode_to_gdf(place)
         if geocoded.empty:
             raise ValueError(f"Could not geocode place: {place}")
@@ -1043,12 +1198,8 @@ def _resolve_analysis_buffer_from_osm(
             )
 
         relation_geom = _get_relation_boundary_via_overpass(int(relation_id))
-        representative = relation_geom.representative_point()
-        centre_node_id = None
-        centre_lon = float(representative.x)
-        centre_lat = float(representative.y)
         if float(buffer_m) > 0.0:
-            point_gdf = gpd.GeoDataFrame({"geometry": [representative]}, crs=4326)
+            point_gdf = gpd.GeoDataFrame({"geometry": [center_point]}, crs=4326)
             buffered = point_gdf.to_crs(3857).buffer(float(buffer_m))
             buffer_geom = gpd.GeoSeries(buffered, crs=3857).to_crs(4326).iloc[0]
             territory_mode = "place_center_buffer"
@@ -1065,6 +1216,11 @@ def _resolve_analysis_buffer_from_osm(
                 "centre_node_id": centre_node_id,
                 "centre_lon": centre_lon,
                 "centre_lat": centre_lat,
+                "centre_source": "simplemaps_worldcities_basicv1/worldcities.csv",
+                "centre_source_row_id": city_center["matched_row_id"],
+                "centre_source_city": city_center["matched_city"],
+                "centre_source_admin": city_center["matched_admin"],
+                "centre_source_country": city_center["matched_country"],
                 "buffer_m": float(buffer_m),
                 "geometry": buffer_geom,
             }
@@ -2538,15 +2694,18 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
     _configure_logging()
     _configure_osm_requests(args.osm_timeout_s, overpass_url=args.overpass_url)
 
-    place = args.place or (
-        f"osm_node_{int(args.center_node_id)}"
-        if args.center_node_id is not None
-        else (f"osm_relation_{int(args.relation_id)}" if args.relation_id is not None else None)
-    )
+    place = str(args.place or "").strip()
     if not place:
-        raise ValueError("Internal error: either place, center_node_id, or relation_id is required for automatic input preparation.")
+        raise ValueError(
+            "Automatic input preparation requires --place because city centres are resolved only from worldcities.csv."
+        )
 
     repo_root = Path(__file__).resolve().parents[2]
+    city_centers_csv = (
+        Path(args.city_centers_csv).resolve()
+        if args.city_centers_csv
+        else (repo_root / "simplemaps_worldcities_basicv1" / "worldcities.csv").resolve()
+    )
     slug = slugify_place(place)
     data_root = Path(args.data_dir).resolve() if args.data_dir else repo_root / "aggregated_spatial_pipeline" / "outputs" / "joint_inputs" / slug
     blocks_raw_dir = data_root / "blocksnet_raw_osm"
@@ -2564,6 +2723,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
     downloaded_in_this_run = False
 
     _log(f"Auto-collection enabled for place: {place}")
+    _log(f"City centres source: {_log_name(city_centers_csv)}")
     _log(f"Cache mode: {'disabled (--no-cache)' if args.no_cache else 'enabled'}")
     detected_relation_id = args.relation_id
     relation_mode = detected_relation_id is not None or (args.place is not None and args.buffer_m is None)
@@ -2619,6 +2779,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             place=args.place,
             buffer_m=main_territory_buffer_m,
             output_path=analysis_buffer_path,
+            city_centers_csv=city_centers_csv,
             center_node_id=args.center_node_id,
             relation_id=detected_relation_id,
             relation_geometry=Path(args.relation_geometry).resolve() if args.relation_geometry else None,
@@ -3160,6 +3321,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             "manifest_path": str(street_summary_path),
             "place": place,
             "slug": slug,
+            "center_source_csv": str(city_centers_csv),
             "downloaded_in_this_run": downloaded_in_this_run,
             "cached": (not args.no_cache and buffer_path.exists()),
             "origin": "main analysis relation polygon" if relation_mode else f"main analysis buffer polygon ({effective_buffer_m}m)",
