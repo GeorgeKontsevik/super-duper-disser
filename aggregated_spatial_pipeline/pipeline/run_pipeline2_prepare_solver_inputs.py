@@ -32,6 +32,8 @@ from aggregated_spatial_pipeline.visualization import (
 
 SUPPORTED_SERVICES = ("hospital", "polyclinic", "school")
 LP_BLOCK_SELECTION_POLICY = "has_living_buildings_or_service_capacity"
+PROVISION_ENGINE_NAME = "arctic_lp_provision"
+PLACEMENT_ENGINE_NAME = "solver_flp_optimize_placement"
 
 # Keep matplotlib/tqdm ecosystem caches in writable workspace path.
 ensure_repo_mplconfigdir("mpl-asp-pipeline2")
@@ -1316,6 +1318,8 @@ def _run_exact_placement_for_service(
     summary_after = {
         "service": service,
         "mode": "exact",
+        "placement_engine": PLACEMENT_ENGINE_NAME,
+        "provision_engine_recompute": PROVISION_ENGINE_NAME,
         "demand_column": demand_column,
         "elapsed_sec": float(elapsed),
         "min_new_capacity": float(_service_min_new_capacity(service)),
@@ -1536,6 +1540,11 @@ def main() -> None:
 
     _log("STEP solver_prep: building per-service solver-ready blocks and links.")
     _log("STEP previews: generating PNGs for accessibility and LP outputs.")
+    _log(f"Provision engine: {PROVISION_ENGINE_NAME}")
+    _log(
+        "Placement engine: "
+        f"{PLACEMENT_ENGINE_NAME} ({'enabled exact mode' if args.placement_exact else 'disabled'})"
+    )
 
     # 4) Per-service solver-ready tables (demand_within/demand_without/capacity_left/provision).
     service_outputs: dict[str, dict] = {}
@@ -1659,6 +1668,7 @@ def main() -> None:
                     except Exception:
                         lp_preview_path = None
                 service_outputs[service] = {
+                    "provision_engine": PROVISION_ENGINE_NAME,
                     "summary": str(summary_path),
                     "blocks_solver": str(blocks_path),
                     "adj_matrix": str(matrix_service_path),
@@ -1751,6 +1761,7 @@ def main() -> None:
             )
         summary = {
             "service": service,
+            "provision_engine": PROVISION_ENGINE_NAME,
             "block_selection_policy": LP_BLOCK_SELECTION_POLICY,
             "service_radius_min": float(service_radius_min),
             "service_demand_per_1000": float(service_demand_per_1000),
@@ -1781,6 +1792,7 @@ def main() -> None:
         summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
         service_outputs[service] = {
+            "provision_engine": PROVISION_ENGINE_NAME,
             "summary": str(summary_path),
             "blocks_solver": str(blocks_path),
             "adj_matrix": str(matrix_service_path),
@@ -1829,6 +1841,15 @@ def main() -> None:
         "previews_dir": str(preview_dir),
         "preview_outputs": preview_outputs,
         "raw_services": raw_stats,
+        "provision_engine": {
+            "name": PROVISION_ENGINE_NAME,
+            "scope": "baseline provision assessment and post-placement recompute",
+        },
+        "placement_engine": {
+            "name": PLACEMENT_ENGINE_NAME,
+            "enabled": bool(args.placement_exact),
+            "mode": ("exact" if args.placement_exact else None),
+        },
         "solver_outputs": service_outputs,
         "placement_exact_enabled": bool(args.placement_exact),
         "placement_exact_outputs": placement_outputs,
