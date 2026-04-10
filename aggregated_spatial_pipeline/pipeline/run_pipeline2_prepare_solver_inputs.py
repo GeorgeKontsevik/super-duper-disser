@@ -866,6 +866,7 @@ def _plot_service_lp_preview(
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
 
     if solver_blocks is None or solver_blocks.empty:
         return None
@@ -881,16 +882,37 @@ def _plot_service_lp_preview(
     gdf = normalize_preview_gdf(gdf, boundary_plot, target_crs="EPSG:3857")
 
     provision_col = "provision_strong" if "provision_strong" in gdf.columns else "provision" if "provision" in gdf.columns else None
-    demand_without_col = "demand_without" if "demand_without" in gdf.columns else None
     if provision_col is None:
         return None
 
     provision = pd.to_numeric(gdf[provision_col], errors="coerce")
-    gdf["provision_binary"] = np.where(provision >= 1.0, "good", "bad")
-    if provision.notna().sum() > 0:
-        gdf.loc[provision.isna(), "provision_binary"] = "missing"
+    demand = pd.to_numeric(gdf.get("demand", 0.0), errors="coerce").fillna(0.0)
+    demand_without = pd.to_numeric(gdf.get("demand_without", 0.0), errors="coerce").fillna(0.0)
+    demand_left = pd.to_numeric(gdf.get("demand_left", 0.0), errors="coerce").fillna(0.0)
+    has_access_gap = demand_without > 1e-9
+    has_capacity_gap = demand_left > 1e-9
 
-    color_map = {"good": "#16a34a", "bad": "#dc2626", "missing": "#9ca3af"}
+    gdf["gap_type"] = "no_gap"
+    gdf.loc[has_access_gap & ~has_capacity_gap, "gap_type"] = "accessibility_gap"
+    gdf.loc[~has_access_gap & has_capacity_gap, "gap_type"] = "capacity_gap"
+    gdf.loc[has_access_gap & has_capacity_gap, "gap_type"] = "both_gaps"
+    gdf.loc[provision.isna(), "gap_type"] = "missing_data"
+
+    color_map = {
+        "no_gap": "#16a34a",
+        "capacity_gap": "#dc2626",
+        "accessibility_gap": "#2563eb",
+        "both_gaps": "#a21caf",
+        "missing_data": "#9ca3af",
+    }
+    label_map = {
+        "no_gap": "no unmet demand",
+        "capacity_gap": "capacity gap (demand_left)",
+        "accessibility_gap": "accessibility gap (demand_without)",
+        "both_gaps": "both gaps",
+        "missing_data": "missing provision data",
+    }
+    status_order = ("no_gap", "capacity_gap", "accessibility_gap", "both_gaps", "missing_data")
     fig, axes = plt.subplots(
         2,
         1,
@@ -901,8 +923,9 @@ def _plot_service_lp_preview(
     hist_ax = axes[1]
     apply_preview_canvas(fig, ax, boundary_plot)
     hist_ax.set_facecolor("#f7f0dd")
-    for status in ("good", "bad", "missing"):
-        part = gdf[gdf["provision_binary"] == status]
+    legend_handles = []
+    for status in status_order:
+        part = gdf[gdf["gap_type"] == status]
         if part.empty:
             continue
         part.plot(
@@ -913,11 +936,19 @@ def _plot_service_lp_preview(
             alpha=0.9,
             zorder=2,
         )
-    good_cnt = int((gdf["provision_binary"] == "good").sum())
-    bad_cnt = int((gdf["provision_binary"] == "bad").sum())
-    miss_cnt = int((gdf["provision_binary"] == "missing").sum())
+        legend_handles.append(Patch(facecolor=color_map[status], edgecolor="none", label=label_map[status]))
+    if legend_handles:
+        legend_bottom(ax, legend_handles, max_cols=2, fontsize=10)
+    no_gap_cnt = int((gdf["gap_type"] == "no_gap").sum())
+    cap_gap_cnt = int((gdf["gap_type"] == "capacity_gap").sum())
+    access_gap_cnt = int((gdf["gap_type"] == "accessibility_gap").sum())
+    both_gap_cnt = int((gdf["gap_type"] == "both_gaps").sum())
     ax.set_title(
-        f"{service}: provision status (1=good, <1=bad) | good={good_cnt}, bad={bad_cnt}, missing={miss_cnt}",
+        (
+            f"{service}: unmet-demand type | "
+            f"no_gap={no_gap_cnt}, cap_gap={cap_gap_cnt}, "
+            f"access_gap={access_gap_cnt}, both={both_gap_cnt}"
+        ),
         fontsize=16,
         fontweight="bold",
         color="#ffffff",
@@ -939,6 +970,21 @@ def _plot_service_lp_preview(
     else:
         hist_ax.text(0.5, 0.5, "no provision values", ha="center", va="center")
         hist_ax.set_axis_off()
+
+    demand_total = float(demand.sum())
+    access_total = float(demand_without.sum())
+    capacity_total = float(demand_left.sum())
+    footer_text(
+        fig,
+        [
+            (
+                f"unmet totals: accessibility={access_total:.0f} "
+                f"({(access_total / demand_total * 100.0) if demand_total > 0 else 0.0:.2f}%), "
+                f"capacity={capacity_total:.0f} "
+                f"({(capacity_total / demand_total * 100.0) if demand_total > 0 else 0.0:.2f}%)"
+            )
+        ],
+    )
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     save_preview_figure(fig, out_path)
