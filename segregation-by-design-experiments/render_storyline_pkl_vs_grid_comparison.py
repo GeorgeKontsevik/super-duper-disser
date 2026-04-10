@@ -109,6 +109,30 @@ def _compute_cell_match_ratio(cells: gpd.GeoDataFrame, pkl_city: gpd.GeoDataFram
     return ratio
 
 
+def _blend_color_from_probabilities(
+    probabilities: list[float],
+    *,
+    class_names: list[str],
+    class_colors: dict[str, str],
+) -> str:
+    rgb = [0.0, 0.0, 0.0]
+    probs = [max(0.0, float(v)) for v in probabilities]
+    total = sum(probs)
+    if total <= 0:
+        return "#808080"
+    weights = [p / total for p in probs]
+    for idx, weight in enumerate(weights):
+        if idx >= len(class_names):
+            continue
+        class_name = class_names[idx]
+        class_color = class_colors.get(class_name, "#808080")
+        r, g, b = to_rgb(class_color)
+        rgb[0] += weight * r
+        rgb[1] += weight * g
+        rgb[2] += weight * b
+    return to_hex(tuple(rgb))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Render one comparison figure: PKL street-pattern polygons vs grid classification for intersected cities."
@@ -174,14 +198,36 @@ def main() -> None:
         raise ValueError("PKL is missing 'prediction' column.")
     pkl_df = pkl_df.copy()
     pkl_df["class_name"] = pkl_df["prediction"].map(lambda x: _safe_prediction_to_class_name(x, class_by_id))
+    prob_columns = [f"prob_{idx}" for idx in range(len(class_names))]
+    missing_prob_columns = [col for col in prob_columns if col not in pkl_df.columns]
+    if missing_prob_columns:
+        raise ValueError(f"PKL is missing required probability columns: {missing_prob_columns}")
+    prob_frame = pkl_df[prob_columns]
+    invalid_mask = prob_frame.isna().any(axis=1)
+    pkl_df["_prob_invalid"] = invalid_mask
+    if bool(invalid_mask.any()):
+        null_counts = prob_frame.isna().sum()
+        bad_cols = {col: int(cnt) for col, cnt in null_counts.items() if int(cnt) > 0}
+        bad_rows = int(invalid_mask.sum())
+        print(f"WARNING: PKL rows with null probabilities: {bad_rows}; columns={bad_cols}")
+    pkl_df["multivariate_color"] = "#606060"
+    valid_prob_mask = ~invalid_mask
+    pkl_df.loc[valid_prob_mask, "multivariate_color"] = pkl_df.loc[valid_prob_mask, prob_columns].apply(
+        lambda row: _blend_color_from_probabilities(
+            [float(v) for v in row.tolist()],
+            class_names=class_names,
+            class_colors=class_colors,
+        ),
+        axis=1,
+    )
 
     nrows = len(city_slugs)
-    fig, axes = plt.subplots(nrows=nrows, ncols=3, figsize=(16.5, 4.2 * nrows))
+    fig, axes = plt.subplots(nrows=nrows, ncols=4, figsize=(21.0, 4.2 * nrows))
     axes_2d = axes if nrows > 1 else [axes]
 
     for row_idx, slug in enumerate(city_slugs):
         place = city_places[slug]
-        left_ax, center_ax, right_ax = axes_2d[row_idx]
+        left_ax, center_left_ax, center_right_ax, right_ax = axes_2d[row_idx]
 
         grid_city_dir = joint_inputs_root / slug / street_pattern_dir / slug
         cells_path = grid_city_dir / "predicted_cells.geojson"
@@ -189,7 +235,8 @@ def main() -> None:
         buffer_path = grid_city_dir / "buffer.geojson"
         if not cells_path.exists() or not buffer_path.exists():
             _plot_empty(left_ax, f"{place.split(',')[0]} — GRID (multi)")
-            _plot_empty(center_ax, f"{place.split(',')[0]} — PKL")
+            _plot_empty(center_left_ax, f"{place.split(',')[0]} — PKL (prob)")
+            _plot_empty(center_right_ax, f"{place.split(',')[0]} — PKL (top1)")
             _plot_empty(right_ax, f"{place.split(',')[0]} — GRID (top1)")
             continue
 
@@ -203,6 +250,7 @@ def main() -> None:
         if not pkl_city.empty:
             pkl_city["geometry"] = pkl_city.geometry.intersection(poly)
             pkl_city = pkl_city[pkl_city.geometry.notna() & ~pkl_city.geometry.is_empty].copy()
+        pkl_invalid = pkl_city[pkl_city.get("_prob_invalid", False)].copy() if not pkl_city.empty else pkl_city
         cell_match_ratio = _compute_cell_match_ratio(cells, pkl_city) if args.grid_color_mode == "intensity" else pd.Series(index=cells.index, dtype=float)
 
         if cells.empty:
@@ -238,19 +286,37 @@ def main() -> None:
             left_ax.set_axis_off()
 
         if pkl_city.empty:
-            _plot_empty(center_ax, f"{place.split(',')[0]} — PKL")
+            _plot_empty(center_left_ax, f"{place.split(',')[0]} — PKL (prob)")
+            _plot_empty(center_right_ax, f"{place.split(',')[0]} — PKL (top1)")
         else:
-            colors = pkl_city["class_name"].map(lambda v: class_colors.get(str(v), "#808080"))
+            # PKL panel with probability-distribution blend in class_names order.
             pkl_city.plot(
-                ax=center_ax,
-                color=colors,
+                ax=center_left_ax,
+                color=pkl_city["multivariate_color"],
                 linewidth=0,
             )
             if not roads.empty:
-                roads.plot(ax=center_ax, color="#f3f3f3", linewidth=0.35, alpha=0.5, zorder=5)
-            center_ax.set_facecolor("#1d1f22")
-            center_ax.set_title(f"{place.split(',')[0]} — PKL", fontsize=10, fontweight="bold")
-            center_ax.set_axis_off()
+                roads.plot(ax=center_left_ax, color="#f3f3f3", linewidth=0.35, alpha=0.5, zorder=5)
+            center_left_ax.set_facecolor("#1d1f22")
+            center_left_ax.set_title(f"{place.split(',')[0]} — PKL (prob)", fontsize=10, fontweight="bold")
+            center_left_ax.set_axis_off()
+            if not pkl_invalid.empty:
+                pkl_invalid.boundary.plot(ax=center_left_ax, color="#ff2d2d", linewidth=1.0, zorder=9)
+
+            # PKL panel with top-1 class color.
+            pkl_top1_colors = pkl_city["class_name"].map(lambda v: class_colors.get(str(v), "#808080"))
+            pkl_city.plot(
+                ax=center_right_ax,
+                color=pkl_top1_colors,
+                linewidth=0,
+            )
+            if not roads.empty:
+                roads.plot(ax=center_right_ax, color="#f3f3f3", linewidth=0.35, alpha=0.5, zorder=5)
+            center_right_ax.set_facecolor("#1d1f22")
+            center_right_ax.set_title(f"{place.split(',')[0]} — PKL (top1)", fontsize=10, fontweight="bold")
+            center_right_ax.set_axis_off()
+            if not pkl_invalid.empty:
+                pkl_invalid.boundary.plot(ax=center_right_ax, color="#ff2d2d", linewidth=1.0, zorder=9)
 
         if cells.empty:
             _plot_empty(right_ax, f"{place.split(',')[0]} — GRID (top1)")
@@ -283,13 +349,19 @@ def main() -> None:
         # Draw census-tract polygon borders on all panels for direct shape comparison.
         if not pkl_city.empty:
             pkl_city.boundary.plot(ax=left_ax, color="#000000", linewidth=0.45, zorder=8)
-            pkl_city.boundary.plot(ax=center_ax, color="#000000", linewidth=0.45, zorder=8)
+            pkl_city.boundary.plot(ax=center_left_ax, color="#000000", linewidth=0.45, zorder=8)
+            pkl_city.boundary.plot(ax=center_right_ax, color="#000000", linewidth=0.45, zorder=8)
             pkl_city.boundary.plot(ax=right_ax, color="#000000", linewidth=0.45, zorder=8)
+            if not pkl_invalid.empty:
+                pkl_invalid.boundary.plot(ax=left_ax, color="#ff2d2d", linewidth=0.9, zorder=9)
+                pkl_invalid.boundary.plot(ax=right_ax, color="#ff2d2d", linewidth=0.9, zorder=9)
 
         left_ax.set_xlim(xmin, xmax)
         left_ax.set_ylim(ymin, ymax)
-        center_ax.set_xlim(xmin, xmax)
-        center_ax.set_ylim(ymin, ymax)
+        center_left_ax.set_xlim(xmin, xmax)
+        center_left_ax.set_ylim(ymin, ymax)
+        center_right_ax.set_xlim(xmin, xmax)
+        center_right_ax.set_ylim(ymin, ymax)
         right_ax.set_xlim(xmin, xmax)
         right_ax.set_ylim(ymin, ymax)
 
