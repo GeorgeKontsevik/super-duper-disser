@@ -30,7 +30,7 @@ from aggregated_spatial_pipeline.visualization import (
 )
 
 
-SUPPORTED_SERVICES = ("hospital", "polyclinic", "school")
+SUPPORTED_SERVICES = ("hospital", "polyclinic", "school", "kindergarten")
 LP_BLOCK_SELECTION_POLICY = "has_living_buildings_or_service_capacity"
 PROVISION_ENGINE_NAME = "arctic_lp_provision"
 PLACEMENT_ENGINE_NAME = "solver_flp_optimize_placement"
@@ -62,6 +62,11 @@ SERVICE_SPECS: dict[str, ServiceSpec] = {
             {"amenity": "school"},
         ],
     ),
+    "kindergarten": ServiceSpec(
+        tags=[
+            {"amenity": "kindergarten"},
+        ],
+    ),
 }
 
 # Arctic/solver defaults:
@@ -79,11 +84,13 @@ DEFAULT_ACCESSIBILITY_MIN_BY_SERVICE = {
     "hospital": 60.0,
     "polyclinic": 10.0,
     "school": 15.0,
+    "kindergarten": 15.0,
 }
 DEFAULT_DEMAND_PER_1000_BY_SERVICE = {
     "hospital": 9.0,
     "polyclinic": 13.0,
     "school": 120.0,
+    "kindergarten": 120.0,
 }
 
 
@@ -467,7 +474,24 @@ def _download_service_raw(boundary_gdf: gpd.GeoDataFrame, service: str) -> gpd.G
     merged = pd.concat(frames, ignore_index=True)
     merged = gpd.GeoDataFrame(merged, geometry="geometry", crs=4326)
     merged = merged.drop_duplicates(subset=["source_uid"]).reset_index(drop=True)
+    merged = _filter_non_private_kindergarten(merged, service)
     return merged
+
+
+def _filter_non_private_kindergarten(raw: gpd.GeoDataFrame, service: str) -> gpd.GeoDataFrame:
+    if service != "kindergarten" or raw.empty:
+        return raw
+    private_cols = ("operator:type", "access", "ownership")
+    private_mask = pd.Series(False, index=raw.index, dtype=bool)
+    for col in private_cols:
+        if col not in raw.columns:
+            continue
+        values = raw[col].astype("string").str.lower()
+        private_mask = private_mask | values.str.contains(r"(^|[;,\s])private($|[;,\s])", regex=True, na=False)
+    removed = int(private_mask.sum())
+    if removed > 0:
+        _log(f"Kindergarten filter: removed private features={removed}")
+    return raw.loc[~private_mask].copy()
 
 
 def _capacity_from_row(
@@ -694,6 +718,7 @@ PIPELINE2_GALLERY_FILENAMES = {
     "hospital": "31_lp_hospital_provision_unmet.png",
     "polyclinic": "32_lp_polyclinic_provision_unmet.png",
     "school": "33_lp_school_provision_unmet.png",
+    "kindergarten": "40_lp_kindergarten_provision_unmet.png",
 }
 
 PIPELINE2_SELECTION_GALLERY_FILENAMES = {
@@ -701,6 +726,7 @@ PIPELINE2_SELECTION_GALLERY_FILENAMES = {
     "hospital": "lp_hospital_block_selection_status.png",
     "polyclinic": "lp_polyclinic_block_selection_status.png",
     "school": "lp_school_block_selection_status.png",
+    "kindergarten": "lp_kindergarten_block_selection_status.png",
 }
 
 PIPELINE2_PLACEMENT_GALLERY_FILENAMES = {
@@ -715,6 +741,10 @@ PIPELINE2_PLACEMENT_GALLERY_FILENAMES = {
     "school": {
         "status": "38_exact_school_placement_status.png",
         "after": "39_exact_school_provision_after.png",
+    },
+    "kindergarten": {
+        "status": "41_exact_kindergarten_placement_status.png",
+        "after": "42_exact_kindergarten_provision_after.png",
     },
 }
 
