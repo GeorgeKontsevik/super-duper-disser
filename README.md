@@ -36,14 +36,46 @@ PYTHONPATH=/Users/gk/Code/super-duper-disser .venv/bin/python -m aggregated_spat
 
 ```bash
 cd /Users/gk/Code/super-duper-disser
-./run_all_cities.sh 2>&1 | tee run_all_cities.log
+PYTHONPATH=/Users/gk/Code/super-duper-disser MPLCONFIGDIR=/tmp/mpl-super-duper-disser \
+.venv/bin/python scripts/run_random_50_cities_pipeline.py \
+  --cities-file simplemaps_worldcities_basicv1/worldcities.csv \
+  --min-population 800000 \
+  --sample-size 30 \
+  --seed 42 \
+  --buffer-m 10000 \
+  --street-grid-step 500 \
+  --pt-subway-stop-buffer-m 0 \
+  --pt-dependency-top-routes 30 \
+  --services hospital polyclinic school kindergarten \
+  --output-root aggregated_spatial_pipeline/outputs/batch_runs/random50_pop800k_10km
 ```
 
-City list:
-- [cities_small_compare.txt](/Users/gk/Code/super-duper-disser/cities_small_compare.txt)
+This runner now supports:
+- on-the-fly population filtering via `--min-population`
+- automatic skip for already completed cities in the same `--output-root`
+  (`joint/<slug>/manifest_joint.json` and `joint_inputs/<slug>/pipeline_2/manifest_prepare_solver_inputs.json`)
 
 Batch runner:
-- [run_all_cities.sh](/Users/gk/Code/super-duper-disser/run_all_cities.sh)
+- [scripts/run_random_50_cities_pipeline.py](/Users/gk/Code/super-duper-disser/scripts/run_random_50_cities_pipeline.py)
+
+Force full rebuild for all cities:
+
+```bash
+cd /Users/gk/Code/super-duper-disser
+PYTHONPATH=/Users/gk/Code/super-duper-disser MPLCONFIGDIR=/tmp/mpl-super-duper-disser \
+.venv/bin/python scripts/run_random_50_cities_pipeline.py \
+  --cities-file simplemaps_worldcities_basicv1/worldcities.csv \
+  --min-population 800000 \
+  --sample-size 30 \
+  --seed 42 \
+  --buffer-m 10000 \
+  --street-grid-step 500 \
+  --pt-subway-stop-buffer-m 0 \
+  --pt-dependency-top-routes 30 \
+  --services hospital polyclinic school kindergarten \
+  --output-root aggregated_spatial_pipeline/outputs/batch_runs/random50_pop800k_10km \
+  --no-cache
+```
 
 ## Shared Visualization Tool
 
