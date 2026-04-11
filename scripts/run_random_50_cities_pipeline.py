@@ -328,13 +328,31 @@ def main() -> None:
             "service_preview_png": str(city_input_dir / "preview_png" / "all_together" / "29_services_raw_all_categories.png"),
             "service_preview_exists": False,
         }
+        joint_manifest_path = city_joint_dir / "manifest_joint.json"
+        pipeline2_manifest_path = city_input_dir / "pipeline_2" / "manifest_prepare_solver_inputs.json"
+        row["joint_manifest_exists"] = joint_manifest_path.exists()
+        row["pipeline2_manifest_exists"] = pipeline2_manifest_path.exists()
 
         try:
             if args.dry_run:
                 print("  dry-run: commands prepared, not executed.")
             else:
-                _run_command(joint_cmd, env=env, cwd=ROOT)
-                _run_command(pipeline2_cmd, env=env, cwd=ROOT)
+                run_joint_needed = bool(args.no_cache) or (not joint_manifest_path.exists())
+                run_pipeline2_needed = bool(args.no_cache) or (not pipeline2_manifest_path.exists())
+
+                if (not args.no_cache) and (not run_joint_needed) and (not run_pipeline2_needed):
+                    row["status"] = "skipped_existing"
+                    print("  skip: existing city artifacts detected (manifest_joint + manifest_prepare_solver_inputs).")
+                else:
+                    if run_joint_needed:
+                        _run_command(joint_cmd, env=env, cwd=ROOT)
+                    else:
+                        print("  skip: run_joint already completed (manifest_joint exists).")
+
+                    if run_pipeline2_needed:
+                        _run_command(pipeline2_cmd, env=env, cwd=ROOT)
+                    else:
+                        print("  skip: pipeline_2 already completed (manifest_prepare_solver_inputs exists).")
         except Exception as exc:  # noqa: BLE001
             row["status"] = "failed"
             row["error"] = str(exc)
