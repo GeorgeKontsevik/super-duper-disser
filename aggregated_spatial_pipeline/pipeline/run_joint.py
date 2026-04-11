@@ -3027,8 +3027,8 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         _log("Collecting intermodal transport graph bundle...")
         _log(
             "IduEdu download (intermodal): "
-            "requesting one city-scale intermodal transport graph with all supported PT modalities "
-            "(tram, bus, trolleybus, subway) for the same fixed analysis buffer via dedicated iduedu 1.2.1 runtime; "
+            "requesting one intermodal transport graph with all supported PT modalities "
+            "(tram, bus, trolleybus, subway) for the specified analysis territory via dedicated iduedu 1.2.1 runtime; "
             "this bundle is cached and intended for quarter-to-quarter accessibility in pipeline_2."
         )
         started = time.time()
