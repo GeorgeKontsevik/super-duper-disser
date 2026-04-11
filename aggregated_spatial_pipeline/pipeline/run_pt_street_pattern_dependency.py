@@ -558,6 +558,25 @@ def _save_previews(
     return outputs
 
 
+def _skip_reason_from_error(message: str) -> str:
+    text = str(message).lower()
+    if "no pt edges for selected pt-types" in text:
+        return "no_pt_edges_for_selected_types"
+    if "no pt edges with geometry and positive length" in text:
+        return "no_pt_edges_after_length_geometry_filter"
+    if "overlay is empty" in text:
+        return "empty_pt_street_pattern_overlay"
+    if "no positive-length intersections" in text:
+        return "no_positive_length_overlay_segments"
+    return "pt_street_pattern_dependency_skipped"
+
+
+def _write_manifest(output_dir: Path, manifest: dict) -> Path:
+    manifest_path = output_dir / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    return manifest_path
+
+
 def main() -> None:
     _configure_logging()
     args = parse_args()
@@ -584,10 +603,49 @@ def main() -> None:
     class_col = _pick_class_column(cells, args.class_col)
 
     pt_types = [str(t).lower() for t in args.pt_types]
-    pt_edges = _prepare_pt_edges(edges, pt_types=pt_types, min_segment_length_m=float(args.min_segment_length_m))
-    route_nodes = _compute_route_node_counts(pt_edges)
-    overlay, cells_local = _overlay_pt_with_street_pattern(pt_edges, cells, class_col=class_col)
-    tables = _compute_dependency_tables(overlay, cells_local, route_nodes)
+    pt_edges: gpd.GeoDataFrame | None = None
+    overlay: gpd.GeoDataFrame | None = None
+    cells_local: gpd.GeoDataFrame | None = None
+    tables: dict[str, pd.DataFrame] | None = None
+    try:
+        pt_edges = _prepare_pt_edges(edges, pt_types=pt_types, min_segment_length_m=float(args.min_segment_length_m))
+        route_nodes = _compute_route_node_counts(pt_edges)
+        overlay, cells_local = _overlay_pt_with_street_pattern(pt_edges, cells, class_col=class_col)
+        tables = _compute_dependency_tables(overlay, cells_local, route_nodes)
+    except ValueError as exc:
+        skip_files: dict[str, str] = {}
+        if pt_edges is not None and not pt_edges.empty:
+            pt_edges_out = output_dir / "pt_edges_filtered.parquet"
+            pt_edges.to_parquet(pt_edges_out)
+            skip_files["pt_edges_filtered"] = str(pt_edges_out)
+
+        skip_manifest = {
+            "city_dir": str(city_dir),
+            "experiment": "pt_x_street_pattern_dependency",
+            "status": "skipped",
+            "reason": _skip_reason_from_error(str(exc)),
+            "details": str(exc),
+            "pt_types": pt_types,
+            "street_pattern_class_col": class_col,
+            "subway_stop_buffer": {
+                "enabled": False,
+                "reason": "not_run_due_to_dependency_skip",
+                "buffer_m": float(args.subway_stop_buffer_m),
+            },
+            "counts": {
+                "street_pattern_cells": int(len(cells)),
+                "pt_edges_filtered": int(len(pt_edges)) if pt_edges is not None else 0,
+                "overlay_segments": int(len(overlay)) if overlay is not None else 0,
+                "routes_total": 0,
+                "subway_routes_without_explicit_route_label": 0,
+            },
+            "files": skip_files,
+            "top_routes_preview": [],
+        }
+        manifest_path = _write_manifest(output_dir, skip_manifest)
+        _log(f"PT x street-pattern dependency skipped ({skip_manifest['reason']}): {exc}")
+        _log(f"Done. Manifest: {manifest_path}")
+        return
 
     subway_result: dict[str, object] | None = None
     subway_files: dict[str, str] = {}
@@ -639,6 +697,11 @@ def main() -> None:
             }
     else:
         subway_manifest = {"enabled": False, "reason": "disabled_by_flag", "buffer_m": buffer_m}
+
+    assert pt_edges is not None
+    assert overlay is not None
+    assert cells_local is not None
+    assert tables is not None
 
     pt_edges_out = output_dir / "pt_edges_filtered.parquet"
     overlay_out = output_dir / "pt_street_pattern_overlay.parquet"
@@ -700,8 +763,7 @@ def main() -> None:
         "top_routes_preview": route_stats.to_dict(orient="records"),
     }
 
-    manifest_path = output_dir / "manifest.json"
-    manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    manifest_path = _write_manifest(output_dir, manifest)
     _log(f"Done. Manifest: {manifest_path}")
 
 
