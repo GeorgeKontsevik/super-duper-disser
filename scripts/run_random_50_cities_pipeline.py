@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import random
@@ -49,6 +50,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--sample-size", type=int, default=50, help="Number of random cities to run.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducible sampling.")
+    parser.add_argument(
+        "--min-population",
+        type=float,
+        default=None,
+        help=(
+            "Optional minimum city population filter applied on the fly when the input file "
+            "contains population values (for example, SimpleMaps worldcities.csv)."
+        ),
+    )
     parser.add_argument("--buffer-m", type=float, default=10000.0, help="Territory buffer in meters (default: 10km).")
     parser.add_argument("--street-grid-step", type=float, default=500.0)
     parser.add_argument("--pt-subway-stop-buffer-m", type=float, default=0.0)
@@ -72,6 +82,26 @@ def parse_args() -> argparse.Namespace:
 def _load_city_items(path: Path) -> list[CityItem]:
     if not path.exists():
         raise FileNotFoundError(f"City list file not found: {path}")
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        return _load_city_items_from_csv(path)
+
+    return _load_city_items_from_text(path)
+
+
+def _parse_population(value: object) -> float | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return float(text.replace(",", ""))
+    except Exception:
+        return None
+
+
+def _load_city_items_from_text(path: Path) -> list[CityItem]:
     items: list[CityItem] = []
     for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
@@ -87,14 +117,78 @@ def _load_city_items(path: Path) -> list[CityItem]:
         if not place:
             continue
         items.append(CityItem(slug=slug, place=place))
+    return _deduplicate_city_items(items)
+
+
+def _load_city_items_from_csv(path: Path) -> list[CityItem]:
+    items: list[CityItem] = []
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        fieldnames = [str(name) for name in (reader.fieldnames or [])]
+        has_population = "population" in fieldnames
+        has_place = "place" in fieldnames
+        for row in reader:
+            place = ""
+            if has_place:
+                place = str(row.get("place") or "").strip()
+            if not place:
+                city = str(row.get("city_ascii") or row.get("city") or "").strip()
+                admin = str(row.get("admin_name") or "").strip()
+                country = str(row.get("country") or "").strip()
+                parts = [p for p in (city, admin, country) if p]
+                place = ", ".join(parts)
+            if not place:
+                continue
+            slug = _slugify(str(row.get("slug") or place))
+            item = CityItem(slug=slug, place=place)
+            if has_population:
+                pop = _parse_population(row.get("population"))
+                if pop is not None:
+                    # preserve for filtering by temporarily encoding in slug marker-free map below
+                    item = CityItem(slug=f"{item.slug}__pop_{int(pop)}", place=item.place)
+            items.append(item)
+
+    return _deduplicate_city_items(items)
+
+
+def _deduplicate_city_items(items: list[CityItem]) -> list[CityItem]:
     uniq: list[CityItem] = []
     seen: set[str] = set()
     for item in items:
-        if item.slug in seen:
+        slug = item.slug
+        if "__pop_" in slug:
+            slug = slug.split("__pop_", 1)[0]
+            item = CityItem(slug=slug, place=item.place)
+        if slug in seen:
             continue
-        seen.add(item.slug)
+        seen.add(slug)
         uniq.append(item)
     return uniq
+
+
+def _load_population_lookup(path: Path) -> dict[str, float]:
+    if path.suffix.lower() != ".csv":
+        return {}
+    result: dict[str, float] = {}
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        fieldnames = [str(name) for name in (reader.fieldnames or [])]
+        if "population" not in fieldnames:
+            return {}
+        for row in reader:
+            pop = _parse_population(row.get("population"))
+            if pop is None:
+                continue
+            place = str(row.get("place") or "").strip()
+            if not place:
+                city = str(row.get("city_ascii") or row.get("city") or "").strip()
+                admin = str(row.get("admin_name") or "").strip()
+                country = str(row.get("country") or "").strip()
+                parts = [p for p in (city, admin, country) if p]
+                place = ", ".join(parts)
+            if place:
+                result[_slugify(place)] = pop
+    return result
 
 
 def _resolve_output_root(override: str | None) -> Path:
@@ -133,6 +227,17 @@ def main() -> None:
     joint_root.mkdir(parents=True, exist_ok=True)
 
     cities = _load_city_items(cities_file)
+    if args.min_population is not None:
+        population_lookup = _load_population_lookup(cities_file)
+        if not population_lookup:
+            raise ValueError(
+                f"--min-population={float(args.min_population)} was requested, "
+                f"but no population column was found in {cities_file}. "
+                "Use a source file with population data (e.g., SimpleMaps worldcities.csv)."
+            )
+        min_pop = float(args.min_population)
+        cities = [item for item in cities if float(population_lookup.get(item.slug, -1.0)) >= min_pop]
+        print(f"[batch] population filter applied: min_population={int(min_pop)} -> {len(cities)} candidate cities")
     if len(cities) < int(args.sample_size):
         raise ValueError(
             f"Requested sample-size={int(args.sample_size)}, but only {len(cities)} cities are available in {cities_file}"
