@@ -570,6 +570,13 @@ def build_blocksnet_bundle(
     ]
     blocks_final = blocks_with_land_use.join(aggregated_buildings[building_columns])
     blocks_final = _add_population_proxy(blocks_final)
+    # Population for downstream provision must be based on post-floor living context.
+    # Keep population_total aligned with the newly derived population_proxy.
+    population_proxy = pd.to_numeric(blocks_final.get("population_proxy"), errors="coerce")
+    if isinstance(population_proxy, pd.Series):
+        blocks_final["population_total"] = population_proxy.fillna(0.0).astype(float)
+    else:
+        blocks_final["population_total"] = 0.0
 
     blocks_path = output_path / "blocks.parquet"
     land_use_path = output_path / "land_use.parquet"

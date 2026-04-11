@@ -594,9 +594,22 @@ def _aggregate_capacity_to_blocks(service_points: gpd.GeoDataFrame, blocks_gdf: 
 
 
 def _detect_population_column(blocks: gpd.GeoDataFrame) -> str | None:
-    for col in ("population_total", "population_proxy", "population"):
-        if col in blocks.columns:
-            return col
+    candidates = [col for col in ("population_total", "population_proxy", "population") if col in blocks.columns]
+    if not candidates:
+        return None
+    # Prefer the column with the best non-zero coverage to avoid stale zero-filled fields.
+    best_col = None
+    best_score = (-1, -1.0)  # (positive_count, total_sum)
+    for col in candidates:
+        series = pd.to_numeric(blocks[col], errors="coerce").fillna(0.0)
+        positive_count = int((series > 0).sum())
+        total_sum = float(series.sum())
+        score = (positive_count, total_sum)
+        if score > best_score:
+            best_col = col
+            best_score = score
+    if best_col is not None:
+        return best_col
     return None
 
 
@@ -901,9 +914,6 @@ def _plot_accessibility_previews(
     out_dir.mkdir(parents=True, exist_ok=True)
     out: dict[str, str] = {}
     access_map_path = out_dir / PIPELINE2_GALLERY_FILENAMES["accessibility_mean_time_map"]
-    legacy_matrix_png = out_dir / "02_accessibility_matrix_sample_heatmap.png"
-    if legacy_matrix_png.exists():
-        legacy_matrix_png.unlink(missing_ok=True)
     if use_cache and access_map_path.exists():
         _log(f"Preview step: using cached accessibility map: {access_map_path.name}")
         out["accessibility_mean_time_map"] = str(access_map_path)
