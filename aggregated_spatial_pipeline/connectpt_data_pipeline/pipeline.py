@@ -526,9 +526,61 @@ def build_connectpt_osm_bundle(
 
         roads_graph = roads_to_graph(roads_with_stops, filtered_stops)
         simplified_graph = stop_complete_then_prune(roads_graph, speed_kmh=speed_kmh)
-        simplified_graph = _largest_connected_component(simplified_graph)
         graph_pickle_path = modality_dir / "graph.pkl"
+        try:
+            simplified_graph = _largest_connected_component(simplified_graph)
+        except ValueError as exc:
+            logger.warning(
+                "ConnectPT modality '{}' produced empty simplified graph after stop pruning ({}); "
+                "skipping graph/time-matrix outputs for this modality.",
+                modality.value,
+                exc,
+            )
+            modality_artifacts.append(
+                ModalityArtifacts(
+                    modality=modality.value,
+                    stop_source=stop_source_by_modality.get(modality, "unknown"),
+                    raw_stop_count=len(raw_stops) if raw_stops is not None else len(agg_stops),
+                    projected_stop_count=len(filtered_stops),
+                    graph_node_count=0,
+                    graph_edge_count=0,
+                    files={
+                        "aggregated_stops": str(agg_stops_path),
+                        **({"raw_stops": str(raw_stops_path), "raw_to_aggregated_stop_map": str(mapping_path)} if raw_stops is not None else {}),
+                        "lines": str(lines_path),
+                        "projected_lines": str(projected_lines_path),
+                        "projected_stops": str(projected_stops_path),
+                    },
+                )
+            )
+            continue
+
         _save_pickle(simplified_graph, graph_pickle_path)
+        if simplified_graph.number_of_edges() == 0:
+            logger.warning(
+                "ConnectPT modality '{}' has no stop-to-stop edges after pruning; "
+                "skipping graph/time-matrix outputs for this modality.",
+                modality.value,
+            )
+            modality_artifacts.append(
+                ModalityArtifacts(
+                    modality=modality.value,
+                    stop_source=stop_source_by_modality.get(modality, "unknown"),
+                    raw_stop_count=len(raw_stops) if raw_stops is not None else len(agg_stops),
+                    projected_stop_count=len(filtered_stops),
+                    graph_node_count=int(simplified_graph.number_of_nodes()),
+                    graph_edge_count=0,
+                    files={
+                        "aggregated_stops": str(agg_stops_path),
+                        **({"raw_stops": str(raw_stops_path), "raw_to_aggregated_stop_map": str(mapping_path)} if raw_stops is not None else {}),
+                        "lines": str(lines_path),
+                        "projected_lines": str(projected_lines_path),
+                        "projected_stops": str(projected_stops_path),
+                        "graph_pickle": str(graph_pickle_path),
+                    },
+                )
+            )
+            continue
 
         graph_nodes, graph_edges = _prepare_graph_outputs(simplified_graph, modality)
         graph_nodes = _clip_to_boundary(graph_nodes, boundary, crs=place_gdf.crs)
