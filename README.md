@@ -77,6 +77,53 @@ PYTHONPATH=/Users/gk/Code/super-duper-disser MPLCONFIGDIR=/tmp/mpl-super-duper-d
   --no-cache
 ```
 
+Retry only failed cities from an existing batch summary:
+
+```bash
+cd /Users/gk/Code/super-duper-disser
+.venv/bin/python - <<'PY'
+import json, os, subprocess
+from pathlib import Path
+
+summary = Path("aggregated_spatial_pipeline/outputs/batch_runs/random50_pop800k_10km/summary.json")
+data = json.loads(summary.read_text(encoding="utf-8"))
+
+env = dict(os.environ)
+env["PYTHONPATH"] = f"{Path.cwd()}:{env.get('PYTHONPATH','')}".rstrip(":")
+env.setdefault("MPLCONFIGDIR", "/tmp/mpl-super-duper-disser")
+
+for row in data.get("results", []):
+    if row.get("status") != "failed":
+        continue
+
+    slug = row.get("slug", "unknown")
+    print(f"\n==> retry failed city: {slug}")
+
+    joint_manifest = Path(row["joint_output_dir"]) / "manifest_joint.json"
+    p2_manifest = Path(row["joint_input_dir"]) / "pipeline_2" / "manifest_prepare_solver_inputs.json"
+
+    try:
+        if not joint_manifest.exists():
+            subprocess.run(row["commands"]["run_joint"], check=True, env=env)
+        else:
+            print("  skip run_joint (already has manifest_joint.json)")
+
+        if not p2_manifest.exists():
+            subprocess.run(row["commands"]["run_pipeline2_prepare_solver_inputs"], check=True, env=env)
+        else:
+            print("  skip pipeline2 (already has manifest_prepare_solver_inputs.json)")
+
+        row["status"] = "ok_after_retry"
+        row.pop("error", None)
+    except Exception as exc:
+        row["status"] = "failed"
+        row["error"] = str(exc)
+
+summary.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+print(f"\nupdated summary: {summary}")
+PY
+```
+
 ## Shared Visualization Tool
 
 One project-level visualization tool now owns the default preview canvas and base map styling:
