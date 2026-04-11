@@ -37,6 +37,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--joint-input-dir")
     parser.add_argument("--buildings-path")
     parser.add_argument("--land-use-path")
+    parser.add_argument("--roads-path")
+    parser.add_argument("--amenities-path")
     parser.add_argument("--output-path")
     parser.add_argument("--summary-path")
     parser.add_argument("--boundary-path")
@@ -242,7 +244,20 @@ def main() -> None:
     _configure_logging()
     args = parse_args()
     repo_root = Path(args.repo_root).resolve()
+    city_dir = _resolve_city_dir(args)
     buildings_path, land_use_path, output_path, summary_path, boundary_path, preview_dir = _resolve_floor_paths(args)
+    if args.roads_path:
+        roads_path = Path(args.roads_path).resolve()
+    elif city_dir is not None:
+        roads_path = (city_dir / "derived_layers" / "roads_drive_osmnx.parquet").resolve()
+    else:
+        roads_path = None
+    if args.amenities_path:
+        amenities_path = Path(args.amenities_path).resolve()
+    elif city_dir is not None:
+        amenities_path = (city_dir / "blocksnet_raw_osm" / "amenities.parquet").resolve()
+    else:
+        amenities_path = None
     logger.info(
         "Starting dedicated floor preprocessing: buildings={}, land_use={}, output={}",
         buildings_path.name,
@@ -259,6 +274,8 @@ def main() -> None:
         buildings_path=buildings_path,
         land_use_path=land_use_path,
         output_path=output_path,
+        local_roads_path=roads_path,
+        local_amenities_path=amenities_path,
         is_living_model_path=str(args.is_living_model_path) if args.is_living_model_path else None,
         overpass_url=str(args.overpass_url) if args.overpass_url else None,
         osm_timeout_s=int(args.osm_timeout_s),

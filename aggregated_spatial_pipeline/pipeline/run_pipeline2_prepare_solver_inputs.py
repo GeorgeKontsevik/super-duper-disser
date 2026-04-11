@@ -98,7 +98,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Pipeline_2 input preparation on top of pipeline_1 territory: "
-            "download OSM services, aggregate to blocks, compute accessibility matrix, "
+            "load shared raw services, aggregate to blocks, compute accessibility matrix, "
             "save solver-ready tables."
         )
     )
@@ -452,30 +452,61 @@ def _normalize_raw_osm(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     return normalized
 
 
-def _download_service_raw(boundary_gdf: gpd.GeoDataFrame, service: str) -> gpd.GeoDataFrame:
-    boundary_wgs84 = boundary_gdf.to_crs(4326)
-    polygon = boundary_wgs84.union_all()
+def _match_tag_value(value, expected_values: set[str]) -> bool:
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return False
+    if isinstance(value, (list, tuple, set)):
+        return any(_match_tag_value(v, expected_values) for v in value)
+    text = str(value).strip().lower()
+    if not text:
+        return False
+    if text in expected_values:
+        return True
+    for token in re.split(r"[;,\|]", text):
+        if token.strip().lower() in expected_values:
+            return True
+    return False
+
+
+def _read_common_services_raw(city_dir: Path) -> tuple[gpd.GeoDataFrame, Path]:
+    common_path = city_dir / "blocksnet_raw_osm" / "services_pipeline2_raw.parquet"
+    if not common_path.exists():
+        raise ValueError(
+            "Common raw services layer is missing. "
+            f"Expected: {common_path}. Rebuild shared collection (run run_joint with --no-cache)."
+        )
+    common_raw = read_geodata(common_path)
+    if common_raw.crs is None:
+        common_raw = common_raw.set_crs(4326)
+    if "source_uid" not in common_raw.columns and not common_raw.empty:
+        common_raw = _normalize_raw_osm(common_raw)
+    return common_raw, common_path
+
+
+def _extract_service_raw_from_common(common_raw: gpd.GeoDataFrame, service: str) -> gpd.GeoDataFrame:
+    if common_raw.empty:
+        return gpd.GeoDataFrame({"geometry": []}, geometry="geometry", crs=common_raw.crs)
+
     queries = SERVICE_SPECS[service].tags
-    frames: list[gpd.GeoDataFrame] = []
-    for idx, tags in enumerate(queries, start=1):
-        _log(f"OSM download [{service}] query {idx}/{len(queries)}: tags={tags}")
-        try:
-            raw = ox.features_from_polygon(polygon, tags)
-            if raw is None or raw.empty:
-                _warn(f"OSM [{service}] query {idx} returned empty result.")
-                continue
-            norm = _normalize_raw_osm(raw)
-            frames.append(norm)
-            _log(f"OSM [{service}] query {idx} features={len(norm)}")
-        except Exception as exc:  # noqa: BLE001 - keep full OSM failure in logs
-            _warn(f"OSM [{service}] query {idx} failed: {exc}")
-    if not frames:
-        return gpd.GeoDataFrame({"geometry": []}, geometry="geometry", crs=4326)
-    merged = pd.concat(frames, ignore_index=True)
-    merged = gpd.GeoDataFrame(merged, geometry="geometry", crs=4326)
-    merged = merged.drop_duplicates(subset=["source_uid"]).reset_index(drop=True)
-    merged = _filter_non_private_kindergarten(merged, service)
-    return merged
+    mask_total = pd.Series(False, index=common_raw.index, dtype=bool)
+    for tags in queries:
+        qmask = pd.Series(True, index=common_raw.index, dtype=bool)
+        for tag_key, expected in tags.items():
+            expected_values = expected if isinstance(expected, list) else [expected]
+            expected_set = {str(v).strip().lower() for v in expected_values}
+            if tag_key not in common_raw.columns:
+                qmask = pd.Series(False, index=common_raw.index, dtype=bool)
+                break
+            qmask = qmask & common_raw[tag_key].map(lambda val: _match_tag_value(val, expected_set))
+        mask_total = mask_total | qmask
+
+    filtered = common_raw.loc[mask_total].copy()
+    if "source_uid" in filtered.columns:
+        filtered = filtered.drop_duplicates(subset=["source_uid"]).reset_index(drop=True)
+    else:
+        filtered = filtered.reset_index(drop=True)
+    filtered = _filter_non_private_kindergarten(filtered, service)
+    return filtered
 
 
 def _filter_non_private_kindergarten(raw: gpd.GeoDataFrame, service: str) -> gpd.GeoDataFrame:
@@ -714,6 +745,7 @@ def _save_dataframe(df: pd.DataFrame, path: Path) -> None:
 
 
 PIPELINE2_GALLERY_FILENAMES = {
+    "services_raw_all": "29_services_raw_all_categories.png",
     "accessibility_mean_time_map": "30_accessibility_mean_time_map.png",
     "hospital": "31_lp_hospital_provision_unmet.png",
     "polyclinic": "32_lp_polyclinic_provision_unmet.png",
@@ -747,6 +779,61 @@ PIPELINE2_PLACEMENT_GALLERY_FILENAMES = {
         "after": "42_exact_kindergarten_provision_after.png",
     },
 }
+
+
+def _plot_services_raw_overview(
+    raw_service_points: dict[str, gpd.GeoDataFrame],
+    out_path: Path,
+    *,
+    boundary: gpd.GeoDataFrame | None = None,
+) -> str | None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D
+
+    if not raw_service_points:
+        return None
+
+    service_colors = {
+        "hospital": "#dc2626",
+        "polyclinic": "#2563eb",
+        "school": "#16a34a",
+        "kindergarten": "#f59e0b",
+    }
+    boundary_plot = normalize_preview_gdf(boundary, target_crs="EPSG:3857")
+    fig, ax = plt.subplots(figsize=(12, 10))
+    apply_preview_canvas(fig, ax, boundary_plot, title="Pipeline_2 Raw Services (all categories)")
+    legend_handles: list[Line2D] = []
+
+    for service in SUPPORTED_SERVICES:
+        raw = raw_service_points.get(service)
+        if raw is None or raw.empty:
+            continue
+        points = _to_points(raw)
+        if points.empty:
+            continue
+        points_plot = normalize_preview_gdf(points[["geometry"]], boundary_plot, target_crs="EPSG:3857")
+        if points_plot is None or points_plot.empty:
+            continue
+        color = service_colors.get(service, "#334155")
+        points_plot.plot(ax=ax, color=color, markersize=12, alpha=0.9)
+        legend_handles.append(
+            Line2D([0], [0], marker="o", color="none", markerfacecolor=color, markersize=7, label=service)
+        )
+
+    if not legend_handles:
+        plt.close(fig)
+        return None
+
+    legend_bottom(ax, legend_handles, max_cols=4, fontsize=10)
+    ax.set_axis_off()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    save_preview_figure(fig, out_path)
+    plt.close(fig)
+    _log(f"Preview step: saved raw-services overview map: {out_path.name}")
+    return str(out_path)
 
 
 def _calc_demand(population: pd.Series, demand_per_1000: float) -> pd.Series:
@@ -1575,19 +1662,25 @@ def main() -> None:
     _log(f"Blocks features: {len(blocks)}")
     _log(f"Intermodal graph: nodes={graph.number_of_nodes()}, edges={graph.number_of_edges()}")
 
-    _log("STEP data_collection: downloading/caching raw OSM service layers inside analysis territory.")
+    _log("STEP data_collection: preparing raw service layers from shared collection cache.")
     _log("STEP capacity_aggregation: converting raw service objects to per-block capacities.")
 
-    # 1) Download/cache raw service layers and aggregate capacities to blocks.
+    # 1) Build per-service raw layers from shared collection and aggregate capacities to blocks.
+    common_services_raw, common_services_path = _read_common_services_raw(city_dir)
+    _log(
+        "Using shared raw services layer: "
+        f"{_log_name(common_services_path)} ({len(common_services_raw)} features)"
+    )
     capacity_columns: dict[str, pd.Series] = {}
     raw_stats: dict[str, dict] = {}
+    raw_service_points: dict[str, gpd.GeoDataFrame] = {}
     for service in services:
         raw_path = raw_dir / f"{service}.parquet"
         if raw_path.exists() and (not args.no_cache):
             raw = read_geodata(raw_path)
             _log(f"Using cached raw service layer [{service}]: {_log_name(raw_path)} ({len(raw)} features)")
         else:
-            raw = _download_service_raw(boundary, service)
+            raw = _extract_service_raw_from_common(common_services_raw, service)
             if raw.empty:
                 _warn(f"Raw service layer [{service}] is empty.")
             else:
@@ -1619,6 +1712,8 @@ def main() -> None:
             _save_geodata(raw, raw_path)
 
         points = _to_points(raw) if not raw.empty else raw
+        if points is not None and not points.empty:
+            raw_service_points[service] = points.copy()
         aggregated = _aggregate_capacity_to_blocks(points, blocks)
         cap_col = f"capacity_{service}"
         capacity_columns[cap_col] = aggregated
@@ -1729,6 +1824,13 @@ def main() -> None:
     placement_outputs: dict[str, dict] = {}
     preview_outputs: dict[str, object] = {}
     placement_root_name = "placement_exact_genetic" if bool(args.placement_genetic) else "placement_exact"
+    services_raw_overview_png = _plot_services_raw_overview(
+        raw_service_points,
+        preview_dir / PIPELINE2_GALLERY_FILENAMES["services_raw_all"],
+        boundary=boundary,
+    )
+    if services_raw_overview_png is not None:
+        preview_outputs["services_raw_all"] = services_raw_overview_png
     preview_outputs.update(
         _plot_accessibility_previews(units, matrix_union, preview_dir, boundary=boundary, use_cache=(not args.no_cache))
     )

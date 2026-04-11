@@ -29,7 +29,6 @@ from aggregated_spatial_pipeline.runtime_paths import (
     connectpt_python,
     floor_predictor_python,
     repo_root,
-    sm_imputation_python,
     street_pattern_python,
 )
 from aggregated_spatial_pipeline.runtime_config import configure_logger, repo_mplconfigdir
@@ -263,19 +262,25 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--sm-imputation",
+        "--pt-street-pattern-dependency",
         action=argparse.BooleanOptionalAction,
-        default=False,
+        default=True,
         help=(
-            "Run space-matrix imputation on quarter-level built form after quarter clipping "
-            "(default: disabled). Use --sm-imputation to enable."
+            "Run PT x street-pattern dependency step on collected iduedu graph "
+            "(bus/tram/trolleybus in modality analysis + subway stops buffer context)."
         ),
     )
     parser.add_argument(
-        "--sm-imputation-clusters",
+        "--pt-dependency-top-routes",
         type=int,
-        default=11,
-        help="Requested number of clusters for quarter-level sm_imputation. Default: 11.",
+        default=30,
+        help="Number of top routes to keep in PT x street-pattern manifest preview.",
+    )
+    parser.add_argument(
+        "--pt-subway-stop-buffer-m",
+        type=float,
+        default=500.0,
+        help="Subway stop buffer radius in meters for PT x street-pattern context.",
     )
     parser.add_argument(
         "--is-living-model-path",
@@ -315,7 +320,7 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=5.0,
         help=(
-            "Warning threshold for combined buildings+roads area coverage (% of analysis territory). "
+            "Warning threshold for combined buildings+roads area coverage (percent of analysis territory). "
             "Run continues even if below this threshold."
         ),
     )
@@ -895,6 +900,49 @@ def _ensure_street_grid_from_repo(
     return predicted_cells_path, summary_output, True
 
 
+def _run_pt_street_pattern_dependency_step(
+    *,
+    repo_root: Path,
+    city_dir: Path,
+    top_routes: int,
+    subway_stop_buffer_m: float,
+) -> tuple[Path, dict]:
+    output_dir = city_dir / "pt_street_pattern_dependency"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = output_dir / "manifest.json"
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = f"{repo_root}{os.pathsep}{env['PYTHONPATH']}" if env.get("PYTHONPATH") else str(repo_root)
+    env.setdefault("MPLCONFIGDIR", _repo_mplconfigdir(repo_root, "mpl-pt-street-dependency"))
+
+    command = [
+        sys.executable,
+        "-m",
+        "aggregated_spatial_pipeline.pipeline.run_pt_street_pattern_dependency",
+        "--joint-input-dir",
+        str(city_dir),
+        "--output-dir",
+        str(output_dir),
+        "--top-routes",
+        str(int(top_routes)),
+        "--subway-stop-buffer-m",
+        str(float(subway_stop_buffer_m)),
+    ]
+    _log(
+        "PT x street-pattern dependency step start: "
+        f"city_dir={_log_name(city_dir)}, top_routes={int(top_routes)}, "
+        f"subway_stop_buffer_m={float(subway_stop_buffer_m):.1f}"
+    )
+    started = time.time()
+    subprocess.run(command, check=True, cwd=str(repo_root), env=env)
+    _log(f"PT x street-pattern dependency step finished in {time.time() - started:.1f}s.")
+
+    manifest = _try_load_json(manifest_path)
+    if manifest is None:
+        raise RuntimeError(f"Cannot read PT x street-pattern dependency manifest: {manifest_path}")
+    return manifest_path, manifest
+
+
 def _ensure_shared_drive_roads(
     *,
     buffer_path: Path,
@@ -1185,25 +1233,27 @@ def _resolve_analysis_buffer_from_osm(
         buffer_geom = gpd.GeoSeries(point_gdf.to_crs(3857).buffer(float(buffer_m)), crs=3857).to_crs(4326).iloc[0]
         territory_mode = "place_center_buffer"
     else:
-        geocoded = ox.geocode_to_gdf(place)
-        if geocoded.empty:
-            raise ValueError(f"Could not geocode place: {place}")
-
-        row = geocoded.iloc[0]
-        relation_id = row.get("osm_id")
-        osm_type = str(row.get("osm_type", "")).lower()
-        if relation_id is None or osm_type != "relation":
-            raise ValueError(
-                f"Expected a relation for {place}, got osm_type={osm_type!r}, osm_id={relation_id!r}"
-            )
-
-        relation_geom = _get_relation_boundary_via_overpass(int(relation_id))
         if float(buffer_m) > 0.0:
+            # For explicit buffer mode we do not require place->relation geocoding.
+            # City center from worldcities.csv is enough to build the analysis territory.
+            relation_id = None
             point_gdf = gpd.GeoDataFrame({"geometry": [center_point]}, crs=4326)
-            buffered = point_gdf.to_crs(3857).buffer(float(buffer_m))
-            buffer_geom = gpd.GeoSeries(buffered, crs=3857).to_crs(4326).iloc[0]
+            buffer_geom = gpd.GeoSeries(point_gdf.to_crs(3857).buffer(float(buffer_m)), crs=3857).to_crs(4326).iloc[0]
             territory_mode = "place_center_buffer"
         else:
+            geocoded = ox.geocode_to_gdf(place)
+            if geocoded.empty:
+                raise ValueError(f"Could not geocode place: {place}")
+
+            row = geocoded.iloc[0]
+            relation_id = row.get("osm_id")
+            osm_type = str(row.get("osm_type", "")).lower()
+            if relation_id is None or osm_type != "relation":
+                raise ValueError(
+                    f"Expected a relation for {place}, got osm_type={osm_type!r}, osm_id={relation_id!r}"
+                )
+
+            relation_geom = _get_relation_boundary_via_overpass(int(relation_id))
             buffer_geom = relation_geom
             territory_mode = "relation"
 
@@ -1343,12 +1393,82 @@ def _floor_output_is_current(path: Path) -> bool:
     return required_columns.issubset(set(gdf.columns))
 
 
+def _empty_floor_roads(local_crs: str) -> gpd.GeoDataFrame:
+    return gpd.GeoDataFrame(
+        {
+            "osmid": pd.Series(dtype="object"),
+            "highway": pd.Series(dtype="string"),
+        },
+        geometry=gpd.GeoSeries([], crs=local_crs),
+        crs=local_crs,
+    )
+
+
+def _empty_floor_amenities(local_crs: str) -> gpd.GeoDataFrame:
+    return gpd.GeoDataFrame(
+        {"amenity_key": pd.Series(dtype="string")},
+        geometry=gpd.GeoSeries([], crs=local_crs),
+        crs=local_crs,
+    )
+
+
+def _load_local_roads_for_floor(
+    *,
+    roads_path: Path,
+    local_crs: str,
+) -> gpd.GeoDataFrame:
+    roads_raw = read_geodata(roads_path)
+    if roads_raw.empty:
+        return _empty_floor_roads(local_crs)
+    roads = roads_raw[roads_raw.geometry.notna() & ~roads_raw.geometry.is_empty].copy()
+    if roads.empty:
+        return _empty_floor_roads(local_crs)
+    if roads.crs is None:
+        roads = roads.set_crs(4326, allow_override=True)
+    roads = roads.to_crs(local_crs)
+    roads = roads[roads.geometry.geom_type.isin(["LineString", "MultiLineString"])].copy()
+    if roads.empty:
+        return _empty_floor_roads(local_crs)
+    if "highway" not in roads.columns:
+        roads["highway"] = "service"
+    roads["highway"] = roads["highway"].astype("string").fillna("service")
+    if "osmid" not in roads.columns:
+        roads["osmid"] = pd.Series([pd.NA] * len(roads), index=roads.index, dtype="object")
+    keep = [c for c in ["osmid", "highway", "geometry"] if c in roads.columns]
+    return roads[keep].reset_index(drop=True)
+
+
+def _load_local_amenities_for_floor(
+    *,
+    amenities_path: Path,
+    local_crs: str,
+) -> gpd.GeoDataFrame:
+    amenities_raw = read_geodata(amenities_path)
+    if amenities_raw.empty:
+        return _empty_floor_amenities(local_crs)
+    amenities = amenities_raw[amenities_raw.geometry.notna() & ~amenities_raw.geometry.is_empty].copy()
+    if amenities.empty:
+        return _empty_floor_amenities(local_crs)
+    if amenities.crs is None:
+        amenities = amenities.set_crs(4326, allow_override=True)
+    amenities = amenities.to_crs(local_crs)
+    if "amenity_key" not in amenities.columns:
+        if "amenity" in amenities.columns:
+            amenities["amenity_key"] = amenities["amenity"].astype("string")
+        else:
+            amenities["amenity_key"] = pd.Series([pd.NA] * len(amenities), index=amenities.index, dtype="string")
+    keep = [c for c in ["amenity_key", "geometry"] if c in amenities.columns]
+    return amenities[keep].reset_index(drop=True)
+
+
 def _model_based_is_living_restore(
     *,
     gdf: gpd.GeoDataFrame,
     model_path: Path,
     overpass_url: str | None,
     osm_timeout_s: int,
+    local_roads_path: Path | None = None,
+    local_amenities_path: Path | None = None,
 ) -> gpd.GeoDataFrame:
     import osmnx as ox
     from shapely.ops import unary_union
@@ -1408,7 +1528,8 @@ def _model_based_is_living_restore(
     _log(
         "Floor step: osm_living restore init: "
         f"buildings={len(out)}, timeout={int(osm_timeout_s)}s, "
-        f"overpass={'default' if not overpass_url else overpass_url}"
+        f"overpass={'default' if not overpass_url else overpass_url}, "
+        "context=local_inputs_required"
     )
 
     ox.settings.timeout = int(osm_timeout_s)
@@ -1420,11 +1541,18 @@ def _model_based_is_living_restore(
         if hasattr(ox.settings, "overpass_endpoint"):
             ox.settings.overpass_endpoint = str(overpass_url)
 
+    if local_roads_path is None:
+        raise RuntimeError("Floor step requires local roads input; got no local_roads_path.")
+    if not local_roads_path.exists():
+        raise RuntimeError(f"Floor step local roads file not found: {local_roads_path}")
+
     rp = RoadProcessor(bounds=bounds, buildings=out.copy(), radius_list=[30, 60, 90], local_crs=local_crs)
-    _log("Floor step: osm_living roads: downloading OSM roads...")
+    _log(f"Floor step: osm_living roads: loading local roads ({_log_name(local_roads_path)})...")
     t0 = time.time()
-    roads = rp.load_roads()
-    _log(f"Floor step: osm_living roads loaded: {len(roads)} in {time.time() - t0:.1f}s")
+    roads = _load_local_roads_for_floor(roads_path=local_roads_path, local_crs=local_crs)
+    rp.roads = roads
+    _log(f"Floor step: osm_living roads loaded from local input: {len(roads)} in {time.time() - t0:.1f}s")
+
     _log("Floor step: osm_living roads: building buffered road features...")
     t0 = time.time()
     rp._buffer_roads()
@@ -1439,16 +1567,28 @@ def _model_based_is_living_restore(
             + ", ".join(f"{c}={int(features_df[c].notna().sum())}" for c in present_raw_tags)
         )
 
+    if local_amenities_path is None:
+        raise RuntimeError("Floor step requires local amenities input; got no local_amenities_path.")
+    if not local_amenities_path.exists():
+        raise RuntimeError(f"Floor step local amenities file not found: {local_amenities_path}")
+
     ap = AmenityProcessor(bounds=bounds, base_gdf=features_df, radii=[30, 60, 90], local_crs=local_crs)
-    _log("Floor step: osm_living amenities: downloading OSM amenities...")
+    _log(f"Floor step: osm_living amenities: loading local amenities ({_log_name(local_amenities_path)})...")
     t0 = time.time()
-    amenities = ap.load_amenities()
-    _log(f"Floor step: osm_living amenities loaded: {len(amenities)} in {time.time() - t0:.1f}s")
+    amenities = _load_local_amenities_for_floor(amenities_path=local_amenities_path, local_crs=local_crs)
+    ap.amenities = amenities
+    _log(f"Floor step: osm_living amenities loaded from local input: {len(amenities)} in {time.time() - t0:.1f}s")
+
     _log("Floor step: osm_living amenities: aggregating parking features...")
     t0 = time.time()
     bins = ap._classify_parking_bins(n_classes=3)
     ap._build_parking_buffers(bins)
     feat_with_amenities = ap._join_parking_buffers()
+    for radius in (30, 60, 90):
+        for parking_bin in (1, 2, 3):
+            col = f"near_parking_bin{parking_bin}_r{radius}"
+            if col not in feat_with_amenities.columns:
+                feat_with_amenities[col] = 0
     _log(f"Floor step: osm_living amenity features ready in {time.time() - t0:.1f}s")
 
     # floor_predictior FeatureBuilder uses numpy set ops over categorical uniques;
@@ -1513,6 +1653,8 @@ def _run_floor_predictor_preprocessing(
     buildings_path: Path,
     land_use_path: Path,
     output_path: Path,
+    local_roads_path: Path | None = None,
+    local_amenities_path: Path | None = None,
     is_living_model_path: str | None = None,
     overpass_url: str | None = None,
     osm_timeout_s: int = 180,
@@ -1588,6 +1730,8 @@ def _run_floor_predictor_preprocessing(
             model_path=resolved_is_living_model_path,
             overpass_url=overpass_url,
             osm_timeout_s=int(osm_timeout_s),
+            local_roads_path=local_roads_path,
+            local_amenities_path=local_amenities_path,
         )
         _log(f"Floor step: model-based is_living restoration finished in {time.time() - t0:.1f}s")
     local_crs = gdf.estimate_utm_crs() or "EPSG:3857"
@@ -1729,6 +1873,8 @@ def _run_floor_predictor_preprocessing(
         "storey_restored_count": int(gdf["storey_restored"].sum()),
         "storey_model_info": storey_model_info,
         "is_living_only": bool(is_living_only),
+        "floor_context_roads_input_path": str(local_roads_path) if local_roads_path else None,
+        "floor_context_amenities_input_path": str(local_amenities_path) if local_amenities_path else None,
     }
 
 
@@ -1994,12 +2140,11 @@ def _save_collection_previews(
         "raw_collection": {"raw", "intermodal", "connectpt"},
         "floor_enrichment": {"floor"},
         "blocks_ready": {"blocks", "services"},
-        "sm_imputation_ready": {"sm_imputation"},
         "street_pattern_ready": {"street_pattern"},
     }
     enabled_groups = stage_groups.get(
         stage_label,
-        {"raw", "intermodal", "connectpt", "floor", "blocks", "services", "sm_imputation", "street_pattern"},
+        {"raw", "intermodal", "connectpt", "floor", "blocks", "services", "street_pattern"},
     )
 
     def _should_render(group: str) -> bool:
@@ -2838,7 +2983,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         _log("Collecting raw OSM layers for blocks/buildings preprocessing...")
         _log(
             "OSM download (raw): "
-            "requesting water/railways/landuse/buildings via Overpass "
+            "requesting water/railways/landuse/buildings plus floor-context amenities and pipeline_2 services via Overpass "
             "inside the exact analysis territory, "
             "while reusing the already prepared shared drive roads layer."
         )
@@ -2862,6 +3007,18 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
     boundary_path = Path(raw_files["boundary"]).resolve()
     buildings_path = Path(raw_files["buildings"]).resolve()
     land_use_path = Path(raw_files["land_use"]).resolve()
+    amenities_raw = raw_files.get("amenities")
+    if not amenities_raw:
+        raise RuntimeError(
+            "Raw OSM manifest does not contain 'amenities'. "
+            "Rebuild raw collection for this city (run with --no-cache)."
+        )
+    floor_amenities_path = Path(amenities_raw).resolve()
+    if not floor_amenities_path.exists():
+        raise RuntimeError(
+            f"Raw amenities layer is missing: {floor_amenities_path}. "
+            "Rebuild raw collection for this city (run with --no-cache)."
+        )
     data_coverage_metrics: dict | None = None
     try:
         data_coverage_metrics = _compute_data_coverage_metrics(
@@ -2954,15 +3111,12 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
 
     floor_output_path = derived_dir / "buildings_floor_enriched.parquet"
     buffered_blocks_path = derived_dir / "blocks_clipped.parquet"
-    sm_imputed_blocks_path = derived_dir / "blocks_sm_imputed.parquet"
-    sm_imputation_summary_path = derived_dir / "sm_imputation_summary.json"
     clipped_street_grid_path = derived_dir / "street_grid_buffered.parquet"
 
     def _refresh_collection_previews(
         stage_label: str,
         *,
         floor_metrics_for_preview: dict | None = None,
-        sm_imputation_metrics_for_preview: dict | None = None,
     ) -> None:
         started = time.time()
         preview_paths = _save_collection_previews(
@@ -2975,9 +3129,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             buffered_blocks_path=buffered_blocks_path,
             street_grid_path=clipped_street_grid_path,
             floor_enriched_path=floor_output_path,
-            sm_imputed_path=sm_imputed_blocks_path,
             floor_metrics=floor_metrics_for_preview,
-            sm_imputation_metrics=sm_imputation_metrics_for_preview,
             stage_label=stage_label,
             clear_existing=(stage_label == "raw_collection"),
         )
@@ -3011,6 +3163,10 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             str(buildings_path),
             "--land-use-path",
             str(land_use_path),
+            "--roads-path",
+            str(shared_roads_path),
+            "--amenities-path",
+            str(floor_amenities_path),
             "--output-path",
             str(floor_output_path),
             "--floor-ignore-missing-below-pct",
@@ -3103,62 +3259,6 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
     _log("Refreshing previews after block preparation...")
     _refresh_collection_previews("blocks_ready", floor_metrics_for_preview=floor_metrics)
 
-    sm_imputation_metrics: dict
-    if not bool(args.sm_imputation):
-        _log("SM-imputation step is disabled for this run (--no-sm-imputation).")
-        sm_imputation_metrics = {
-            "output_path": str(sm_imputed_blocks_path),
-            "summary_path": str(sm_imputation_summary_path),
-            "skipped": True,
-            "skip_reason": "disabled_by_flag",
-        }
-    elif args.no_cache or not sm_imputed_blocks_path.exists() or not sm_imputation_summary_path.exists():
-        _log(
-            "SM-imputation step: estimating expected built form for blocks with missing/zero footprint or floor area "
-            "using block land-use shares and existing built-form patterns."
-        )
-        sm_imputation_metrics = _run_external_json_command(
-            python_path=sm_imputation_python(repo_root),
-            module="aggregated_spatial_pipeline.pipeline.run_sm_imputation_external",
-            repo_root=repo_root,
-            args=[
-                "--blocks-path",
-                str(buffered_blocks_path),
-                "--output-path",
-                str(sm_imputed_blocks_path),
-                "--summary-path",
-                str(sm_imputation_summary_path),
-                "--n-clusters",
-                str(int(args.sm_imputation_clusters)),
-            ],
-            mplconfigdir=_repo_mplconfigdir(repo_root, "mpl-sm-imputer"),
-        )
-        _log(
-            "SM-imputation done: "
-            f"target={int(sm_imputation_metrics.get('target_rows', 0))}, "
-            f"imputed={int(sm_imputation_metrics.get('imputed_rows', 0))}, "
-            f"known={int(sm_imputation_metrics.get('known_rows', 0))}"
-        )
-        downloaded_in_this_run = True
-        _log("Refreshing previews after sm-imputation...")
-        _refresh_collection_previews(
-            "sm_imputation_ready",
-            floor_metrics_for_preview=floor_metrics,
-            sm_imputation_metrics_for_preview=sm_imputation_metrics,
-        )
-    else:
-        _log(f"Using cached sm-imputation output: {_log_name(sm_imputed_blocks_path)}")
-        sm_imputation_metrics = _try_load_json(sm_imputation_summary_path) or {
-            "output_path": str(sm_imputed_blocks_path),
-            "summary_path": str(sm_imputation_summary_path),
-        }
-        _log("Refreshing previews after cached sm-imputation...")
-        _refresh_collection_previews(
-            "sm_imputation_ready",
-            floor_metrics_for_preview=floor_metrics,
-            sm_imputation_metrics_for_preview=sm_imputation_metrics,
-        )
-
     _log("Classification step: building street-pattern grid for the same territory policy.")
     street_relation_id = detected_relation_id
     street_center_node_id = args.center_node_id if street_relation_id is None else None
@@ -3208,6 +3308,29 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
     downloaded_in_this_run = downloaded_in_this_run or street_rebuilt
     _log("Refreshing previews after street-pattern preparation...")
     _refresh_collection_previews("street_pattern_ready", floor_metrics_for_preview=floor_metrics)
+
+    pt_street_dependency_manifest_path: Path | None = None
+    pt_street_dependency_manifest: dict = {
+        "enabled": False,
+        "reason": "disabled_by_flag",
+    }
+    if bool(args.pt_street_pattern_dependency):
+        pt_street_dependency_manifest_path, pt_street_dependency_manifest = _run_pt_street_pattern_dependency_step(
+            repo_root=repo_root,
+            city_dir=data_root,
+            top_routes=int(args.pt_dependency_top_routes),
+            subway_stop_buffer_m=float(args.pt_subway_stop_buffer_m),
+        )
+        dep_counts = pt_street_dependency_manifest.get("counts", {}) if isinstance(pt_street_dependency_manifest, dict) else {}
+        _log(
+            "PT x street-pattern dependency ready: "
+            f"edges={int(pd.to_numeric(dep_counts.get('pt_edges_filtered'), errors='coerce') or 0)}, "
+            f"overlay_segments={int(pd.to_numeric(dep_counts.get('overlay_segments'), errors='coerce') or 0)}, "
+            f"routes={int(pd.to_numeric(dep_counts.get('routes_total'), errors='coerce') or 0)}"
+        )
+    else:
+        _log("PT x street-pattern dependency step is disabled (--no-pt-street-pattern-dependency).")
+
     climate_grid_path = derived_dir / "climate_grid.parquet"
 
     climate_enabled = bool(args.climate_grid)
@@ -3237,7 +3360,6 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         "climate_grid_step_m": args.climate_grid_step_m,
         "files": {
             "blocks": str(buffered_blocks_path),
-            "blocks_sm_imputed": str(sm_imputed_blocks_path),
             "cities": str(buffer_path),
             "cities_collection": str(collection_boundary_path),
             "blocks_processed": str(blocks_path),
@@ -3255,10 +3377,12 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             "street_pattern_summary": str(street_summary_path),
             "street_pattern_buffer": str(collection_boundary_path),
             "shared_drive_roads": str(shared_roads_path),
-            "sm_imputation_summary": str(sm_imputation_summary_path),
+            "pt_street_pattern_dependency_manifest": (
+                str(pt_street_dependency_manifest_path) if pt_street_dependency_manifest_path is not None else None
+            ),
         },
         "floor_predictor": floor_metrics,
-        "sm_imputation": sm_imputation_metrics,
+        "pt_street_pattern_dependency": pt_street_dependency_manifest,
         "data_coverage_check": {
             "min_data_coverage_pct_threshold": float(args.min_data_coverage_pct),
             "metrics": data_coverage_metrics,

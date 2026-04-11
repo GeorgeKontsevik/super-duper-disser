@@ -114,6 +114,13 @@ BC_TAGS = {
         "landuse": "basin",
         "water": "lake",
     },
+    "amenities_floor_context": {
+        "amenity": ["parking", "parking_space"],
+    },
+    "services_pipeline2_raw": {
+        "amenity": ["hospital", "clinic", "school", "kindergarten"],
+        "healthcare": ["hospital", "clinic", "centre"],
+    },
 }
 
 IS_LIVING_TAGS = ["residential", "house", "apartments", "detached", "terrace", "dormitory"]
@@ -290,6 +297,43 @@ def _get_buildings_raw(boundary_geom) -> gpd.GeoDataFrame:
     return buildings_gdf
 
 
+def _get_floor_amenities_raw(boundary_geom) -> gpd.GeoDataFrame:
+    amenities_gdf = _features_from_polygon_or_empty(
+        boundary_geom,
+        tags=BC_TAGS["amenities_floor_context"],
+        layer_name="amenities_floor_context",
+    )
+    amenities_gdf = amenities_gdf[
+        amenities_gdf.geom_type.isin(["Polygon", "MultiPolygon"])
+    ].reset_index(drop=True)
+    return amenities_gdf
+
+
+def _normalize_raw_osm(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    normalized = gdf.reset_index()
+    for col in ("element", "id"):
+        if col not in normalized.columns:
+            normalized[col] = None
+    if "element_type" in normalized.columns and "osmid" in normalized.columns:
+        normalized["element"] = normalized["element"].fillna(normalized["element_type"])
+        normalized["id"] = normalized["id"].fillna(normalized["osmid"])
+    normalized["source_uid"] = normalized["element"].astype(str) + ":" + normalized["id"].astype(str)
+    normalized = normalized.drop_duplicates(subset=["source_uid"]).reset_index(drop=True)
+    return gpd.GeoDataFrame(normalized, geometry="geometry", crs=gdf.crs if gdf.crs is not None else 4326)
+
+
+def _get_pipeline2_services_raw(boundary_geom) -> gpd.GeoDataFrame:
+    services_gdf = _features_from_polygon_or_empty(
+        boundary_geom,
+        tags=BC_TAGS["services_pipeline2_raw"],
+        layer_name="services_pipeline2_raw",
+    )
+    if services_gdf.empty:
+        return services_gdf
+    services_gdf = _normalize_raw_osm(services_gdf)
+    return services_gdf.reset_index(drop=True)
+
+
 def _add_population_proxy(
     blocks_gdf: gpd.GeoDataFrame,
     residential_share: float = DEFAULT_RESIDENTIAL_SHARE,
@@ -359,12 +403,16 @@ def collect_blocksnet_raw_osm_bundle(
         water_gdf, roads_gdf, railways_gdf = _get_urban_objects(boundary_geom)
     land_use_gdf = _get_land_use(boundary_geom)
     buildings_gdf = _get_buildings_raw(boundary_geom)
+    amenities_gdf = _get_floor_amenities_raw(boundary_geom)
+    services_pipeline2_raw_gdf = _get_pipeline2_services_raw(boundary_geom)
 
     water_gdf = _clip_to_boundary(water_gdf, boundary_geom)
     roads_gdf = _clip_to_boundary(roads_gdf, boundary_geom)
     railways_gdf = _clip_to_boundary(railways_gdf, boundary_geom)
     land_use_gdf = _clip_to_boundary(land_use_gdf, boundary_geom)
     buildings_gdf = _clip_to_boundary(buildings_gdf, boundary_geom)
+    amenities_gdf = _clip_to_boundary(amenities_gdf, boundary_geom)
+    services_pipeline2_raw_gdf = _clip_to_boundary(services_pipeline2_raw_gdf, boundary_geom)
 
     water_gdf = _keep_geometry_types(
         water_gdf,
@@ -375,18 +423,28 @@ def collect_blocksnet_raw_osm_bundle(
     railways_gdf = _keep_geometry_types(railways_gdf, {"LineString", "MultiLineString"}, layer_name="railways")
     land_use_gdf = _keep_geometry_types(land_use_gdf, {"Polygon", "MultiPolygon"}, layer_name="land_use")
     buildings_gdf = _keep_geometry_types(buildings_gdf, {"Polygon", "MultiPolygon"}, layer_name="buildings")
+    amenities_gdf = _keep_geometry_types(amenities_gdf, {"Polygon", "MultiPolygon"}, layer_name="amenities_floor_context")
+    services_pipeline2_raw_gdf = _keep_geometry_types(
+        services_pipeline2_raw_gdf,
+        {"Point", "MultiPoint", "LineString", "MultiLineString", "Polygon", "MultiPolygon"},
+        layer_name="services_pipeline2_raw",
+    )
 
     water_path = output_path / "water.parquet"
     roads_path = output_path / "roads.parquet"
     railways_path = output_path / "railways.parquet"
     land_use_path = output_path / "land_use.parquet"
     buildings_path = output_path / "buildings.parquet"
+    amenities_path = output_path / "amenities.parquet"
+    services_pipeline2_raw_path = output_path / "services_pipeline2_raw.parquet"
 
     _save_geodata(water_gdf, water_path)
     _save_geodata(roads_gdf, roads_path)
     _save_geodata(railways_gdf, railways_path)
     _save_geodata(land_use_gdf, land_use_path)
     _save_geodata(buildings_gdf, buildings_path)
+    _save_geodata(amenities_gdf, amenities_path)
+    _save_geodata(services_pipeline2_raw_gdf, services_pipeline2_raw_path)
 
     manifest = {
         "place": place,
@@ -400,6 +458,8 @@ def collect_blocksnet_raw_osm_bundle(
             "railways": str(railways_path),
             "land_use": str(land_use_path),
             "buildings": str(buildings_path),
+            "amenities": str(amenities_path),
+            "services_pipeline2_raw": str(services_pipeline2_raw_path),
         },
         "counts": {
             "water": len(water_gdf),
@@ -407,6 +467,8 @@ def collect_blocksnet_raw_osm_bundle(
             "railways": len(railways_gdf),
             "land_use_polygons": len(land_use_gdf),
             "buildings": len(buildings_gdf),
+            "amenities_floor_context": len(amenities_gdf),
+            "services_pipeline2_raw": len(services_pipeline2_raw_gdf),
         },
     }
     manifest_path = output_path / "manifest.json"
