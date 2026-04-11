@@ -3051,10 +3051,10 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
     if args.no_cache or not connectpt_manifest_path.exists():
         _log("Collecting connectpt bundle...")
         _log(
-            "ConnectPT stop policy: derive modality stops from intermodal iduedu graph first, "
+            "ConnectPT intermodal-only policy: derive modality stops from intermodal iduedu graph, "
             "aggregate them with connectpt logic, store raw->aggregated mapping, "
-            "and use the intermodal-expanded stop layer as the only stop source. "
-            "PT lines are still collected per modality; bus road geometry reuses the shared drive graph."
+            "derive modality lines from intermodal graph edges, and skip modalities that have no intermodal candidates "
+            "(no OSM fallback for missing stops/lines)."
         )
         started = time.time()
         _run_external_json_command(

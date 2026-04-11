@@ -214,6 +214,24 @@ def _extract_iduedu_connectpt_candidate_stops(
     return raw_stops, simplified
 
 
+def _extract_iduedu_connectpt_candidate_lines(
+    intermodal_edges_path: Path,
+    modality: Modality,
+) -> gpd.GeoDataFrame:
+    edges = read_geodata(intermodal_edges_path)
+    if edges.empty:
+        raise ValueError(f"Intermodal graph edges are empty: {intermodal_edges_path}")
+    edge_type = edges.get("type", pd.Series(index=edges.index, dtype="object")).astype("string")
+    lines = edges[edge_type == modality.value].copy()
+    lines = lines[lines.geometry.notna() & ~lines.geometry.is_empty].copy()
+    lines = lines[lines.geometry.geom_type.isin(["LineString", "MultiLineString"])].copy()
+    if lines.empty:
+        raise ValueError(
+            f"No intermodal line candidates found for modality '{modality.value}' in {intermodal_edges_path}"
+        )
+    return gpd.GeoDataFrame(lines[["geometry"]].copy(), geometry="geometry", crs=lines.crs)
+
+
 def _build_raw_to_aggregated_mapping(
     raw_stops: gpd.GeoDataFrame,
     aggregated_stops: gpd.GeoDataFrame,
@@ -293,8 +311,19 @@ def build_connectpt_osm_bundle(
     preloaded_drive_lines: gpd.GeoDataFrame | None = None
     preloaded_buildings: gpd.GeoDataFrame | None = None
     intermodal_nodes_file = Path(intermodal_nodes_path).resolve() if intermodal_nodes_path is not None else None
+    intermodal_edges_file: Path | None = None
+    if intermodal_nodes_file is not None:
+        candidate_edges = intermodal_nodes_file.with_name("graph_edges.parquet")
+        if candidate_edges.exists():
+            intermodal_edges_file = candidate_edges.resolve()
+        else:
+            logger.warning(
+                "ConnectPT intermodal edge source is missing next to nodes file ({}); "
+                "strict intermodal-only mode will skip modalities without line candidates.",
+                candidate_edges,
+            )
 
-    if drive_roads_path is not None and Modality.BUS in modalities:
+    if intermodal_nodes_file is None and drive_roads_path is not None and Modality.BUS in modalities:
         try:
             preloaded_drive_lines = read_geodata(Path(drive_roads_path))
             if preloaded_drive_lines.empty:
@@ -329,7 +358,7 @@ def build_connectpt_osm_bundle(
             )
             preloaded_drive_lines = None
 
-    if buildings_path is not None and Modality.BUS in modalities:
+    if intermodal_nodes_file is None and buildings_path is not None and Modality.BUS in modalities:
         try:
             preloaded_buildings = read_geodata(Path(buildings_path))
             if preloaded_buildings.empty:
@@ -377,6 +406,35 @@ def build_connectpt_osm_bundle(
                     modality.value,
                     exc,
                 )
+            # In strict intermodal-only mode do not fallback to OSM for missing stops.
+            if modality not in stops_by_modality:
+                continue
+
+            if intermodal_edges_file is None:
+                logger.warning(
+                    "ConnectPT modality '{}' has no intermodal edge source; "
+                    "skipping modality (no OSM fallback).",
+                    modality.value,
+                )
+                continue
+            try:
+                lines = _extract_iduedu_connectpt_candidate_lines(intermodal_edges_file, modality)
+                lines_by_modality[modality] = lines
+                logger.info(
+                    "ConnectPT modality '{}' will reuse intermodal graph lines (segments={}, source={})",
+                    modality.value,
+                    len(lines),
+                    intermodal_edges_file.name,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "ConnectPT found no reusable intermodal-derived lines for modality '{}' ({}). "
+                    "This modality will be skipped for the current run.",
+                    modality.value,
+                    exc,
+                )
+            # In strict intermodal-only mode do not request OSM lines.
+            continue
 
         if modality not in stops_by_modality and intermodal_nodes_file is None:
             logger.critical(
