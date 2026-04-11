@@ -450,15 +450,6 @@ def _configure_logging() -> None:
     configure_logger("[joint-pipeline]")
 
 
-def _clear_terminal() -> None:
-    if not sys.stdout.isatty():
-        return
-    try:
-        subprocess.run(["clear"], check=False)
-    except Exception:
-        pass
-
-
 def _configure_osm_requests(timeout_s: float, *, debug: bool = False, overpass_url: str | None = None) -> None:
     try:
         import osmnx as ox
@@ -1345,14 +1336,14 @@ def _build_buffered_quarters(
         raise RuntimeError("Buffer clipping produced empty blocks layer. Increase --buffer-m or check source data.")
 
     # Normalize expected quarter-level attributes for downstream city aggregation rules.
-    if "population_total" not in clipped.columns:
-        population_proxy = pd.to_numeric(clipped.get("population_proxy"), errors="coerce")
-        if isinstance(population_proxy, pd.Series):
-            clipped["population_total"] = population_proxy.fillna(0.0)
-        else:
-            clipped["population_total"] = 0.0
-    else:
+    population_proxy = pd.to_numeric(clipped.get("population_proxy"), errors="coerce")
+    if isinstance(population_proxy, pd.Series) and population_proxy.notna().any():
+        # Prefer post-floor proxy population propagated from blocks processing.
+        clipped["population_total"] = population_proxy.fillna(0.0)
+    elif "population_total" in clipped.columns:
         clipped["population_total"] = pd.to_numeric(clipped["population_total"], errors="coerce").fillna(0.0)
+    else:
+        clipped["population_total"] = 0.0
 
     if "service_capacity_total" not in clipped.columns:
         clipped["service_capacity_total"] = 0.0
@@ -1893,7 +1884,6 @@ def _save_collection_previews(
     floor_metrics: dict | None = None,
     sm_imputation_metrics: dict | None = None,
     stage_label: str = "stage",
-    clear_existing: bool = False,
 ) -> list[Path]:
     import shutil
     import matplotlib
@@ -2122,19 +2112,6 @@ def _save_collection_previews(
     stage_dir = preview_dir / "stages" / _slugify(stage_label)
     preview_dir.mkdir(parents=True, exist_ok=True)
     all_together_dir.mkdir(parents=True, exist_ok=True)
-    if clear_existing:
-        for stale in all_together_dir.glob("*.png"):
-            try:
-                stale.unlink()
-            except Exception:
-                pass
-        for stale in preview_dir.glob("*.png"):
-            try:
-                stale.unlink()
-            except Exception:
-                pass
-        shutil.rmtree(preview_dir / "stages", ignore_errors=True)
-    shutil.rmtree(stage_dir, ignore_errors=True)
     stage_dir.mkdir(parents=True, exist_ok=True)
     stage_groups = {
         "raw_collection": {"raw", "intermodal", "connectpt"},
@@ -2706,8 +2683,8 @@ def _save_collection_previews(
                     "buildings_is_living_distribution",
                     title="Buildings is_living distribution by source",
                     groups=[
-                        (living_known[(living_known["is_living"] >= 0.5) & (living_known["is_living_source"] == "osm_living_model")], "#f59e0b", "restored living"),
-                        (living_known[(living_known["is_living"] < 0.5) & (living_known["is_living_source"] == "osm_living_model")], "#d97706", "restored non-living"),
+                        (living_known[(living_known["is_living"] >= 0.5) & (living_known["is_living_source"] == "osm_living_model")], "#4ade80", "restored living"),
+                        (living_known[(living_known["is_living"] < 0.5) & (living_known["is_living_source"] == "osm_living_model")], "#f87171", "restored non-living"),
                         (living_known[(living_known["is_living"] >= 0.5) & (living_known["is_living_source"] == "original_is_living")], "#16a34a", "original living"),
                         (living_known[(living_known["is_living"] < 0.5) & (living_known["is_living_source"] == "original_is_living")], "#ef4444", "original non-living"),
                         (floor_base[floor_base["is_living"].isna()], "#6b7280", "missing"),
@@ -3131,7 +3108,6 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             floor_enriched_path=floor_output_path,
             floor_metrics=floor_metrics_for_preview,
             stage_label=stage_label,
-            clear_existing=(stage_label == "raw_collection"),
         )
         if preview_paths:
             _log(
@@ -3145,6 +3121,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
     _refresh_collection_previews("raw_collection")
 
     floor_cache_current = _floor_output_is_current(floor_output_path)
+    floor_rebuilt = False
     if floor_output_path.exists() and (not floor_cache_current) and (not args.no_cache):
         _warn(
             "Cached floor-preprocessing output is outdated for current source-tracking logic. "
@@ -3195,6 +3172,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             f"(usually acceptable), unknown_living={floor_metrics.get('storey_missing_after_model_unknown_living')}"
         )
         downloaded_in_this_run = True
+        floor_rebuilt = True
         _log("Refreshing previews after floor/building enrichment...")
         _refresh_collection_previews("floor_enrichment", floor_metrics_for_preview=floor_metrics)
     else:
@@ -3213,51 +3191,78 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             "storey_missing_after_model": floor_storey_missing,
         }
 
-    if args.no_cache or not blocks_manifest_path.exists():
-        _log("BlocksNet processing step: building blocks from pre-collected OSM layers + enriched buildings.")
-        started = time.time()
-        _run_external_json_command(
-            python_path=blocksnet_python(repo_root),
-            module="aggregated_spatial_pipeline.blocksnet_data_pipeline.run_bundle_external",
-            repo_root=repo_root,
-            args=[
-                "--place",
-                place,
-                "--output-dir",
-                str(blocks_dir),
-                "--boundary-path",
-                str(collection_boundary_path),
-                "--prefetched-layers-json",
-                json.dumps({k: str(v) for k, v in raw_files.items()}, ensure_ascii=False),
-                "--buildings-override-path",
-                str(floor_output_path),
-            ],
-            mplconfigdir=_repo_mplconfigdir(repo_root, "mpl-blocksnet"),
-        )
-        _log(f"BlocksNet bundle built in {time.time() - started:.1f}s: {_log_name(blocks_manifest_path)}")
-        downloaded_in_this_run = True
-    else:
-        _log("Using cached BlocksNet processed bundle.")
+    def _ensure_blocks_ready_at_end() -> tuple[Path, Path, int]:
+        nonlocal downloaded_in_this_run
 
-    blocks_manifest = _try_load_json(blocks_manifest_path)
-    if blocks_manifest is None:
-        raise RuntimeError(f"Cannot read blocksnet manifest: {blocks_manifest_path}")
-    files = blocks_manifest.get("files", {})
-    blocks_path = Path(files["blocks"]).resolve()
-    if args.no_cache or not buffered_blocks_path.exists():
-        _log("Clipping blocks to analysis buffer...")
-        buffered_blocks_path, buffered_blocks_count = _build_buffered_quarters(
-            blocks_path=blocks_path,
-            buffer_path=buffer_path,
-            output_path=buffered_blocks_path,
+        blocks_stale_by_floor = (
+            blocks_manifest_path.exists()
+            and floor_output_path.exists()
+            and floor_output_path.stat().st_mtime > blocks_manifest_path.stat().st_mtime
         )
-        _log(f"Clipped blocks ready: {buffered_blocks_count} features")
-    else:
-        buffered_blocks_count = len(read_geodata(buffered_blocks_path))
-        _log(f"Using cached clipped blocks: {_log_name(buffered_blocks_path)} ({buffered_blocks_count} features)")
+        if blocks_stale_by_floor and (not args.no_cache):
+            _warn(
+                "Cached BlocksNet bundle is older than buildings_floor_enriched. "
+                "Rebuilding blocks at final stage to keep building-level living/resident context -> block aggregation order."
+            )
+        blocks_rebuilt = False
+        if args.no_cache or floor_rebuilt or blocks_stale_by_floor or not blocks_manifest_path.exists():
+            _log("BlocksNet processing step (final): building blocks from pre-collected OSM layers + enriched buildings.")
+            started = time.time()
+            _run_external_json_command(
+                python_path=blocksnet_python(repo_root),
+                module="aggregated_spatial_pipeline.blocksnet_data_pipeline.run_bundle_external",
+                repo_root=repo_root,
+                args=[
+                    "--place",
+                    place,
+                    "--output-dir",
+                    str(blocks_dir),
+                    "--boundary-path",
+                    str(collection_boundary_path),
+                    "--prefetched-layers-json",
+                    json.dumps({k: str(v) for k, v in raw_files.items()}, ensure_ascii=False),
+                    "--buildings-override-path",
+                    str(floor_output_path),
+                ],
+                mplconfigdir=_repo_mplconfigdir(repo_root, "mpl-blocksnet"),
+            )
+            _log(f"BlocksNet bundle built in {time.time() - started:.1f}s: {_log_name(blocks_manifest_path)}")
+            downloaded_in_this_run = True
+            blocks_rebuilt = True
+        else:
+            _log("Using cached BlocksNet processed bundle.")
 
-    _log("Refreshing previews after block preparation...")
-    _refresh_collection_previews("blocks_ready", floor_metrics_for_preview=floor_metrics)
+        blocks_manifest = _try_load_json(blocks_manifest_path)
+        if blocks_manifest is None:
+            raise RuntimeError(f"Cannot read blocksnet manifest: {blocks_manifest_path}")
+        files = blocks_manifest.get("files", {})
+        blocks_path_local = Path(files["blocks"]).resolve()
+        buffered_blocks_path_local = buffered_blocks_path
+        buffered_blocks_stale = (
+            buffered_blocks_path_local.exists()
+            and blocks_path_local.exists()
+            and blocks_path_local.stat().st_mtime > buffered_blocks_path_local.stat().st_mtime
+        )
+        if buffered_blocks_stale and (not args.no_cache):
+            _warn(
+                "Cached clipped blocks are older than blocks.parquet. "
+                "Rebuilding clipped blocks to keep population/living attributes current."
+            )
+        if args.no_cache or blocks_rebuilt or buffered_blocks_stale or not buffered_blocks_path_local.exists():
+            _log("Clipping blocks to analysis buffer...")
+            buffered_blocks_path_local, buffered_blocks_count_local = _build_buffered_quarters(
+                blocks_path=blocks_path_local,
+                buffer_path=buffer_path,
+                output_path=buffered_blocks_path_local,
+            )
+            _log(f"Clipped blocks ready: {buffered_blocks_count_local} features")
+        else:
+            buffered_blocks_count_local = len(read_geodata(buffered_blocks_path_local))
+            _log(
+                f"Using cached clipped blocks: {_log_name(buffered_blocks_path_local)} "
+                f"({buffered_blocks_count_local} features)"
+            )
+        return blocks_path_local, buffered_blocks_path_local, buffered_blocks_count_local
 
     _log("Classification step: building street-pattern grid for the same territory policy.")
     street_relation_id = detected_relation_id
@@ -3346,6 +3351,14 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             _log(f"Using cached climate-grid layer: {_log_name(climate_grid_path)}")
     else:
         _log("Climate layer is disabled for this run (no --climate-grid was requested).")
+
+    _log(
+        "Final block aggregation stage: first ensure residents/living context on buildings, "
+        "then aggregate to blocks."
+    )
+    blocks_path, buffered_blocks_path, buffered_blocks_count = _ensure_blocks_ready_at_end()
+    _log("Refreshing previews after final block preparation...")
+    _refresh_collection_previews("blocks_ready", floor_metrics_for_preview=floor_metrics)
 
     derived_dir.mkdir(parents=True, exist_ok=True)
     derived_manifest = {
@@ -3489,7 +3502,6 @@ def _prepare_inputs(args: argparse.Namespace) -> PreparedInputs:
 
 
 def main() -> None:
-    _clear_terminal()
     _configure_logging()
     args = parse_args()
     _configure_osm_requests(args.osm_timeout_s, debug=args.osmnx_debug, overpass_url=args.overpass_url)
