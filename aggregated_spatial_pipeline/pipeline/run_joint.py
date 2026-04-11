@@ -990,6 +990,11 @@ def _compute_data_coverage_metrics(
     roads_path: Path,
     roads_buffer_m: float,
 ) -> dict:
+    started = time.time()
+    _log(
+        "Data coverage check: loading territory/buildings/roads "
+        f"(roads_buffer_m={float(roads_buffer_m):.1f})..."
+    )
     territory = read_geodata(territory_path)
     if territory.empty:
         raise RuntimeError(f"Coverage check failed: empty analysis territory ({territory_path}).")
@@ -1004,6 +1009,7 @@ def _compute_data_coverage_metrics(
 
     buildings_clip = gpd.GeoDataFrame(geometry=[], crs=local_crs)
     buildings_raw = read_geodata(buildings_path)
+    _log(f"Data coverage check: buildings loaded={int(len(buildings_raw))}.")
     if buildings_raw.empty:
         buildings_count = 0
         buildings_area_m2 = 0.0
@@ -1020,9 +1026,14 @@ def _compute_data_coverage_metrics(
             buildings_clip = gpd.clip(buildings_local[["geometry"]], territory_frame, keep_geom_type=False)
             buildings_clip = buildings_clip[buildings_clip.geometry.notna() & ~buildings_clip.geometry.is_empty].copy()
             buildings_area_m2 = float(buildings_clip.union_all().area) if not buildings_clip.empty else 0.0
+    _log(
+        "Data coverage check: building footprints clipped "
+        f"(valid={int(buildings_count)}, clipped={int(len(buildings_clip))})."
+    )
 
     roads_buffer_clip = gpd.GeoDataFrame(geometry=[], crs=local_crs)
     roads_raw = read_geodata(roads_path)
+    _log(f"Data coverage check: roads loaded={int(len(roads_raw))}.")
     if roads_raw.empty:
         roads_count = 0
         roads_area_m2 = 0.0
@@ -1034,6 +1045,10 @@ def _compute_data_coverage_metrics(
         if roads_local.empty:
             roads_area_m2 = 0.0
         else:
+            _log(
+                "Data coverage check: buffering roads and clipping to territory "
+                "(this can take time on large cities)..."
+            )
             roads_buffer = roads_local.copy()
             roads_buffer["geometry"] = roads_buffer.geometry.buffer(float(roads_buffer_m))
             roads_buffer = roads_buffer[roads_buffer.geometry.notna() & ~roads_buffer.geometry.is_empty].copy()
@@ -1042,6 +1057,10 @@ def _compute_data_coverage_metrics(
                 roads_buffer_clip.geometry.notna() & ~roads_buffer_clip.geometry.is_empty
             ].copy()
             roads_area_m2 = float(roads_buffer_clip.union_all().area) if not roads_buffer_clip.empty else 0.0
+    _log(
+        "Data coverage check: roads buffered/clipped "
+        f"(valid_lines={int(roads_count)}, clipped_polygons={int(len(roads_buffer_clip))})."
+    )
 
     combined_geoms = []
     if not buildings_clip.empty:
@@ -1052,6 +1071,7 @@ def _compute_data_coverage_metrics(
         combined_area_m2 = float(gpd.GeoSeries(combined_geoms, crs=local_crs).union_all().area)
     else:
         combined_area_m2 = 0.0
+    _log(f"Data coverage check: geometry unions complete in {time.time() - started:.1f}s.")
 
     return {
         "territory_path": str(territory_path),
@@ -2998,6 +3018,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
         )
     data_coverage_metrics: dict | None = None
     try:
+        _log("Data coverage check: started.")
         data_coverage_metrics = _compute_data_coverage_metrics(
             territory_path=buffer_path,
             buildings_path=buildings_path,
