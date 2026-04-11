@@ -1253,7 +1253,6 @@ def save_city_outputs(
     map_coloring: str = "multivariate",
 ) -> None:
     city_dir.mkdir(parents=True, exist_ok=True)
-    map_filename = f"map_{map_coloring}.png"
     buffer_gdf = build_buffer_gdf(
         place=place,
         relation=relation,
@@ -1269,28 +1268,31 @@ def save_city_outputs(
     _prepare_geojson_export(prediction_gdf).to_file(city_dir / "predicted_cells.geojson", driver="GeoJSON")
     prediction_gdf.drop(columns="geometry", errors="ignore").to_csv(city_dir / "predicted_cells.csv", index=False)
 
-    render_city_map(
-        roads_wgs84=roads_wgs84,
-        buffer_gdf=buffer_gdf,
-        centre_gdf=centre_gdf,
-        prediction_gdf=prediction_gdf,
-        title=f"{place} street-pattern predictions",
-        output_path=city_dir / map_filename,
-        map_coloring=map_coloring,
-    )
+    def _render_for_mode(mode: str) -> None:
+        render_city_map(
+            roads_wgs84=roads_wgs84,
+            buffer_gdf=buffer_gdf,
+            centre_gdf=centre_gdf,
+            prediction_gdf=prediction_gdf,
+            title=f"{place} street-pattern predictions",
+            output_path=city_dir / f"map_{mode}.png",
+            map_coloring=mode,
+        )
+        if maps_dir is not None:
+            render_city_map(
+                roads_wgs84=roads_wgs84,
+                buffer_gdf=buffer_gdf,
+                centre_gdf=centre_gdf,
+                prediction_gdf=prediction_gdf,
+                title=f"{place} street-pattern predictions",
+                output_path=maps_dir / f"{_slugify(place)}_{mode}.png",
+                map_coloring=mode,
+            )
 
-    if maps_dir is None:
-        return
-
-    render_city_map(
-        roads_wgs84=roads_wgs84,
-        buffer_gdf=buffer_gdf,
-        centre_gdf=centre_gdf,
-        prediction_gdf=prediction_gdf,
-        title=f"{place} street-pattern predictions",
-        output_path=maps_dir / f"{_slugify(place)}_{map_coloring}.png",
-        map_coloring=map_coloring,
-    )
+    # Always export top-1 map alongside the selected rendering mode.
+    _render_for_mode("top1")
+    if map_coloring != "top1":
+        _render_for_mode(map_coloring)
 
 
 def _snapshot_summary(
