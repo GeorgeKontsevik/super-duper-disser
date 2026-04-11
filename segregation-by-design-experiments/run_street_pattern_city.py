@@ -236,7 +236,8 @@ def parse_args() -> argparse.Namespace:
         "--boundary-path",
         help=(
             "Optional local GeoJSON/Parquet/GPKG file with the already resolved territory polygon. "
-            "When provided, relation-mode uses this geometry directly without any network request."
+            "When provided, relation-mode uses this geometry directly without any network request. "
+            "It can also be used in generic mode (without relation/centre ids) to bypass place->relation lookup."
         ),
     )
     parser.add_argument(
@@ -1797,6 +1798,7 @@ def main() -> None:
 
     if args.center_node_id is not None and args.relation_id is not None:
         raise ValueError("Use only one explicit territory source: --center-node-id or --relation-id.")
+    boundary_only_mode = False
 
     if args.relation_id is not None:
         stage_bar.set_postfix_str("resolve relation territory")
@@ -1829,6 +1831,21 @@ def main() -> None:
                     relation = {"id": int(relation_id)}
         except Exception:
             pass
+    elif args.boundary_path:
+        stage_bar.set_postfix_str("resolve local boundary territory")
+        polygon = _read_boundary_geometry(args.boundary_path)
+        representative = polygon.representative_point()
+        relation = {"id": None}
+        centre_node = {
+            "id": None,
+            "lon": float(representative.x),
+            "lat": float(representative.y),
+        }
+        boundary_only_mode = True
+        _progress_log(
+            f"Territory source: local boundary file {Path(args.boundary_path).name} "
+            "(no relation/centre lookup)"
+        )
     else:
         stage_bar.set_postfix_str("resolve city relation and centre node")
         relation, centre_node = resolve_city_centre_node(args.place)
@@ -1839,7 +1856,10 @@ def main() -> None:
     else:
         buffer_label = f"{int(args.buffer_m)}m"
     stage_bar.set_postfix_str(f"build {buffer_label} buffer")
-    if args.relation_id is None:
+    if boundary_only_mode:
+        # polygon is already supplied explicitly via --boundary-path.
+        pass
+    elif args.relation_id is None:
         polygon = build_buffer_polygon(centre_node, args.buffer_m)
     else:
         args.buffer_m = 0.0
