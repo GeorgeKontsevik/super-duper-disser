@@ -6,7 +6,7 @@ PY="$ROOT/.venv/bin/python"
 JOINT_ROOT="$ROOT/aggregated_spatial_pipeline/outputs/active_19_good_cities_20260412/joint_inputs"
 OUT_ROOT="$ROOT/aggregated_spatial_pipeline/outputs/experiments_active19_20260412"
 SERVICE_OUT="$OUT_ROOT/service_accessibility_street_pattern"
-ROUTE_OUT="$OUT_ROOT/route_directness_street_pattern"
+ROUTE_OUT="$OUT_ROOT/route_pattern_street_pattern"
 PT_OUT="$OUT_ROOT/pt_street_pattern_dependency"
 REPORT="$OUT_ROOT/_run_report_$(date +%Y%m%d_%H%M%S).tsv"
 SERVICE_PERMUTATIONS="${SERVICE_PERMUTATIONS:-49}"
@@ -120,15 +120,13 @@ fi
 
 if [[ "$RUN_PHASE" == "all" || "$RUN_PHASE" == "route" ]]; then
   echo
-  echo "=== Phase 2/3: route_directness_street_pattern (per-city) ==="
+  echo "=== Phase 2/3: route_pattern_street_pattern (per-city) ==="
   for city in "${CITIES[@]}"; do
     echo "[route] $city"
-    if "$PY" "$ROOT/segregation-by-design-experiments/route_directness_street_pattern/run_experiments.py" \
+    if "$PY" "$ROOT/segregation-by-design-experiments/route_pattern_street_pattern/run_experiments.py" \
         --cities "$city" \
         --joint-input-root "$JOINT_ROOT" \
-        --service-accessibility-root "$SERVICE_OUT" \
-        --output-root "$ROUTE_OUT" \
-        --require-ready-data
+        --output-root "$ROUTE_OUT"
     then
       route_ok+=("$city")
       printf "route\t%s\tok\tper-city\n" "$city" >> "$REPORT"
@@ -140,13 +138,12 @@ if [[ "$RUN_PHASE" == "all" || "$RUN_PHASE" == "route" ]]; then
 
   if (( ${#route_ok[@]} >= 2 )); then
     echo
-    echo "=== Phase 2b: route_directness_street_pattern (cross-city pooled) ==="
-    if "$PY" "$ROOT/segregation-by-design-experiments/route_directness_street_pattern/run_experiments.py" \
+    echo "=== Phase 2b: route_pattern_street_pattern (cross-city pooled) ==="
+    if "$PY" "$ROOT/segregation-by-design-experiments/route_pattern_street_pattern/run_experiments.py" \
         --cities "${route_ok[@]}" \
         --joint-input-root "$JOINT_ROOT" \
-        --service-accessibility-root "$SERVICE_OUT" \
         --output-root "$ROUTE_OUT" \
-        --require-ready-data
+        --cross-city-only
     then
       printf "route\t_cross_city\tok\tpooled on %s cities\n" "${#route_ok[@]}" >> "$REPORT"
     else
