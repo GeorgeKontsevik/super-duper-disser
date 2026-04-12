@@ -69,8 +69,6 @@ CROSS_CITY_MIN_BUS_ROUTES = 5
 CROSS_CITY_MIN_POPULATION = 150000
 LOCAL_MORAN_MIN_GLOBAL_I = 0.6
 EFFECT_HIGHLIGHT_MIN_ABS = 0.3
-ACCESSIBILITY_ATLAS_SAMPLE_SIZE = 16
-ACCESSIBILITY_ATLAS_RANDOM_SEED = 42
 NEAREST_SERVICE_UNREACHABLE_MIN = 120.0
 
 ensure_repo_mplconfigdir("mpl-sbd-service-accessibility", root=REPO_ROOT)
@@ -2798,8 +2796,6 @@ def _plot_cross_city_accessibility_service_atlas(
     output_path: Path,
     services: list[str],
     eligible_cities: list[str] | None = None,
-    sample_size: int = ACCESSIBILITY_ATLAS_SAMPLE_SIZE,
-    random_seed: int = ACCESSIBILITY_ATLAS_RANDOM_SEED,
 ) -> None:
     if accessibility_between.empty:
         return
@@ -2862,13 +2858,7 @@ def _plot_cross_city_accessibility_service_atlas(
         _warn(f"Cross-city atlas skipped: no cities with non-empty '{response_col}'.")
         return
 
-    n_selected = min(int(sample_size), len(available_cities))
-    rng = np.random.default_rng(int(random_seed))
-    sampled_cities = (
-        list(rng.choice(np.array(available_cities, dtype=object), size=n_selected, replace=False))
-        if n_selected < len(available_cities)
-        else available_cities
-    )
+    sampled_cities = available_cities
 
     all_values: list[np.ndarray] = []
     for city in sampled_cities:
@@ -2987,6 +2977,48 @@ def _plot_cross_city_accessibility_service_atlas(
                 alpha=0.9,
                 zorder=8,
             )
+
+        population = pd.to_numeric(blocks.get("population"), errors="coerce").fillna(0.0)
+        dominant = blocks.get("street_pattern_dominant_class")
+        if dominant is not None:
+            pop_by_class = (
+                pd.DataFrame(
+                    {
+                        "street_pattern_dominant_class": dominant.astype(str).fillna("unknown"),
+                        "population": population,
+                    }
+                )
+                .groupby("street_pattern_dominant_class", as_index=False)["population"]
+                .sum()
+            )
+            pop_by_class = pop_by_class[pop_by_class["population"] > 0].copy()
+            total_population = float(pop_by_class["population"].sum())
+            if total_population > 0 and not pop_by_class.empty:
+                pop_by_class["population_share"] = pop_by_class["population"] / total_population
+                pop_by_class = pop_by_class.sort_values("population_share", ascending=False).head(5).copy()
+                inset = ax.inset_axes([0.61, 0.04, 0.35, 0.26], zorder=20)
+                inset.set_facecolor((1.0, 1.0, 1.0, 0.88))
+                inset.barh(
+                    pop_by_class["street_pattern_dominant_class"],
+                    pop_by_class["population_share"],
+                    color=[
+                        CLASS_COLORS.get(class_name, CLASS_COLORS["unknown"])
+                        for class_name in pop_by_class["street_pattern_dominant_class"]
+                    ],
+                    edgecolor="#ffffff",
+                    linewidth=0.4,
+                )
+                inset.invert_yaxis()
+                inset.set_xlim(0.0, max(0.35, float(pop_by_class["population_share"].max()) * 1.12))
+                inset.set_title("population by pattern", fontsize=6.6, pad=1.5)
+                inset.tick_params(axis="x", labelsize=5.5, length=1.5)
+                inset.tick_params(axis="y", labelsize=5.3, length=0.0, pad=0.8)
+                inset.grid(True, axis="x", alpha=0.14, linewidth=0.4)
+                inset.set_xlabel("")
+                inset.set_ylabel("")
+                for spine in inset.spines.values():
+                    spine.set_color("#cbd5e1")
+                    spine.set_linewidth(0.5)
         ax.set_axis_off()
 
     for ax in axes[len(sampled_cities):]:
@@ -3027,7 +3059,7 @@ def _plot_cross_city_accessibility_service_atlas(
             f"Cross-City Atlas: {response_label}\n"
             f"Selected by significant link with {feature_label} "
             f"(rho={float(chosen['spearman_rho']):.2f}, p={float(chosen['p_value']):.3f}); "
-            f"random {len(sampled_cities)} cities"
+            f"{len(sampled_cities)} cities"
         ),
         fontsize=14,
         fontweight="bold",
