@@ -1399,6 +1399,125 @@ def _plot_placement_after_preview(
     return _plot_service_lp_preview(after, f"{service} exact-after", out_path, blocks_ref=blocks_ref, boundary=boundary)
 
 
+def _plot_service_provision_delta_preview(
+    before_blocks: pd.DataFrame | gpd.GeoDataFrame,
+    after_blocks: pd.DataFrame | gpd.GeoDataFrame,
+    service: str,
+    out_path: Path,
+    *,
+    blocks_ref: gpd.GeoDataFrame | None = None,
+    boundary: gpd.GeoDataFrame | None = None,
+) -> str | None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    before = _coerce_solver_blocks_geodataframe(before_blocks, blocks_ref=blocks_ref)
+    after = _coerce_solver_blocks_geodataframe(after_blocks, blocks_ref=blocks_ref)
+    if before is None or after is None or before.empty or after.empty:
+        return None
+
+    before = before.copy()
+    after = after.copy()
+    before.index = before.index.astype(str)
+    after.index = after.index.astype(str)
+    common_idx = [idx for idx in before.index if idx in after.index]
+    if not common_idx:
+        return None
+
+    def _pick_provision_col(gdf: gpd.GeoDataFrame, preferred: list[str]) -> pd.Series:
+        for col in preferred:
+            if col in gdf.columns:
+                return pd.to_numeric(gdf[col], errors="coerce").fillna(0.0)
+        return pd.Series(0.0, index=gdf.index, dtype="float64")
+
+    before_vals = _pick_provision_col(before, ["provision", "provision_strong"]).reindex(common_idx).fillna(0.0)
+    after_vals = _pick_provision_col(after, ["provision_after", "provision_strong_after", "provision", "provision_strong"]).reindex(common_idx).fillna(0.0)
+    plot_gdf = after.loc[common_idx, ["geometry"]].copy()
+    plot_gdf["provision_delta"] = after_vals - before_vals
+    plot_gdf = plot_gdf[plot_gdf.geometry.notna() & ~plot_gdf.geometry.is_empty].copy()
+    if plot_gdf.empty:
+        return None
+
+    boundary_plot = normalize_preview_gdf(boundary, target_crs="EPSG:3857")
+    plot_gdf = normalize_preview_gdf(plot_gdf, boundary_plot, target_crs="EPSG:3857")
+    vmax = float(np.nanmax(np.abs(pd.to_numeric(plot_gdf["provision_delta"], errors="coerce").to_numpy()))) if len(plot_gdf) else 0.0
+    vmax = max(vmax, 0.05)
+
+    fig, ax = plt.subplots(figsize=(12, 10))
+    apply_preview_canvas(fig, ax, boundary_plot, title=f"{service}: provision delta")
+    plot_gdf.plot(
+        ax=ax,
+        column="provision_delta",
+        cmap="RdYlGn",
+        linewidth=0.05,
+        edgecolor="#d1d5db",
+        legend=True,
+        vmin=-vmax,
+        vmax=vmax,
+        legend_kwds={"label": "provision delta, positive = better"},
+        zorder=3,
+    )
+    ax.set_axis_off()
+    footer_text(fig, [f"min={float(plot_gdf['provision_delta'].min()):.3f}, max={float(plot_gdf['provision_delta'].max()):.3f}"])
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    save_preview_figure(fig, out_path)
+    plt.close(fig)
+    _log(f"Preview step: saved provision-delta map for service [{service}]: {out_path.name}")
+    return str(out_path)
+
+
+def _ensure_semantic_placement_previews(
+    *,
+    solver_blocks: pd.DataFrame | gpd.GeoDataFrame,
+    blocks_after: pd.DataFrame | gpd.GeoDataFrame,
+    service: str,
+    preview_dir: Path,
+    blocks_ref: gpd.GeoDataFrame | None = None,
+    boundary: gpd.GeoDataFrame | None = None,
+) -> dict[str, str]:
+    semantic_before_png = preview_dir / f"lp_{service}_provision_before_placement.png"
+    semantic_after_png = preview_dir / f"lp_{service}_provision_after_placement.png"
+    semantic_delta_png = preview_dir / f"lp_{service}_provision_delta_after_placement.png"
+    semantic_status_png = preview_dir / f"lp_{service}_placement_changes.png"
+    _plot_service_lp_preview(
+        solver_blocks,
+        f"{service} before-placement",
+        semantic_before_png,
+        blocks_ref=blocks_ref,
+        boundary=boundary,
+    )
+    _plot_placement_after_preview(
+        blocks_after,
+        service,
+        semantic_after_png,
+        blocks_ref=blocks_ref,
+        boundary=boundary,
+    )
+    _plot_service_provision_delta_preview(
+        solver_blocks,
+        blocks_after,
+        service,
+        semantic_delta_png,
+        blocks_ref=blocks_ref,
+        boundary=boundary,
+    )
+    _plot_placement_status_preview(
+        blocks_after,
+        service,
+        semantic_status_png,
+        blocks_ref=blocks_ref,
+        boundary=boundary,
+    )
+    return {
+        "before_preview_png": str(semantic_before_png),
+        "semantic_after_preview_png": str(semantic_after_png),
+        "delta_preview_png": str(semantic_delta_png),
+        "semantic_status_preview_png": str(semantic_status_png),
+    }
+
+
 def _run_exact_placement_for_service(
     solver_blocks: gpd.GeoDataFrame | pd.DataFrame,
     sub_mx: pd.DataFrame,
@@ -1456,12 +1575,22 @@ def _run_exact_placement_for_service(
         and cache_mode_matches
     )
     if manifest_cache_ok:
+        cached_blocks_after = gpd.read_parquet(blocks_after_path)
+        semantic_preview_paths = _ensure_semantic_placement_previews(
+            solver_blocks=solver_blocks,
+            blocks_after=cached_blocks_after,
+            service=service,
+            preview_dir=preview_dir,
+            blocks_ref=blocks_ref,
+            boundary=boundary,
+        )
         return {
             "summary_after": str(summary_after_path),
             "blocks_after": str(blocks_after_path),
             "assignment_links_after": str(assignment_links_path),
             "status_preview_png": str(preview_dir / gallery_targets["status"]) if gallery_targets.get("status") and (preview_dir / gallery_targets["status"]).exists() else None,
             "after_preview_png": str(preview_dir / gallery_targets["after"]) if gallery_targets.get("after") and (preview_dir / gallery_targets["after"]).exists() else None,
+            **semantic_preview_paths,
             "selected_count": int(cached_summary.get("selected_count", 0)),
             "new_count": int(cached_summary.get("new_count", 0)),
             "expanded_count": int(cached_summary.get("expanded_count", 0)),
@@ -1593,6 +1722,14 @@ def _run_exact_placement_for_service(
             blocks_ref=blocks_ref,
             boundary=boundary,
         )
+    semantic_preview_paths = _ensure_semantic_placement_previews(
+        solver_blocks=solver_blocks,
+        blocks_after=blocks_after,
+        service=service,
+        preview_dir=preview_dir,
+        blocks_ref=blocks_ref,
+        boundary=boundary,
+    )
 
     total_demand = pd.to_numeric(blocks_after.get("demand", 0.0), errors="coerce").fillna(0.0)
     summary_after = {
@@ -1634,8 +1771,23 @@ def _run_exact_placement_for_service(
             "provision_links_after": str(provision_links_after_path),
             "status_preview_png": status_png,
             "after_preview_png": after_png,
+            **semantic_preview_paths,
         },
     }
+    _log(
+        f"Exact placement [{service}] done in {elapsed:.1f}s: "
+        f"selected={summary_after['selected_count']}, "
+        f"new={summary_after['new_count']}, "
+        f"expanded={summary_after['expanded_count']}, "
+        f"existing={summary_after['existing_count']}, "
+        f"capacity_before={summary_after['capacity_total_before']:.1f}, "
+        f"capacity_after={summary_after['capacity_total_after']:.1f}, "
+        f"capacity_added={summary_after['capacity_added_total']:.1f}, "
+        f"target_demand={summary_after['demand_target_total']:.1f}, "
+        f"demand_without_after={summary_after['demand_without_after_total']:.1f}, "
+        f"demand_left_after={summary_after['demand_left_after_total']:.1f}, "
+        f"provision_after={summary_after['provision_total_after']:.4f}"
+    )
     summary_after_path.write_text(json.dumps(summary_after, ensure_ascii=False, indent=2), encoding="utf-8")
 
     return {
@@ -2157,6 +2309,17 @@ def main() -> None:
             },
         }
         summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+        _log(
+            f"Service [{service}] solver inputs ready: "
+            f"blocks={summary['blocks_count']}, "
+            f"demand_total={summary['demand_total']:.1f}, "
+            f"capacity_total={summary['capacity_total']:.1f}, "
+            f"demand_within={summary['demand_within_total']:.1f}, "
+            f"demand_without={summary['demand_without_total']:.1f}, "
+            f"provision_total={summary['provision_total']:.4f}, "
+            f"living_blocks={summary['blocks_with_living']}, "
+            f"capacity_blocks={summary['blocks_with_service_capacity']}"
+        )
 
         service_outputs[service] = {
             "provision_engine": PROVISION_ENGINE_NAME,

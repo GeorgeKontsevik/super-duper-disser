@@ -401,8 +401,19 @@ PYTHONPATH=$PWD MPLCONFIGDIR=/tmp/mpl-connectpt-debug \
 ### PNG
 
 - `preview_png/all_together/pt_route_generator_bus.png`
+- `preview_png/all_together/pt_route_generator_bus_with_existing.png`
+- `preview_png/all_together/pt_route_generator_bus_generated_only.png`
+- `preview_png/all_together/accessibility_mean_time_map_bus_before.png`
+- `preview_png/all_together/accessibility_mean_time_map_bus_after.png`
 - `preview_png/all_together/accessibility_mean_time_map_bus_generated.png`
+- `preview_png/all_together/accessibility_mean_time_delta_map_bus_generated.png`
+- `preview_png/all_together/lp_<service>_provision_before_placement.png`
+- `preview_png/all_together/lp_<service>_provision_after_placement.png`
+- `preview_png/all_together/lp_<service>_provision_delta_after_placement.png`
+- `preview_png/all_together/lp_<service>_placement_changes.png`
+- `preview_png/all_together/lp_<service>_provision_before_routes.png`
 - `preview_png/all_together/lp_<service>_provision_after_routes.png`
+- `preview_png/all_together/lp_<service>_provision_delta_after_routes.png`
 
 ## Как Проверять, Что Все Передалось Нормально
 
@@ -448,6 +459,9 @@ PYTHONPATH=$PWD MPLCONFIGDIR=/tmp/mpl-connectpt-debug \
 Смотреть:
 
 - `connectpt_routes_generator/bus/accessibility_recomputed/adj_matrix_time_min_union.parquet`
+- `preview_png/all_together/accessibility_mean_time_map_bus_before.png`
+- `preview_png/all_together/accessibility_mean_time_map_bus_after.png`
+- `preview_png/all_together/accessibility_mean_time_delta_map_bus_generated.png`
 - `preview_png/all_together/accessibility_mean_time_map_bus_generated.png`
 
 ### 5. Проверить, что provision считается уже после placement и после route
@@ -465,6 +479,13 @@ PYTHONPATH=$PWD MPLCONFIGDIR=/tmp/mpl-connectpt-debug \
 Также смотреть:
 
 - `pipeline_2/accessibility_first/suffering_summary_after_routes.json`
+- `preview_png/all_together/lp_<service>_provision_before_placement.png`
+- `preview_png/all_together/lp_<service>_provision_after_placement.png`
+- `preview_png/all_together/lp_<service>_provision_delta_after_placement.png`
+- `preview_png/all_together/lp_<service>_provision_before_routes.png`
+- `preview_png/all_together/lp_<service>_provision_after_routes.png`
+- `preview_png/all_together/lp_<service>_provision_delta_after_routes.png`
+- `preview_png/all_together/lp_<service>_placement_changes.png`
 
 ## Практические Замечания
 

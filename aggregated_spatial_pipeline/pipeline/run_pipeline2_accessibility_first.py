@@ -5,6 +5,7 @@ import json
 import os
 import pickle
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -22,6 +23,7 @@ from aggregated_spatial_pipeline.pipeline.run_pipeline2_prepare_solver_inputs im
     _plot_service_lp_preview,
     _run_arctic_lp_provision,
 )
+from aggregated_spatial_pipeline.visualization import apply_preview_canvas, footer_text, normalize_preview_gdf, save_preview_figure
 
 
 def _configure_logging() -> None:
@@ -142,6 +144,22 @@ def _service_placement_assignment_links_path(city_dir: Path, service: str, place
 
 def _default_route_summary_path(city_dir: Path, modality: str) -> Path:
     return city_dir / "connectpt_routes_generator" / modality / "summary.json"
+
+
+def _joint_experiment_export_dir(
+    *,
+    city_dir: Path,
+    services: list[str],
+    modality: str,
+    placement_root_name: str | None,
+    n_routes: int,
+) -> Path:
+    repo_root = Path(__file__).resolve().parents[2]
+    outputs_root = repo_root / "aggregated_spatial_pipeline" / "outputs" / "joint_service_pt_experiments"
+    service_part = "_".join(services)
+    placement_part = placement_root_name or "baseline_solver_inputs"
+    scenario_slug = f"{placement_part}__{modality}__routes_{int(n_routes)}__services_{service_part}"
+    return outputs_root / city_dir.name / scenario_slug
 
 
 def _resolve_placement_root_name(city_dir: Path, services: list[str], requested: str | None) -> str:
@@ -266,6 +284,66 @@ def _build_service_gap_summary(suffering: gpd.GeoDataFrame, services: list[str])
             "capacity_gap_pct": float((capacity.sum() / demand_total * 100.0) if demand_total > 0 else 0.0),
         }
     return summary
+
+
+def _plot_service_provision_delta_preview(
+    before_blocks: gpd.GeoDataFrame,
+    after_blocks: gpd.GeoDataFrame,
+    service: str,
+    out_path: Path,
+    *,
+    boundary: gpd.GeoDataFrame | None = None,
+) -> str | None:
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    before = _normalize_block_id_index(before_blocks)
+    after = _normalize_block_id_index(after_blocks)
+    common_idx = [idx for idx in before.index if idx in after.index]
+    if not common_idx:
+        return None
+
+    def _pick(gdf: gpd.GeoDataFrame, *cols: str) -> pd.Series:
+        for col in cols:
+            if col in gdf.columns:
+                return pd.to_numeric(gdf[col], errors="coerce").fillna(0.0)
+        return pd.Series(0.0, index=gdf.index, dtype="float64")
+
+    before_vals = _pick(before, "provision_after", "provision", "provision_strong").reindex(common_idx).fillna(0.0)
+    after_vals = _pick(after, "provision_after_routes", "provision", "provision_strong").reindex(common_idx).fillna(0.0)
+    plot_gdf = after.loc[common_idx, ["geometry"]].copy()
+    plot_gdf["provision_delta"] = after_vals - before_vals
+    plot_gdf = plot_gdf[plot_gdf.geometry.notna() & ~plot_gdf.geometry.is_empty].copy()
+    if plot_gdf.empty:
+        return None
+
+    boundary_plot = normalize_preview_gdf(boundary, target_crs="EPSG:3857")
+    plot_gdf = normalize_preview_gdf(plot_gdf, boundary_plot, target_crs="EPSG:3857")
+    vmax = float(np.nanmax(np.abs(pd.to_numeric(plot_gdf["provision_delta"], errors="coerce").to_numpy()))) if len(plot_gdf) else 0.0
+    vmax = max(vmax, 0.05)
+
+    fig, ax = plt.subplots(figsize=(12, 10))
+    apply_preview_canvas(fig, ax, boundary_plot, title=f"{service}: provision delta after routes")
+    plot_gdf.plot(
+        ax=ax,
+        column="provision_delta",
+        cmap="RdYlGn",
+        linewidth=0.05,
+        edgecolor="#d1d5db",
+        legend=True,
+        vmin=-vmax,
+        vmax=vmax,
+        legend_kwds={"label": "provision delta, positive = better"},
+        zorder=3,
+    )
+    ax.set_axis_off()
+    footer_text(fig, [f"min={float(plot_gdf['provision_delta'].min()):.3f}, max={float(plot_gdf['provision_delta'].max()):.3f}"])
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    save_preview_figure(fig, out_path)
+    plt.close(fig)
+    return str(out_path)
 
 
 def _save_suffering_outputs(
@@ -555,6 +633,22 @@ def _build_service_target_od_from_placement(
     summary_path = od_dir / f"{modality}_service_target_od_summary.json"
     summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     summary["files"]["summary_json"] = str(summary_path)
+    service_logs = ", ".join(
+        (
+            f"{row['service']}: weight={row['target_weight_total']:.1f}, "
+            f"used_links={row['used_links']}, "
+            f"zero_gap={row['skipped_zero_gap']}, "
+            f"missing_stops={row['skipped_missing_stops']}"
+        )
+        for row in summary_rows
+    )
+    _log(
+        f"Service-target OD [{modality}] built: "
+        f"stops={summary['stop_count']}, "
+        f"positive_pairs={summary['positive_pairs']}, "
+        f"target_weight={summary['target_weight_total']:.1f}"
+        + (f", per_service=({service_logs})" if service_logs else "")
+    )
     return summary
 
 
@@ -682,12 +776,125 @@ def _recompute_provision_after_routes(
         }
         summary_after_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
         summary["files"]["summary_after_routes"] = str(summary_after_path)
+        _log(
+            f"Provision after routes [{service}]: "
+            f"demand_total={demand_total:.1f}, "
+            f"access_before={before_access:.1f}, "
+            f"access_after={after_access:.1f}, "
+            f"access_delta={after_access - before_access:.1f}, "
+            f"capacity_before={before_capacity:.1f}, "
+            f"capacity_after={after_capacity:.1f}, "
+            f"capacity_delta={after_capacity - before_capacity:.1f}"
+        )
 
         preview_after_path = preview_dir / f"lp_{service}_provision_after_routes.png"
         _plot_service_lp_preview(recomputed, f"{service} after-routes", preview_after_path, blocks_ref=blocks_ref, boundary=boundary)
         summary["files"]["preview_after_routes"] = str(preview_after_path)
+        preview_before_path = preview_dir / f"lp_{service}_provision_before_routes.png"
+        _plot_service_lp_preview(baseline_work, f"{service} before-routes", preview_before_path, blocks_ref=blocks_ref, boundary=boundary)
+        summary["files"]["preview_before_routes"] = str(preview_before_path)
+        preview_delta_path = preview_dir / f"lp_{service}_provision_delta_after_routes.png"
+        delta_path = _plot_service_provision_delta_preview(
+            baseline_work,
+            recomputed,
+            service,
+            preview_delta_path,
+            boundary=boundary,
+        )
+        if delta_path is not None:
+            summary["files"]["preview_delta_after_routes"] = str(preview_delta_path)
         out[service] = summary
     return out
+
+
+def _export_joint_experiment_gallery(
+    *,
+    city_dir: Path,
+    services: list[str],
+    modality: str,
+    placement_root_name: str | None,
+    n_routes: int,
+    manifest_path: Path,
+    route_summary: dict | None,
+    service_target_summary: dict | None,
+    after_route_summaries: dict[str, dict] | None,
+) -> Path:
+    export_dir = _joint_experiment_export_dir(
+        city_dir=city_dir,
+        services=services,
+        modality=modality,
+        placement_root_name=placement_root_name,
+        n_routes=n_routes,
+    )
+    export_dir.mkdir(parents=True, exist_ok=True)
+    previews_dir = export_dir / "preview_png"
+    previews_dir.mkdir(parents=True, exist_ok=True)
+
+    all_together = city_dir / "preview_png" / "all_together"
+    preview_names = [
+        f"pt_route_generator_{modality}.png",
+        f"pt_route_generator_{modality}_with_existing.png",
+        f"pt_route_generator_{modality}_generated_only.png",
+        f"accessibility_mean_time_map_{modality}_before.png",
+        f"accessibility_mean_time_map_{modality}_after.png",
+        f"accessibility_mean_time_map_{modality}_generated.png",
+        f"accessibility_mean_time_delta_map_{modality}_generated.png",
+    ]
+    for service in services:
+        preview_names.extend(
+            [
+                f"lp_{service}_provision_before_placement.png",
+                f"lp_{service}_provision_after_placement.png",
+                f"lp_{service}_provision_delta_after_placement.png",
+                f"lp_{service}_placement_changes.png",
+                f"lp_{service}_provision_before_routes.png",
+                f"lp_{service}_provision_after_routes.png",
+                f"lp_{service}_provision_delta_after_routes.png",
+            ]
+        )
+    copied_previews = 0
+    for name in preview_names:
+        src = all_together / name
+        if src.exists():
+            shutil.copy2(src, previews_dir / name)
+            copied_previews += 1
+
+    shutil.copy2(manifest_path, export_dir / "manifest_accessibility_first.json")
+    if service_target_summary is not None:
+        summary_json = service_target_summary.get("files", {}).get("summary_json")
+        od_csv = service_target_summary.get("files", {}).get("od_matrix_csv")
+        if summary_json and Path(summary_json).exists():
+            shutil.copy2(Path(summary_json), export_dir / "service_target_od_summary.json")
+        if od_csv and Path(od_csv).exists():
+            shutil.copy2(Path(od_csv), export_dir / f"{modality}_service_target_od.csv")
+    if route_summary is not None and not route_summary.get("skipped"):
+        route_summary_path = city_dir / "connectpt_routes_generator" / modality / "summary.json"
+        if route_summary_path.exists():
+            shutil.copy2(route_summary_path, export_dir / f"connectpt_{modality}_summary.json")
+    if after_route_summaries:
+        for service, summary in after_route_summaries.items():
+            summary_json = summary.get("files", {}).get("summary_after_routes")
+            if summary_json and Path(summary_json).exists():
+                shutil.copy2(Path(summary_json), export_dir / f"{service}_summary_after_routes.json")
+
+    export_manifest = {
+        "city": city_dir.name,
+        "scenario": export_dir.name,
+        "services": services,
+        "modality": modality,
+        "placement_root_name": placement_root_name,
+        "n_routes": int(n_routes),
+        "previews_dir": str(previews_dir),
+        "copied_previews_count": int(copied_previews),
+        "source_manifest": str(manifest_path),
+    }
+    export_manifest_path = export_dir / "export_manifest.json"
+    export_manifest_path.write_text(json.dumps(export_manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    _log(
+        f"Exported joint experiment gallery: dir={export_dir}, "
+        f"previews={copied_previews}, scenario={export_dir.name}"
+    )
+    return export_dir
 
 
 def main() -> None:
@@ -776,6 +983,15 @@ def main() -> None:
                 args=args,
                 od_matrix_path=service_target_od_path,
             )
+            _log(
+                "ConnectPT route step finished: "
+                f"routes={route_summary.get('route_count')}, "
+                f"cost={route_summary.get('cost')}, "
+                f"att={route_summary.get('att')}, "
+                f"unserved_pct={route_summary.get('unserved_demand_pct')}, "
+                f"demand_sum={route_summary.get('demand_sum')}, "
+                f"demand_max={route_summary.get('demand_max')}"
+            )
     elif args.recompute_provision and services_for_recompute:
         existing_summary_path = (
             Path(args.route_summary_path).resolve()
@@ -842,6 +1058,17 @@ def main() -> None:
     }
     manifest_path = output_root / "manifest_accessibility_first.json"
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    _export_joint_experiment_gallery(
+        city_dir=city_dir,
+        services=services,
+        modality=str(args.modality),
+        placement_root_name=resolved_placement_root,
+        n_routes=int(args.n_routes),
+        manifest_path=manifest_path,
+        route_summary=route_summary,
+        service_target_summary=service_target_summary,
+        after_route_summaries=after_route_summaries,
+    )
     _log(f"Done. Manifest: {manifest_path}")
 
 

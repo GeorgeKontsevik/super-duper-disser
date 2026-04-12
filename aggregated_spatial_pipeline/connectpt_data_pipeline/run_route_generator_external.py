@@ -21,6 +21,7 @@ from torch_geometric.loader import DataLoader
 from aggregated_spatial_pipeline.geodata_io import prepare_geodata_for_parquet
 from aggregated_spatial_pipeline.runtime_config import configure_logger, repo_mplconfigdir
 from aggregated_spatial_pipeline.visualization import apply_preview_canvas, normalize_preview_gdf, save_preview_figure
+from aggregated_spatial_pipeline.pipeline.run_pipeline2_prepare_solver_inputs import _plot_accessibility_previews
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -494,6 +495,7 @@ def _save_route_preview(
     routes_tensor: torch.Tensor,
     summary: dict,
     out_path: Path,
+    draw_network: bool = True,
 ) -> None:
     boundary_plot = normalize_preview_gdf(boundary, target_crs="EPSG:3857")
     target_crs = getattr(boundary_plot, "crs", None) or "EPSG:3857"
@@ -507,20 +509,21 @@ def _save_route_preview(
     fig, ax = plt.subplots(figsize=(10, 10))
     apply_preview_canvas(fig, ax, boundary_plot, title=None, min_pad=120.0)
 
-    edge_geoms = []
-    for _, _, data in graph.edges(data=True):
-        geom = data.get("geometry")
-        if geom is not None and not geom.is_empty:
-            edge_geoms.append(geom)
-    if edge_geoms:
-        gpd.GeoSeries(edge_geoms, crs=target_crs).pipe(lambda s: s.to_crs("EPSG:3857") if getattr(s, "crs", None) else s).plot(
-            ax=ax, color="#9aa0a6", linewidth=1.2, alpha=0.45, zorder=1
-        )
+    if draw_network:
+        edge_geoms = []
+        for _, _, data in graph.edges(data=True):
+            geom = data.get("geometry")
+            if geom is not None and not geom.is_empty:
+                edge_geoms.append(geom)
+        if edge_geoms:
+            gpd.GeoSeries(edge_geoms, crs=target_crs).pipe(lambda s: s.to_crs("EPSG:3857") if getattr(s, "crs", None) else s).plot(
+                ax=ax, color="#9aa0a6", linewidth=1.2, alpha=0.45, zorder=1
+            )
 
-    node_points = [Point(float(graph.nodes[n]["x"]), float(graph.nodes[n]["y"])) for n in sorted(graph.nodes())]
-    gpd.GeoSeries(node_points, crs=target_crs).pipe(lambda s: s.to_crs("EPSG:3857") if getattr(s, "crs", None) else s).plot(
-        ax=ax, color="#495057", markersize=18, alpha=0.9, zorder=2
-    )
+        node_points = [Point(float(graph.nodes[n]["x"]), float(graph.nodes[n]["y"])) for n in sorted(graph.nodes())]
+        gpd.GeoSeries(node_points, crs=target_crs).pipe(lambda s: s.to_crs("EPSG:3857") if getattr(s, "crs", None) else s).plot(
+            ax=ax, color="#495057", markersize=18, alpha=0.9, zorder=2
+        )
 
     palette = ["#e03131", "#1971c2", "#2f9e44", "#f08c00", "#7048e8", "#c2255c", "#0b7285", "#5c940d"]
     for idx, route in enumerate(_route_sequences(routes_tensor)):
@@ -548,6 +551,90 @@ def _save_route_preview(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     save_preview_figure(fig, out_path)
     plt.close(fig)
+
+
+def _save_accessibility_comparison_previews(
+    *,
+    city_dir: Path,
+    modality: str,
+    recomputed_matrix_path: Path,
+    shared_preview_dir: Path,
+) -> dict:
+    baseline_matrix_path = city_dir / "pipeline_2" / "prepared" / "adj_matrix_time_min_union.parquet"
+    units_path = city_dir / "pipeline_2" / "prepared" / "units_union.parquet"
+    boundary_path = city_dir / "analysis_territory" / "buffer.parquet"
+    if not baseline_matrix_path.exists() or not units_path.exists() or not boundary_path.exists():
+        return {}
+
+    units = gpd.read_parquet(units_path)
+    boundary = gpd.read_parquet(boundary_path)
+    baseline = pd.read_parquet(baseline_matrix_path)
+    after = pd.read_parquet(recomputed_matrix_path)
+
+    compare_dir = shared_preview_dir
+    before_dir = compare_dir / "_tmp_access_before"
+    after_dir = compare_dir / "_tmp_access_after"
+    before_dir.mkdir(parents=True, exist_ok=True)
+    after_dir.mkdir(parents=True, exist_ok=True)
+    before_previews = _plot_accessibility_previews(units, baseline, before_dir, boundary=boundary, use_cache=False)
+    after_previews = _plot_accessibility_previews(units, after, after_dir, boundary=boundary, use_cache=False)
+
+    saved: dict[str, str] = {}
+    before_src = Path(before_previews.get("accessibility_mean_time_map", ""))
+    after_src = Path(after_previews.get("accessibility_mean_time_map", ""))
+    before_target = compare_dir / f"accessibility_mean_time_map_{modality}_before.png"
+    after_target = compare_dir / f"accessibility_mean_time_map_{modality}_after.png"
+    if before_src.exists():
+        before_target.write_bytes(before_src.read_bytes())
+        saved["before_preview_path"] = str(before_target)
+    if after_src.exists():
+        after_target.write_bytes(after_src.read_bytes())
+        saved["after_preview_path"] = str(after_target)
+
+    baseline_numeric = baseline.apply(pd.to_numeric, errors="coerce")
+    after_numeric = after.apply(pd.to_numeric, errors="coerce")
+    common_idx = [idx for idx in units.index if idx in baseline_numeric.index and idx in after_numeric.index]
+    if not common_idx:
+        return saved
+
+    delta = after_numeric.loc[common_idx, common_idx].mean(axis=1, skipna=True) - baseline_numeric.loc[common_idx, common_idx].mean(axis=1, skipna=True)
+    plot_units = units.loc[common_idx, ["geometry"]].copy()
+    plot_units["accessibility_delta_min"] = pd.to_numeric(delta, errors="coerce").fillna(0.0)
+    if "has_living_buildings" in units.columns:
+        plot_units["is_residential"] = units.loc[common_idx, "has_living_buildings"].fillna(False).astype(bool)
+    else:
+        plot_units["is_residential"] = True
+    plot_units = plot_units[plot_units.geometry.notna() & ~plot_units.geometry.is_empty].copy()
+    plot_units = normalize_preview_gdf(plot_units, normalize_preview_gdf(boundary, target_crs="EPSG:3857"), target_crs="EPSG:3857")
+
+    if not plot_units.empty:
+        fig, ax = plt.subplots(figsize=(12, 10))
+        boundary_plot = normalize_preview_gdf(boundary, target_crs="EPSG:3857")
+        apply_preview_canvas(fig, ax, boundary_plot, title=f"Accessibility delta after generated {modality}")
+        base_plot = plot_units.copy()
+        res_plot = plot_units[plot_units["is_residential"]].copy()
+        base_plot.plot(ax=ax, color="#f3f4f6", linewidth=0.05, edgecolor="#d1d5db", alpha=0.95, zorder=2)
+        if not res_plot.empty:
+            vmax = float(np.nanmax(np.abs(pd.to_numeric(res_plot["accessibility_delta_min"], errors="coerce").to_numpy()))) if len(res_plot) else 0.0
+            vmax = max(vmax, 1.0)
+            res_plot.plot(
+                ax=ax,
+                column="accessibility_delta_min",
+                cmap="RdYlGn_r",
+                linewidth=0.05,
+                edgecolor="#d1d5db",
+                legend=True,
+                vmin=-vmax,
+                vmax=vmax,
+                legend_kwds={"label": "mean travel time delta (min), negative = better"},
+                zorder=3,
+            )
+        ax.set_axis_off()
+        delta_path = compare_dir / f"accessibility_mean_time_delta_map_{modality}_generated.png"
+        save_preview_figure(fig, delta_path)
+        plt.close(fig)
+        saved["delta_preview_path"] = str(delta_path)
+    return saved
 
 
 def main() -> None:
@@ -579,6 +666,13 @@ def main() -> None:
         od_matrix = _load_external_od_matrix(external_od_path, nodes)
     else:
         od_matrix = _compute_od_matrix(blocks, stops, graph)
+    positive_pairs = int((pd.to_numeric(od_matrix.stack(), errors="coerce").fillna(0.0) > 0.0).sum())
+    _log(
+        f"Demand matrix prepared: source={'external' if external_od_path is not None else 'gravity'}, "
+        f"sum={float(pd.to_numeric(od_matrix.to_numpy().sum())):.1f}, "
+        f"max={float(pd.to_numeric(od_matrix.to_numpy().max())):.1f}, "
+        f"positive_pairs={positive_pairs}"
+    )
     node_locs = _build_node_locs(graph, nodes)
     street_adj = _build_street_adj(graph, nodes, node_to_idx)
     demand = torch.tensor(od_matrix.reindex(index=range(len(nodes)), columns=range(len(nodes)), fill_value=0.0).to_numpy(), dtype=torch.float32)
@@ -644,6 +738,17 @@ def main() -> None:
             "routes_pickle": str(output_dir / f"{run_name}_routes.pkl"),
         },
     }
+    _log(
+        f"Route generator metrics: "
+        f"routes={summary['route_count']}, "
+        f"cost={summary['cost']}, "
+        f"att={summary['att']}, "
+        f"unserved_pct={summary['unserved_demand_pct']}, "
+        f"median_connectivity={summary['median_connectivity']}, "
+        f"demand_sum={summary['demand_sum']:.1f}, "
+        f"demand_max={summary['demand_max']:.1f}, "
+        f"routes_shape={summary['routes_shape']}"
+    )
 
     route_preview_path = preview_dir / f"pt_route_generator_{modality}.png"
     _save_route_preview(
@@ -652,11 +757,28 @@ def main() -> None:
         routes_tensor=routes.cpu(),
         summary=summary,
         out_path=route_preview_path,
+        draw_network=True,
     )
     shared_preview_path = shared_preview_dir / f"pt_route_generator_{modality}.png"
     shared_preview_path.write_bytes(route_preview_path.read_bytes())
+    route_with_existing_path = shared_preview_dir / f"pt_route_generator_{modality}_with_existing.png"
+    route_with_existing_path.write_bytes(route_preview_path.read_bytes())
+    route_only_path = preview_dir / f"pt_route_generator_{modality}_generated_only.png"
+    _save_route_preview(
+        graph=graph,
+        boundary=boundary.to_crs(blocks.crs) if boundary is not None and boundary.crs != blocks.crs else boundary,
+        routes_tensor=routes.cpu(),
+        summary=summary,
+        out_path=route_only_path,
+        draw_network=False,
+    )
+    shared_route_only_path = shared_preview_dir / f"pt_route_generator_{modality}_generated_only.png"
+    shared_route_only_path.write_bytes(route_only_path.read_bytes())
     summary["files"]["route_preview"] = str(route_preview_path)
     summary["files"]["shared_route_preview"] = str(shared_preview_path)
+    summary["files"]["shared_route_with_existing_preview"] = str(route_with_existing_path)
+    summary["files"]["route_generated_only_preview"] = str(route_only_path)
+    summary["files"]["shared_route_generated_only_preview"] = str(shared_route_only_path)
 
     if args.replace_in_intermodal or args.recompute_accessibility:
         replace_summary = _replace_modality_edges_in_intermodal(
@@ -676,8 +798,11 @@ def main() -> None:
         _log(
             f"Intermodal graph updated for modality={modality}: "
             f"mode={replace_summary['merge_mode']}, "
+            f"existing_before={replace_summary['existing_modality_edges_before']}, "
             f"removed={replace_summary['removed_modality_edges']}, "
-            f"added={replace_summary['generated_modality_edges']}"
+            f"added={replace_summary['generated_modality_edges']}, "
+            f"map_dist_median={replace_summary['mapping_distance_median_m']:.2f}, "
+            f"map_dist_max={replace_summary['mapping_distance_max_m']:.2f}"
         )
 
         if args.recompute_accessibility:
@@ -687,11 +812,23 @@ def main() -> None:
                 replaced_graph_path=replace_summary["graph_path"],
                 modality=modality,
             )
+            access_summary["comparison_previews"] = _save_accessibility_comparison_previews(
+                city_dir=city_dir,
+                modality=modality,
+                recomputed_matrix_path=Path(access_summary["matrix_path"]),
+                shared_preview_dir=shared_preview_dir,
+            )
             summary["recomputed_accessibility"] = {
                 "enabled": True,
                 **{k: str(v) if isinstance(v, Path) else v for k, v in access_summary.items()},
             }
-            _log(f"Recomputed accessibility matrix on generated {modality} routes")
+            _log(
+                f"Recomputed accessibility matrix on generated {modality} routes: "
+                f"matrix={access_summary['matrix_path']}, "
+                f"before_png={access_summary.get('comparison_previews', {}).get('before_preview_path')}, "
+                f"after_png={access_summary.get('comparison_previews', {}).get('after_preview_path')}, "
+                f"delta_png={access_summary.get('comparison_previews', {}).get('delta_preview_path')}"
+            )
 
     summary_path = output_dir / "summary.json"
     summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
