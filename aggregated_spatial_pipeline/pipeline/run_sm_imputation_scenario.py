@@ -23,6 +23,14 @@ from aggregated_spatial_pipeline.pipeline.run_sm_imputation_external import (
     _build_reference_mask,
 )
 
+SUPPORTED_SERVICES = ("hospital", "polyclinic", "school", "kindergarten")
+DEFAULT_SERVICE_CAPACITY_BY_SERVICE = {
+    "hospital": 600.0,
+    "polyclinic": 600.0,
+    "school": 600.0,
+    "kindergarten": 600.0,
+}
+
 
 def _configure_logging() -> None:
     configure_logger("[sm-imputation-scenario]")
@@ -116,6 +124,13 @@ def parse_args() -> argparse.Namespace:
     apply.add_argument("--scenario-name", required=True)
     apply.add_argument("--quarter-index", required=True, help="Quarter row index to modify.")
     apply.add_argument("--target-land-use", required=True, choices=[*list(ADDITIONAL_COLUMNS), "probable_other"])
+    apply.add_argument("--add-service", default=None, choices=list(SUPPORTED_SERVICES))
+    apply.add_argument(
+        "--service-capacity",
+        type=float,
+        default=None,
+        help="Capacity to add for --add-service. If omitted, uses service default.",
+    )
     apply.add_argument("--source-quarters-path", default=None, help="Optional source scenario quarters parquet. Defaults to base quarters.")
 
     return parser.parse_args()
@@ -532,6 +547,12 @@ def _ensure_scenario_columns(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         "sm_imputer_build_floor_area_after": np.nan,
         "sm_imputer_footprint_area_before": np.nan,
         "sm_imputer_footprint_area_after": np.nan,
+        "sm_imputer_population_proxy_before": np.nan,
+        "sm_imputer_population_proxy_after": np.nan,
+        "sm_imputer_added_service": None,
+        "sm_imputer_added_service_capacity": np.nan,
+        "sm_imputer_service_capacity_total_before": np.nan,
+        "sm_imputer_service_capacity_total_after": np.nan,
     }
     for col, default in defaults.items():
         if col not in out.columns:
@@ -579,6 +600,67 @@ def _save_apply_previews(
         if p:
             previews[stem] = p
     return previews
+
+
+def _recompute_population_for_quarter(after: gpd.GeoDataFrame, quarter_idx: str) -> tuple[float, float]:
+    residential_share = float(pd.to_numeric(after.loc[quarter_idx].get("residential"), errors="coerce"))
+    if not np.isfinite(residential_share):
+        residential_share = 0.0
+    residential_share = float(np.clip(residential_share, 0.0, 1.0))
+    build_floor_value = float(pd.to_numeric(after.loc[quarter_idx].get("build_floor_area"), errors="coerce"))
+    living_area_after = build_floor_value * residential_share if np.isfinite(build_floor_value) else np.nan
+    population_proxy_after = living_area_after / 20.0 if np.isfinite(living_area_after) else np.nan
+
+    if "living_area" in after.columns:
+        after.loc[quarter_idx, "living_area"] = living_area_after
+    after.loc[quarter_idx, "living_area_proxy"] = living_area_after
+    after.loc[quarter_idx, "population_proxy"] = population_proxy_after
+    if "population_total" in after.columns:
+        after.loc[quarter_idx, "population_total"] = population_proxy_after
+    if "population" in after.columns:
+        after.loc[quarter_idx, "population"] = population_proxy_after
+    site_area = float(pd.to_numeric(after.loc[quarter_idx].get("site_area"), errors="coerce"))
+    density_proxy = population_proxy_after / site_area if np.isfinite(population_proxy_after) and np.isfinite(site_area) and site_area > 0 else np.nan
+    if "density_proxy" in after.columns:
+        after.loc[quarter_idx, "density_proxy"] = density_proxy
+
+    return population_proxy_after, living_area_after
+
+
+def _add_service_capacity_to_quarter(
+    after: gpd.GeoDataFrame,
+    quarter_idx: str,
+    *,
+    service: str,
+    service_capacity: float | None,
+) -> tuple[float, float, float]:
+    if service not in SUPPORTED_SERVICES:
+        raise ValueError(f"Unsupported service for add-service: {service}")
+    added_capacity = float(
+        service_capacity
+        if service_capacity is not None
+        else DEFAULT_SERVICE_CAPACITY_BY_SERVICE.get(service, 600.0)
+    )
+    if not np.isfinite(added_capacity) or added_capacity < 0:
+        raise ValueError(f"Service capacity must be non-negative finite number, got: {added_capacity}")
+
+    cap_col = f"capacity_{service}"
+    if cap_col not in after.columns:
+        after[cap_col] = 0.0
+    if "service_capacity_total" not in after.columns:
+        after["service_capacity_total"] = 0.0
+
+    service_before = float(pd.to_numeric(after.loc[quarter_idx].get(cap_col), errors="coerce"))
+    total_before = float(pd.to_numeric(after.loc[quarter_idx].get("service_capacity_total"), errors="coerce"))
+    service_before = service_before if np.isfinite(service_before) else 0.0
+    total_before = total_before if np.isfinite(total_before) else 0.0
+
+    service_after = service_before + added_capacity
+    total_after = total_before + added_capacity
+
+    after.loc[quarter_idx, cap_col] = service_after
+    after.loc[quarter_idx, "service_capacity_total"] = total_after
+    return added_capacity, total_before, total_after
 
 
 def _apply_command(args: argparse.Namespace) -> None:
@@ -664,6 +746,7 @@ def _apply_command(args: argparse.Namespace) -> None:
     after.loc[quarter_idx, "sm_imputer_cluster_top1_prob"] = top_prob
     build_floor_before = float(pd.to_numeric(before.loc[quarter_idx].get("build_floor_area"), errors="coerce"))
     footprint_before = float(pd.to_numeric(before.loc[quarter_idx].get("footprint_area"), errors="coerce"))
+    population_proxy_before = float(pd.to_numeric(before.loc[quarter_idx].get("population_proxy"), errors="coerce"))
     after.loc[quarter_idx, "sm_imputer_fsi_before"] = fsi_before
     after.loc[quarter_idx, "sm_imputer_fsi_after"] = weighted_fsi
     after.loc[quarter_idx, "sm_imputer_gsi_before"] = gsi_before
@@ -672,6 +755,7 @@ def _apply_command(args: argparse.Namespace) -> None:
     after.loc[quarter_idx, "sm_imputer_build_floor_area_after"] = build_floor_after
     after.loc[quarter_idx, "sm_imputer_footprint_area_before"] = footprint_before
     after.loc[quarter_idx, "sm_imputer_footprint_area_after"] = footprint_after
+    after.loc[quarter_idx, "sm_imputer_population_proxy_before"] = population_proxy_before
     after.loc[quarter_idx, "sm_imputation_target"] = 1
     after.loc[quarter_idx, "sm_imputation_used"] = 1
     after.loc[quarter_idx, "sm_fsi_final"] = weighted_fsi
@@ -680,6 +764,26 @@ def _apply_command(args: argparse.Namespace) -> None:
     after.loc[quarter_idx, "sm_footprint_area_final"] = footprint_after
     after.loc[quarter_idx, "build_floor_area"] = build_floor_after
     after.loc[quarter_idx, "footprint_area"] = footprint_after
+    population_proxy_after, living_area_after = _recompute_population_for_quarter(after, quarter_idx)
+    after.loc[quarter_idx, "sm_imputer_population_proxy_after"] = population_proxy_after
+    added_service = None
+    added_service_capacity = None
+    service_capacity_total_before = float(pd.to_numeric(after.loc[quarter_idx].get("service_capacity_total"), errors="coerce"))
+    if not np.isfinite(service_capacity_total_before):
+        service_capacity_total_before = 0.0
+    service_capacity_total_after = service_capacity_total_before
+    if args.add_service:
+        added_service = str(args.add_service)
+        added_service_capacity, service_capacity_total_before, service_capacity_total_after = _add_service_capacity_to_quarter(
+            after,
+            quarter_idx,
+            service=added_service,
+            service_capacity=args.service_capacity,
+        )
+        after.loc[quarter_idx, "sm_imputer_added_service"] = added_service
+        after.loc[quarter_idx, "sm_imputer_added_service_capacity"] = added_service_capacity
+    after.loc[quarter_idx, "sm_imputer_service_capacity_total_before"] = service_capacity_total_before
+    after.loc[quarter_idx, "sm_imputer_service_capacity_total_after"] = service_capacity_total_after
 
     out_dir = _scenario_dir(city_dir, args.scenario_name)
     previews_dir = out_dir / "preview_png"
@@ -715,6 +819,13 @@ def _apply_command(args: argparse.Namespace) -> None:
         "build_floor_area_after": build_floor_after,
         "footprint_area_before": footprint_before,
         "footprint_area_after": footprint_after,
+        "living_area_after": living_area_after,
+        "population_proxy_before": population_proxy_before,
+        "population_proxy_after": population_proxy_after,
+        "added_service": added_service,
+        "added_service_capacity": added_service_capacity,
+        "service_capacity_total_before": service_capacity_total_before,
+        "service_capacity_total_after": service_capacity_total_after,
         "preview_outputs": previews,
     }
     summary_path = out_dir / "summary.json"
@@ -725,7 +836,10 @@ def _apply_command(args: argparse.Namespace) -> None:
         f"quarter={quarter_idx}, land_use={source_land_use} -> {resolved_target_land_use}, "
         f"cluster_top1={top_cluster}, prob_top1={top_prob_text}, "
         f"fsi={weighted_fsi:.3f}, gsi={weighted_gsi:.3f}, "
-        f"build_floor_area={build_floor_after:.1f}, footprint_area={footprint_after:.1f}"
+        f"build_floor_area={build_floor_after:.1f}, footprint_area={footprint_after:.1f}, "
+        f"population_proxy={population_proxy_after:.1f}, "
+        f"added_service={added_service or 'none'}, added_capacity={float(added_service_capacity or 0.0):.1f}, "
+        f"service_capacity_total={service_capacity_total_after:.1f}"
     )
     _log(f"Saved SM scenario summary: {summary_path}")
 
