@@ -4,11 +4,17 @@
 Принимает all_results из run_base.run(), возвращает solver_result.
 """
 import sys
+import tempfile
+from pathlib import Path
 import geopandas as gpd
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
+from aggregated_spatial_pipeline.pandana_bridge import (
+    build_graph_node_matrix_pandana_external,
+    build_pairs_shortest_paths_pandana_external,
+)
 from pipeline.config import (
     ARCTIC_PATH, SOLVER_PATH, SERVICE_NAME, FLP_MONTH,
     EDGE_IMPROVEMENT_FACTOR, CONNECTIVITY_MODE,
@@ -21,11 +27,7 @@ def _create_adjacency_matrix_with_modes(G):
     Матрица доступности + path_modes: для каждой пары (i,j) — множество режимов,
     использованных в кратчайшем пути.
     """
-    import networkx as nx
-
     nodes = sorted(G.nodes())
-    matrix = pd.DataFrame(float("inf"), index=nodes, columns=nodes)
-    np.fill_diagonal(matrix.values, 0)
     path_modes = {}
 
     def _get_edge_modes(G, u, v):
@@ -42,20 +44,34 @@ def _create_adjacency_matrix_with_modes(G):
                 modes.add(lbl)
         return modes
 
-    for source in tqdm(nodes, desc="path_modes"):
-        try:
-            lengths, paths = nx.single_source_dijkstra(G, source, weight="weight")
-            for target, dist in lengths.items():
-                matrix.loc[source, target] = dist
-                if source != target and target in paths:
-                    path = paths[target]
-                    modes = set()
-                    for k in range(len(path) - 1):
-                        modes.update(_get_edge_modes(G, path[k], path[k + 1]))
-                    path_modes[(source, target)] = modes
-                    path_modes[(target, source)] = modes
-        except nx.NetworkXNoPath:
-            pass
+    with tempfile.TemporaryDirectory(prefix="pandana-solver-", dir="/tmp") as tmp_dir:
+        tmp_root = Path(tmp_dir)
+        graph_path = tmp_root / "graph.pkl"
+        matrix_path = tmp_root / "matrix.parquet"
+        pd.to_pickle(G, graph_path)
+        matrix = build_graph_node_matrix_pandana_external(
+            graph_pickle_path=graph_path,
+            output_path=matrix_path,
+            weight_key="weight",
+        )
+        pair_rows = [{"source": source, "target": target} for i, source in enumerate(nodes) for target in nodes[i + 1 :]]
+        if pair_rows:
+            paths_df = build_pairs_shortest_paths_pandana_external(
+                graph_pickle_path=graph_path,
+                pairs_df=pd.DataFrame(pair_rows),
+                weight_key="weight",
+            )
+            for _, row in tqdm(paths_df.iterrows(), total=len(paths_df), desc="path_modes"):
+                source = row["source"]
+                target = row["target"]
+                path = row.get("path") or []
+                if not path:
+                    continue
+                modes = set()
+                for k in range(len(path) - 1):
+                    modes.update(_get_edge_modes(G, path[k], path[k + 1]))
+                path_modes[(source, target)] = modes
+                path_modes[(target, source)] = modes
 
     return matrix, path_modes
 

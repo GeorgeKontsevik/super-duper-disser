@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import pickle
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,6 +21,10 @@ from shapely.geometry import LineString, MultiLineString, Point
 from shapely.ops import linemerge, unary_union
 
 from aggregated_spatial_pipeline.geodata_io import prepare_geodata_for_parquet, read_geodata
+from aggregated_spatial_pipeline.pandana_bridge import (
+    build_graph_node_matrix_pandana_external,
+    build_pairs_shortest_paths_pandana_external,
+)
 from aggregated_spatial_pipeline.pipeline.crosswalks import build_crosswalk
 from aggregated_spatial_pipeline.pipeline.run_pipeline2_prepare_solver_inputs import _read_graph_pickle
 from aggregated_spatial_pipeline.pipeline.run_pipeline3_street_pattern_to_quarters import (
@@ -339,7 +345,7 @@ def _line_merge_safe(geometries: list) -> object:
     return merged
 
 
-def _choose_terminal_pair(graph: nx.Graph) -> tuple[int, int, float, float]:
+def _choose_terminal_pair(graph: nx.Graph) -> tuple[int, int, float, float, list[int]]:
     if graph.number_of_nodes() < 2:
         raise ValueError("Need at least two nodes to choose terminals.")
     degree_one_nodes = [node for node, degree in graph.degree() if degree == 1]
@@ -347,24 +353,45 @@ def _choose_terminal_pair(graph: nx.Graph) -> tuple[int, int, float, float]:
     best_pair: tuple[int, int] | None = None
     best_time = -1.0
     best_length = -1.0
-    for idx, source in enumerate(candidates):
-        lengths = nx.single_source_dijkstra_path_length(graph, source, weight="time_min")
-        for target in candidates[idx + 1 :]:
-            if target not in lengths:
-                continue
-            time_val = float(lengths[target])
-            if time_val > best_time:
-                path = nx.shortest_path(graph, source, target, weight="time_min")
-                length_val = 0.0
-                for u, v in zip(path[:-1], path[1:]):
-                    length_val += float(graph[u][v].get("length_meter") or 0.0)
+    best_path: list[int] = []
+    with tempfile.TemporaryDirectory(prefix="pandana-route-directness-", dir="/tmp") as tmp_dir:
+        tmp_root = Path(tmp_dir)
+        graph_path = tmp_root / "component_graph.pkl"
+        matrix_path = tmp_root / "component_matrix.parquet"
+        with graph_path.open("wb") as handle:
+            pickle.dump(graph, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        matrix = build_graph_node_matrix_pandana_external(
+            graph_pickle_path=graph_path,
+            output_path=matrix_path,
+            weight_key="time_min",
+            repo_root_path=REPO_ROOT,
+        )
+        for idx, source in enumerate(candidates):
+            for target in candidates[idx + 1 :]:
+                if source not in matrix.index or target not in matrix.columns:
+                    continue
+                time_val = float(matrix.loc[source, target])
+                if not np.isfinite(time_val) or time_val <= best_time:
+                    continue
                 best_pair = (source, target)
                 best_time = time_val
-                best_length = length_val
+        if best_pair is not None:
+            path_df = build_pairs_shortest_paths_pandana_external(
+                graph_pickle_path=graph_path,
+                pairs_df=pd.DataFrame([{"source": best_pair[0], "target": best_pair[1]}]),
+                weight_key="time_min",
+                repo_root_path=REPO_ROOT,
+            )
+            path = list(path_df.iloc[0]["path"])
+            best_path = path
+            best_length = 0.0
+            for u, v in zip(path[:-1], path[1:]):
+                best_length += float(graph[u][v].get("length_meter") or 0.0)
     if best_pair is None:
         nodes = list(graph.nodes())
-        return nodes[0], nodes[-1], 0.0, 0.0
-    return best_pair[0], best_pair[1], best_time, best_length
+        fallback = nodes[:2] if len(nodes) >= 2 else nodes
+        return nodes[0], nodes[-1], 0.0, 0.0, fallback
+    return best_pair[0], best_pair[1], best_time, best_length, best_path
 
 
 def _build_component_geometry(graph: nx.Graph, path_nodes: list[int]) -> object:
@@ -418,8 +445,7 @@ def _extract_route_variants(
                 total_time_min = float(
                     sum(float(attrs.get("time_min") or 0.0) for *_edge, attrs in component_graph.edges(data=True))
                 )
-                start_node, end_node, spine_time_min, spine_length_m = _choose_terminal_pair(component_graph)
-                path_nodes = nx.shortest_path(component_graph, start_node, end_node, weight="time_min")
+                start_node, end_node, spine_time_min, spine_length_m, path_nodes = _choose_terminal_pair(component_graph)
                 spine_geometry = _build_component_geometry(component_graph, path_nodes)
                 component_geometry = _line_merge_safe([attrs.get("geometry") for *_edge, attrs in component_graph.edges(data=True)])
                 if component_geometry is None or component_geometry.is_empty:

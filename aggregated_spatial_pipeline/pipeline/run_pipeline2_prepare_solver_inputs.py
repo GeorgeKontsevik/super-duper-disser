@@ -20,6 +20,7 @@ import pandas as pd
 from loguru import logger
 
 from aggregated_spatial_pipeline.geodata_io import prepare_geodata_for_parquet, read_geodata
+from aggregated_spatial_pipeline.pandana_bridge import build_units_matrix_pandana_external
 from aggregated_spatial_pipeline.runtime_config import configure_logger, ensure_repo_mplconfigdir
 from aggregated_spatial_pipeline.visualization import (
     apply_preview_canvas,
@@ -247,6 +248,15 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable verbose OSMnx logs.",
     )
+    parser.add_argument(
+        "--matrix-engine",
+        choices=("auto", "pandana", "native"),
+        default="pandana",
+        help=(
+            "Engine for accessibility matrix build: "
+            "'pandana' (fast, default), 'native' (networkx), or 'auto' (prefer pandana when installed)."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -418,6 +428,21 @@ def _calculate_accessibility_matrix_native(
             if distance is not None:
                 matrix.loc[src_unit, dst_unit] = float(distance)
     return matrix
+
+
+def _calculate_accessibility_matrix_pandana_from_paths(
+    *,
+    units_path: Path,
+    graph_path: Path,
+    output_path: Path,
+    weight_key: str = "time_min",
+) -> pd.DataFrame:
+    return build_units_matrix_pandana_external(
+        units_path=units_path,
+        graph_pickle_path=graph_path,
+        output_path=output_path,
+        weight_key=weight_key,
+    )
 
 
 def _first_number(value) -> float | None:
@@ -1795,14 +1820,53 @@ def main() -> None:
     else:
         n_units = int(len(units))
         approx_pairs = n_units * n_units
+        engine_requested = str(args.matrix_engine)
+        engine_effective = engine_requested
+        matrix_builder = None
+        if engine_requested == "native":
+            engine_effective = "native"
+            matrix_builder = lambda: _calculate_accessibility_matrix_native(
+                units[["geometry"]].copy(),
+                graph,
+                weight_key="time_min",
+            )
+        elif engine_requested == "pandana":
+            engine_effective = "pandana"
+            matrix_builder = lambda: _calculate_accessibility_matrix_pandana_from_paths(
+                units_path=units_path,
+                graph_path=graph_path,
+                output_path=matrix_path,
+                weight_key="time_min",
+            )
+        else:  # auto
+            try:
+                from aggregated_spatial_pipeline.runtime_paths import pandana_python
+                if not pandana_python().exists():
+                    raise FileNotFoundError("pandana runtime is missing")
+                engine_effective = "pandana"
+                matrix_builder = lambda: _calculate_accessibility_matrix_pandana_from_paths(
+                    units_path=units_path,
+                    graph_path=graph_path,
+                    output_path=matrix_path,
+                    weight_key="time_min",
+                )
+            except Exception:  # noqa: BLE001
+                engine_effective = "native"
+                matrix_builder = lambda: _calculate_accessibility_matrix_native(
+                    units[["geometry"]].copy(),
+                    graph,
+                    weight_key="time_min",
+                )
+
         _log(
-            "Computing accessibility matrix via native graph shortest-path routine "
+            "Computing accessibility matrix "
+            f"(engine={engine_effective}, requested={engine_requested}) "
             f"for n_units={n_units} (~{approx_pairs:,} pair entries). This can take time."
         )
         started = time.time()
         matrix_union = _run_with_heartbeat(
             "Matrix build",
-            lambda: _calculate_accessibility_matrix_native(units[["geometry"]].copy(), graph, weight_key="time_min"),
+            matrix_builder,
             interval_s=20.0,
         )
         _save_dataframe(matrix_union, matrix_path)

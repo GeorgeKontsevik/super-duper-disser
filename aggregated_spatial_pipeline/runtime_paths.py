@@ -51,3 +51,8 @@ def intermodal_python(root: Path | None = None) -> Path:
         return submodule_python
     legacy_python = _venv_python(root / ".venv-iduedu121")
     return legacy_python
+
+
+def pandana_python(root: Path | None = None) -> Path:
+    root = root or repo_root()
+    return _venv_python(root / ".venv-pandana")

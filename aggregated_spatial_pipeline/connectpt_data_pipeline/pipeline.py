@@ -16,6 +16,7 @@ import pandas as pd
 from loguru import logger
 
 from aggregated_spatial_pipeline.geodata_io import prepare_geodata_for_parquet, read_geodata
+from aggregated_spatial_pipeline.pandana_bridge import stop_complete_then_prune_pandana_external
 
 CONNECTPT_SRC = Path(__file__).resolve().parents[2] / "connectpt" / "connectpt"
 if str(CONNECTPT_SRC) not in sys.path:
@@ -25,7 +26,6 @@ from preprocess.lines import get_lines
 from preprocess.network import (
     build_time_matrix,
     roads_to_graph,
-    stop_complete_then_prune,
 )
 from preprocess.projection import project_stops_on_roads
 from preprocess.stops import aggregate_stops, get_agg_stops
@@ -525,7 +525,12 @@ def build_connectpt_osm_bundle(
         _save_geodata(filtered_stops, projected_stops_path)
 
         roads_graph = roads_to_graph(roads_with_stops, filtered_stops)
-        simplified_graph = stop_complete_then_prune(roads_graph, speed_kmh=speed_kmh)
+        simplified_graph = stop_complete_then_prune_pandana_external(
+            graph=roads_graph,
+            speed_kmh=speed_kmh,
+            weight_attr="mm_len",
+            repo_root_path=Path(__file__).resolve().parents[2],
+        )
         graph_pickle_path = modality_dir / "graph.pkl"
         try:
             simplified_graph = _largest_connected_component(simplified_graph)

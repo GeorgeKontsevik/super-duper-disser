@@ -9,8 +9,8 @@ import geopandas as gpd
 import pandas as pd
 from loguru import logger
 
+from aggregated_spatial_pipeline.pandana_bridge import build_units_matrix_pandana_external
 from aggregated_spatial_pipeline.pipeline.run_pipeline2_prepare_solver_inputs import (
-    _calculate_accessibility_matrix_native,
     _plot_accessibility_previews,
 )
 from aggregated_spatial_pipeline.runtime_config import configure_logger
@@ -57,9 +57,13 @@ def main() -> None:
         f"Recomputing accessibility matrix: units={len(units)}, "
         f"graph_nodes={graph.number_of_nodes()}, graph_edges={graph.number_of_edges()}"
     )
-    matrix = _calculate_accessibility_matrix_native(units[["geometry"]].copy(), graph, weight_key="time_min")
+    matrix = build_units_matrix_pandana_external(
+        units_path=units_path,
+        graph_pickle_path=graph_pickle_path,
+        output_path=matrix_output_path,
+        weight_key="time_min",
+    )
     matrix_output_path.parent.mkdir(parents=True, exist_ok=True)
-    matrix.to_parquet(matrix_output_path)
     previews = _plot_accessibility_previews(
         units,
         matrix,
