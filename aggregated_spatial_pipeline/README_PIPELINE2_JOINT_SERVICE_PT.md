@@ -11,6 +11,10 @@
 
 Документ описывает именно текущую реализованную механику в коде, а не желаемую абстрактную схему.
 
+Отдельный note с архитектурными соображениями и ограничениями лежит здесь:
+
+- [README_PIPELINE2_JOINT_SERVICE_PT_NOTES.md](/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/README_PIPELINE2_JOINT_SERVICE_PT_NOTES.md)
+
 ## Что Считает Пайплайн
 
 Текущая связка работает так:
@@ -145,6 +149,125 @@ PYTHONPATH=$PWD .venv/bin/python -m aggregated_spatial_pipeline.pipeline.run_pip
 
 1. `placement_exact_genetic`
 2. `placement_exact`
+
+## Запуск На Несколько Городов
+
+Ниже команды, которыми удобно гонять те же шаги по набору городов.
+
+### Batch По Активным 19 Городам
+
+Если города лежат в:
+
+```bash
+/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/active_19_good_cities_20260412/joint_inputs/<city_slug>
+```
+
+то placement + route step можно крутить так:
+
+```bash
+cd /Users/gk/Code/super-duper-disser
+
+for CITY in /Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/active_19_good_cities_20260412/joint_inputs/*; do
+  echo "=== $(basename "$CITY") ==="
+
+  PYTHONPATH=$PWD .venv/bin/python -m aggregated_spatial_pipeline.pipeline.run_pipeline2_prepare_solver_inputs \
+    --joint-input-dir "$CITY" \
+    --services hospital polyclinic school kindergarten \
+    --placement-exact \
+    --placement-genetic \
+    --placement-allow-existing-expansion \
+    --placement-prefer-existing \
+    --placement-capacity-mode fixed_mean || break
+
+  PYTHONPATH=$PWD .venv/bin/python -m aggregated_spatial_pipeline.pipeline.run_pipeline2_accessibility_first \
+    --joint-input-dir "$CITY" \
+    --services hospital polyclinic school kindergarten \
+    --use-placement-outputs \
+    --modality bus \
+    --n-routes 1 || break
+done
+```
+
+### Batch По Произвольному Набору Путей
+
+Если города лежат в разных родительских папках:
+
+```bash
+cd /Users/gk/Code/super-duper-disser
+
+CITIES=(
+  "/abs/path/city_1"
+  "/abs/path/city_2"
+  "/abs/path/city_3"
+)
+
+for CITY in "${CITIES[@]}"; do
+  echo "=== $(basename "$CITY") ==="
+
+  PYTHONPATH=$PWD .venv/bin/python -m aggregated_spatial_pipeline.pipeline.run_pipeline2_prepare_solver_inputs \
+    --joint-input-dir "$CITY" \
+    --services hospital polyclinic school kindergarten \
+    --placement-exact \
+    --placement-genetic \
+    --placement-allow-existing-expansion \
+    --placement-prefer-existing \
+    --placement-capacity-mode fixed_mean || break
+
+  PYTHONPATH=$PWD .venv/bin/python -m aggregated_spatial_pipeline.pipeline.run_pipeline2_accessibility_first \
+    --joint-input-dir "$CITY" \
+    --services hospital polyclinic school kindergarten \
+    --use-placement-outputs \
+    --modality bus \
+    --n-routes 1 || break
+done
+```
+
+### Batch Только Для Recompute Provision По Уже Готовым Route Results
+
+Если `connectpt_routes_generator/<modality>/summary.json` уже лежит в каждом городе и нужно быстро пересчитать финальную обеспеченность без повторного route generation:
+
+```bash
+cd /Users/gk/Code/super-duper-disser
+
+for CITY in /Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/active_19_good_cities_20260412/joint_inputs/*; do
+  echo "=== $(basename "$CITY") ==="
+
+  PYTHONPATH=$PWD .venv/bin/python -m aggregated_spatial_pipeline.pipeline.run_pipeline2_accessibility_first \
+    --joint-input-dir "$CITY" \
+    --services hospital polyclinic school kindergarten \
+    --use-placement-outputs \
+    --modality bus \
+    --no-generate-routes \
+    --recompute-provision || break
+done
+```
+
+### Batch Только Для Transport-Side Debug
+
+Если нужно отдельно погонять `ConnectPT` по уже сохраненной внешней OD для нескольких городов:
+
+```bash
+cd /Users/gk/Code/super-duper-disser
+
+for CITY in /Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/active_19_good_cities_20260412/joint_inputs/*; do
+  echo "=== $(basename "$CITY") ==="
+
+  PYTHONPATH=$PWD MPLCONFIGDIR=/tmp/mpl-connectpt-batch \
+    connectpt/.venv/bin/python -m aggregated_spatial_pipeline.connectpt_data_pipeline.run_route_generator_external \
+    --joint-input-dir "$CITY" \
+    --modality bus \
+    --od-matrix-path "$CITY/pipeline_2/accessibility_first/service_target_od/bus_service_target_od.csv" \
+    --n-routes 1 || break
+done
+```
+
+### Что Полезно Проверять После Каждого Города В Batch
+
+- `pipeline_2/placement_exact_genetic/<service>/summary_after.json`
+- `pipeline_2/accessibility_first/service_target_od/bus_service_target_od_summary.json`
+- `connectpt_routes_generator/bus/summary.json`
+- `pipeline_2/accessibility_first/provision_after_routes/<service>/summary_after_routes.json`
+- `preview_png/all_together`
 
 ## Запуск По Шагам Отдельно
 
