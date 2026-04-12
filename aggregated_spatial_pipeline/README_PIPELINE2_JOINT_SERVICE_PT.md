@@ -355,8 +355,8 @@ PYTHONPATH=$PWD MPLCONFIGDIR=/tmp/mpl-connectpt-debug \
   --modality bus \
   --od-matrix-path "$CITY/pipeline_2/accessibility_first/service_target_od/bus_service_target_od.csv" \
   --n-routes 1 \
-  --min-route-len 2 \
-  --max-route-len 8 \
+  --min-route-len 6 \
+  --max-route-len 10 \
   --output-dir /tmp/connectpt_debug_vienna
 ```
 

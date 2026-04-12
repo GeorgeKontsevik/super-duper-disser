@@ -122,8 +122,8 @@ def parse_args() -> argparse.Namespace:
             "gap (demand_without) is positive."
         ),
     )
-    parser.add_argument("--min-route-len", type=int, default=2)
-    parser.add_argument("--max-route-len", type=int, default=8)
+    parser.add_argument("--min-route-len", type=int, default=6)
+    parser.add_argument("--max-route-len", type=int, default=10)
     parser.add_argument("--demand-time-weight", type=float, default=0.33)
     parser.add_argument("--route-time-weight", type=float, default=0.33)
     parser.add_argument("--median-connectivity-weight", type=float, default=0.33)
@@ -132,6 +132,10 @@ def parse_args() -> argparse.Namespace:
 
 def _service_solver_path(city_dir: Path, service: str) -> Path:
     return city_dir / "pipeline_2" / "solver_inputs" / service / "blocks_solver.parquet"
+
+
+def _service_solver_provision_links_path(city_dir: Path, service: str) -> Path:
+    return city_dir / "pipeline_2" / "solver_inputs" / service / "provision_links.csv"
 
 
 def _service_placement_blocks_path(city_dir: Path, service: str, placement_root_name: str) -> Path:
@@ -652,6 +656,126 @@ def _build_service_target_od_from_placement(
     return summary
 
 
+def _build_service_target_od_from_links(
+    *,
+    city_dir: Path,
+    services: list[str],
+    modality: str,
+    output_root: Path,
+    service_blocks: dict[str, gpd.GeoDataFrame],
+    links_path_by_service: dict[str, Path],
+    unresolved_gap_cols: tuple[str, ...],
+    source_label: str,
+) -> dict | None:
+    if not services:
+        return None
+    first_blocks = next(iter(service_blocks.values()))
+    stop_points = _build_stop_points_from_connectpt_graph(city_dir, modality, first_blocks.crs)
+    if stop_points.empty:
+        raise ValueError(f"No ConnectPT stops found for modality={modality}")
+
+    od = pd.DataFrame(
+        0.0,
+        index=range(len(stop_points)),
+        columns=range(len(stop_points)),
+        dtype=float,
+    )
+    summary_rows: list[dict] = []
+    total_weight = 0.0
+
+    for service in services:
+        blocks = _normalize_block_id_index(service_blocks[service])
+        links_path = links_path_by_service.get(service)
+        if links_path is None or not links_path.exists():
+            _log(f"Target links are missing for service [{service}]; skipping target OD contribution.")
+            continue
+        links_df = pd.read_csv(links_path)
+        if links_df.empty:
+            _log(f"Target links are empty for service [{service}]; skipping target OD contribution.")
+            continue
+        if not {"source", "target"}.issubset(links_df.columns):
+            _log(
+                f"Target links for service [{service}] do not contain source/target columns; "
+                f"found={list(links_df.columns)}. Skipping target OD contribution."
+            )
+            continue
+
+        unresolved = _extract_gap_series(blocks, *unresolved_gap_cols)
+        unresolved.index = unresolved.index.astype(str)
+        stop_by_block = _map_blocks_to_stop_indices(blocks, stop_points)
+        client_counts = links_df["source"].astype(str).value_counts().to_dict()
+
+        service_weight = 0.0
+        used_links = 0
+        skipped_missing_stops = 0
+        skipped_zero_gap = 0
+        for row in links_df.itertuples(index=False):
+            client_id = str(getattr(row, "source"))
+            facility_id = str(getattr(row, "target"))
+            remaining_gap = float(unresolved.get(client_id, 0.0))
+            if remaining_gap <= 0.0:
+                skipped_zero_gap += 1
+                continue
+            origin_stop = stop_by_block.get(client_id)
+            destination_stop = stop_by_block.get(facility_id)
+            if origin_stop is None or destination_stop is None:
+                skipped_missing_stops += 1
+                continue
+            divisor = max(1, int(client_counts.get(client_id, 1)))
+            weight = remaining_gap / float(divisor)
+            od.loc[origin_stop, destination_stop] += weight
+            service_weight += weight
+            used_links += 1
+
+        total_weight += service_weight
+        summary_rows.append(
+            {
+                "service": service,
+                "links_path": str(links_path),
+                "used_links": int(used_links),
+                "skipped_zero_gap": int(skipped_zero_gap),
+                "skipped_missing_stops": int(skipped_missing_stops),
+                "target_weight_total": float(service_weight),
+            }
+        )
+
+    od_dir = output_root / "service_target_od"
+    od_dir.mkdir(parents=True, exist_ok=True)
+    od_path = od_dir / f"{modality}_service_target_od.csv"
+    od.to_csv(od_path)
+    summary = {
+        "source_label": source_label,
+        "modality": modality,
+        "stop_count": int(len(stop_points)),
+        "positive_pairs": int((od.to_numpy() > 0.0).sum()),
+        "target_weight_total": float(total_weight),
+        "files": {
+            "od_matrix_csv": str(od_path),
+        },
+        "services": summary_rows,
+    }
+    summary_path = od_dir / f"{modality}_service_target_od_summary.json"
+    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    summary["files"]["summary_json"] = str(summary_path)
+    service_logs = ", ".join(
+        (
+            f"{row['service']}: weight={row['target_weight_total']:.1f}, "
+            f"used_links={row['used_links']}, "
+            f"zero_gap={row['skipped_zero_gap']}, "
+            f"missing_stops={row['skipped_missing_stops']}"
+        )
+        for row in summary_rows
+    )
+    _log(
+        f"Service-target OD [{modality}] built from {source_label}: "
+        f"stops={summary['stop_count']}, "
+        f"positive_pairs={summary['positive_pairs']}, "
+        f"target_weight={summary['target_weight_total']:.1f}"
+        + (f", per_service=({service_logs})" if service_logs else "")
+    )
+    return summary
+
+
 def _compute_existing_route_stop_stats(city_dir: Path, modality: str) -> dict | None:
     intermodal_graph_path = city_dir / "intermodal_graph_iduedu" / "graph.pkl"
     if not intermodal_graph_path.exists():
@@ -970,6 +1094,30 @@ def main() -> None:
                 service_target_od_path = Path(service_target_summary["files"]["od_matrix_csv"])
                 if float(service_target_summary.get("target_weight_total", 0.0)) <= 0.0:
                     _log("Service-aware target OD has zero total weight after placement. Route generation is skipped.")
+                    route_summary = {
+                        "skipped": True,
+                        "reason": "zero_service_target_od",
+                        "service_target_od": service_target_summary,
+                    }
+        else:
+            links_path_by_service = {
+                service: _service_solver_provision_links_path(city_dir, service)
+                for service in services
+            }
+            service_target_summary = _build_service_target_od_from_links(
+                city_dir=city_dir,
+                services=services,
+                modality=str(args.modality),
+                output_root=output_root,
+                service_blocks=baseline_blocks,
+                links_path_by_service=links_path_by_service,
+                unresolved_gap_cols=("demand_without",),
+                source_label="baseline_provision_links",
+            )
+            if service_target_summary is not None:
+                service_target_od_path = Path(service_target_summary["files"]["od_matrix_csv"])
+                if float(service_target_summary.get("target_weight_total", 0.0)) <= 0.0:
+                    _log("Baseline service-aware target OD has zero total weight. Route generation is skipped.")
                     route_summary = {
                         "skipped": True,
                         "reason": "zero_service_target_od",

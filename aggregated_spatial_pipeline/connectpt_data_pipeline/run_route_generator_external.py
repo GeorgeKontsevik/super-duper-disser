@@ -86,8 +86,8 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--n-routes", type=int, default=6)
-    parser.add_argument("--min-route-len", type=int, default=2)
-    parser.add_argument("--max-route-len", type=int, default=8)
+    parser.add_argument("--min-route-len", type=int, default=6)
+    parser.add_argument("--max-route-len", type=int, default=10)
     parser.add_argument("--demand-time-weight", type=float, default=0.33)
     parser.add_argument("--route-time-weight", type=float, default=0.33)
     parser.add_argument("--median-connectivity-weight", type=float, default=0.33)
@@ -498,16 +498,21 @@ def _save_route_preview(
     draw_network: bool = True,
 ) -> None:
     boundary_plot = normalize_preview_gdf(boundary, target_crs="EPSG:3857")
-    target_crs = getattr(boundary_plot, "crs", None) or "EPSG:3857"
+    graph_crs = graph.graph.get("crs") or "EPSG:4326"
     if boundary_plot is None or boundary_plot.empty:
         try:
             all_edge_geoms = [data.get("geometry") for _, _, data in graph.edges(data=True) if data.get("geometry") is not None]
             if all_edge_geoms:
-                boundary_plot = normalize_preview_gdf(gpd.GeoDataFrame({"geometry": all_edge_geoms}, crs=target_crs), target_crs="EPSG:3857")
+                boundary_plot = normalize_preview_gdf(
+                    gpd.GeoDataFrame({"geometry": all_edge_geoms}, crs=graph_crs),
+                    target_crs="EPSG:3857",
+                )
         except Exception:
             boundary_plot = None
     fig, ax = plt.subplots(figsize=(10, 10))
     apply_preview_canvas(fig, ax, boundary_plot, title=None, min_pad=120.0)
+    route_geoms_3857: list = []
+    route_point_clouds_3857: list[gpd.GeoSeries] = []
 
     if draw_network:
         edge_geoms = []
@@ -516,12 +521,12 @@ def _save_route_preview(
             if geom is not None and not geom.is_empty:
                 edge_geoms.append(geom)
         if edge_geoms:
-            gpd.GeoSeries(edge_geoms, crs=target_crs).pipe(lambda s: s.to_crs("EPSG:3857") if getattr(s, "crs", None) else s).plot(
+            gpd.GeoSeries(edge_geoms, crs=graph_crs).pipe(lambda s: s.to_crs("EPSG:3857") if getattr(s, "crs", None) else s).plot(
                 ax=ax, color="#9aa0a6", linewidth=1.2, alpha=0.45, zorder=1
             )
 
         node_points = [Point(float(graph.nodes[n]["x"]), float(graph.nodes[n]["y"])) for n in sorted(graph.nodes())]
-        gpd.GeoSeries(node_points, crs=target_crs).pipe(lambda s: s.to_crs("EPSG:3857") if getattr(s, "crs", None) else s).plot(
+        gpd.GeoSeries(node_points, crs=graph_crs).pipe(lambda s: s.to_crs("EPSG:3857") if getattr(s, "crs", None) else s).plot(
             ax=ax, color="#495057", markersize=18, alpha=0.9, zorder=2
         )
 
@@ -532,12 +537,38 @@ def _save_route_preview(
             if graph.has_edge(u, v):
                 geom = graph.get_edge_data(u, v).get("geometry")
                 if geom is not None and not geom.is_empty:
-                    gpd.GeoSeries([geom], crs=target_crs).pipe(lambda s: s.to_crs("EPSG:3857") if getattr(s, "crs", None) else s).plot(
+                    geom_3857 = gpd.GeoSeries([geom], crs=graph_crs).pipe(
+                        lambda s: s.to_crs("EPSG:3857") if getattr(s, "crs", None) else s
+                    )
+                    route_geoms_3857.extend(list(geom_3857))
+                    geom_3857.plot(
                         ax=ax, color=color, linewidth=3.6, alpha=0.95, zorder=4
                     )
-        xs = [float(graph.nodes[n]["x"]) for n in route]
-        ys = [float(graph.nodes[n]["y"]) for n in route]
-        ax.scatter(xs, ys, s=22, color=color, zorder=5)
+        route_points = gpd.GeoSeries(
+            [Point(float(graph.nodes[n]["x"]), float(graph.nodes[n]["y"])) for n in route],
+            crs=graph_crs,
+        ).to_crs("EPSG:3857")
+        route_point_clouds_3857.append(route_points)
+        ax.scatter(route_points.x, route_points.y, s=24, color=color, zorder=5)
+        if len(route_points) > 0:
+            ax.scatter([route_points.x.iloc[0]], [route_points.y.iloc[0]], s=120, color="#16a34a", edgecolors="white", linewidths=1.2, zorder=6)
+            ax.scatter([route_points.x.iloc[-1]], [route_points.y.iloc[-1]], s=120, color="#dc2626", edgecolors="white", linewidths=1.2, zorder=6)
+
+    if (not draw_network) and (route_geoms_3857 or route_point_clouds_3857):
+        bounds_sources = []
+        if route_geoms_3857:
+            bounds_sources.append(gpd.GeoSeries(route_geoms_3857, crs="EPSG:3857"))
+        if route_point_clouds_3857:
+            bounds_sources.extend(route_point_clouds_3857)
+        if bounds_sources:
+            combined = gpd.GeoSeries(pd.concat(bounds_sources, ignore_index=True), crs="EPSG:3857")
+            minx, miny, maxx, maxy = combined.total_bounds
+            width = max(maxx - minx, 1.0)
+            height = max(maxy - miny, 1.0)
+            pad_x = max(width * 0.18, 250.0)
+            pad_y = max(height * 0.18, 250.0)
+            ax.set_xlim(minx - pad_x, maxx + pad_x)
+            ax.set_ylim(miny - pad_y, maxy + pad_y)
 
     title = (
         f"ConnectPT Route Generator ({summary['modality']})\n"
