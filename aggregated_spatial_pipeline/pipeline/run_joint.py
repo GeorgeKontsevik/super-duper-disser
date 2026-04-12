@@ -897,6 +897,7 @@ def _run_pt_street_pattern_dependency_step(
     city_dir: Path,
     top_routes: int,
     subway_stop_buffer_m: float,
+    street_pattern_cells_path: Path | None = None,
 ) -> tuple[Path, dict]:
     output_dir = city_dir / "pt_street_pattern_dependency"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -919,10 +920,13 @@ def _run_pt_street_pattern_dependency_step(
         "--subway-stop-buffer-m",
         str(float(subway_stop_buffer_m)),
     ]
+    if street_pattern_cells_path is not None:
+        command.extend(["--street-pattern-cells", str(street_pattern_cells_path)])
     _log(
         "PT x street-pattern dependency step start: "
         f"city_dir={_log_name(city_dir)}, top_routes={int(top_routes)}, "
-        f"subway_stop_buffer_m={float(subway_stop_buffer_m):.1f}"
+        f"subway_stop_buffer_m={float(subway_stop_buffer_m):.1f}, "
+        f"street_pattern_cells={_log_name(street_pattern_cells_path)}"
     )
     started = time.time()
     subprocess.run(command, check=True, cwd=str(repo_root), env=env)
@@ -3346,6 +3350,7 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             city_dir=data_root,
             top_routes=int(args.pt_dependency_top_routes),
             subway_stop_buffer_m=float(args.pt_subway_stop_buffer_m),
+            street_pattern_cells_path=street_grid_source_path,
         )
         dep_counts = pt_street_dependency_manifest.get("counts", {}) if isinstance(pt_street_dependency_manifest, dict) else {}
         _log(

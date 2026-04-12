@@ -2,6 +2,12 @@
 
 Минимальный каркас для сборки единого пайплайна поверх нескольких пространственных разбиений.
 
+Отдельный практический README по joint-сценарию
+`service placement -> ConnectPT -> accessibility recompute -> provision recompute`
+лежит здесь:
+
+- [README_PIPELINE2_JOINT_SERVICE_PT.md](/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/README_PIPELINE2_JOINT_SERVICE_PT.md)
+
 Идея простая:
 
 - есть несколько слоев пространственных единиц;

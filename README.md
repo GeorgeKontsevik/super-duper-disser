@@ -124,6 +124,23 @@ print(f"\nupdated summary: {summary}")
 PY
 ```
 
+Audit all accumulated outputs and classify which city bundles are complete, resumable, or just experimental/non-bundle artifacts:
+
+```bash
+cd /Users/gk/Code/super-duper-disser
+.venv/bin/python scripts/audit_outputs_status.py \
+  --only-problematic \
+  --print-cities \
+  --write-json /tmp/sdd_outputs_audit.json \
+  --write-tsv /tmp/sdd_outputs_audit.tsv
+```
+
+This audit distinguishes:
+- complete city bundles with `pipeline_2`
+- phase-1-complete bundles that can go straight to `pipeline_2`
+- resumable partial bundles (`early / mid / late`)
+- `non_bundle_layout` experimental roots that are not full city bundles
+
 ## Shared Visualization Tool
 
 One project-level visualization tool now owns the default preview canvas and base map styling:

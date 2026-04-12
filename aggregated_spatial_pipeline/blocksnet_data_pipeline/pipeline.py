@@ -549,11 +549,11 @@ def build_blocksnet_bundle(
 
     if "number_of_floors" not in buildings_gdf.columns:
         from_storey = pd.to_numeric(buildings_gdf.get("storey"), errors="coerce")
-        if from_storey is None:
-            from_storey = pd.Series(pd.NA, index=buildings_gdf.index, dtype="float64")
+        if not isinstance(from_storey, pd.Series):
+            from_storey = pd.Series(np.nan, index=buildings_gdf.index, dtype="float64")
         from_levels = pd.to_numeric(buildings_gdf.get("building:levels"), errors="coerce")
-        if from_levels is None:
-            from_levels = pd.Series(pd.NA, index=buildings_gdf.index, dtype="float64")
+        if not isinstance(from_levels, pd.Series):
+            from_levels = pd.Series(np.nan, index=buildings_gdf.index, dtype="float64")
         buildings_gdf["number_of_floors"] = from_storey.fillna(from_levels)
     if "is_living" in buildings_gdf.columns:
         buildings_gdf["is_living"] = pd.to_numeric(buildings_gdf["is_living"], errors="coerce").fillna(0).astype(bool)

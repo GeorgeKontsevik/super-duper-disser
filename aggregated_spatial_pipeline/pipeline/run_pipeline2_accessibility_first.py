@@ -13,6 +13,7 @@ import geopandas as gpd
 import numpy as np
 import pandas as pd
 from loguru import logger
+from shapely.geometry import Point
 
 from aggregated_spatial_pipeline.runtime_config import configure_logger, repo_mplconfigdir
 from aggregated_spatial_pipeline.pipeline.run_pipeline2_prepare_solver_inputs import (
@@ -72,6 +73,31 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--modality", default="bus")
     parser.add_argument("--n-routes", type=int, default=2)
     parser.add_argument("--top-k", type=int, default=50)
+    parser.add_argument(
+        "--route-summary-path",
+        default=None,
+        help=(
+            "Optional existing ConnectPT summary.json to reuse when route generation is disabled "
+            "or when provision recompute should run from a previously generated route."
+        ),
+    )
+    parser.add_argument(
+        "--use-placement-outputs",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Use after-placement solver outputs as the baseline for suffering/provision recompute, "
+            "and build a service-aware ConnectPT target OD from placement assignments."
+        ),
+    )
+    parser.add_argument(
+        "--placement-root-name",
+        default=None,
+        help=(
+            "Optional placement output root under pipeline_2, e.g. placement_exact_genetic or placement_exact. "
+            "When omitted, auto-resolve placement_exact_genetic first, then placement_exact."
+        ),
+    )
     parser.add_argument("--generate-routes", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument(
         "--align-route-len-to-existing-mean-max",
@@ -106,17 +132,57 @@ def _service_solver_path(city_dir: Path, service: str) -> Path:
     return city_dir / "pipeline_2" / "solver_inputs" / service / "blocks_solver.parquet"
 
 
-def _load_baseline_solver_blocks(city_dir: Path, services: list[str]) -> dict[str, gpd.GeoDataFrame]:
+def _service_placement_blocks_path(city_dir: Path, service: str, placement_root_name: str) -> Path:
+    return city_dir / "pipeline_2" / placement_root_name / service / "blocks_solver_after.parquet"
+
+
+def _service_placement_assignment_links_path(city_dir: Path, service: str, placement_root_name: str) -> Path:
+    return city_dir / "pipeline_2" / placement_root_name / service / "assignment_links_after.csv"
+
+
+def _default_route_summary_path(city_dir: Path, modality: str) -> Path:
+    return city_dir / "connectpt_routes_generator" / modality / "summary.json"
+
+
+def _resolve_placement_root_name(city_dir: Path, services: list[str], requested: str | None) -> str:
+    candidates = [requested] if requested else ["placement_exact_genetic", "placement_exact"]
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        root = city_dir / "pipeline_2" / candidate
+        if all(_service_placement_blocks_path(city_dir, service, candidate).exists() for service in services):
+            return candidate
+    raise FileNotFoundError(
+        "Could not resolve placement output root with after-placement solver files "
+        f"for services={services}. requested={requested!r}"
+    )
+
+
+def _load_solver_blocks(
+    city_dir: Path,
+    services: list[str],
+    *,
+    use_placement_outputs: bool,
+    placement_root_name: str | None,
+) -> tuple[dict[str, gpd.GeoDataFrame], dict[str, Path], str | None]:
     loaded: dict[str, gpd.GeoDataFrame] = {}
+    paths: dict[str, Path] = {}
+    resolved_placement_root = None
+    if use_placement_outputs:
+        resolved_placement_root = _resolve_placement_root_name(city_dir, services, placement_root_name)
     for service in services:
-        path = _service_solver_path(city_dir, service)
+        if resolved_placement_root is not None:
+            path = _service_placement_blocks_path(city_dir, service, resolved_placement_root)
+        else:
+            path = _service_solver_path(city_dir, service)
         if not path.exists():
             raise FileNotFoundError(f"Missing solver output for service [{service}]: {path}")
         gdf = gpd.read_parquet(path)
         if gdf.empty:
             raise ValueError(f"Empty solver output for service [{service}]: {path}")
         loaded[service] = gdf
-    return loaded
+        paths[service] = path
+    return loaded, paths, resolved_placement_root
 
 
 def _normalize_block_id_index(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
@@ -125,12 +191,29 @@ def _normalize_block_id_index(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     return out
 
 
+def _extract_gap_series(gdf: gpd.GeoDataFrame, *candidate_cols: str) -> pd.Series:
+    for column in candidate_cols:
+        if column in gdf.columns:
+            return pd.to_numeric(gdf.get(column, 0.0), errors="coerce").fillna(0.0)
+    return pd.Series(0.0, index=gdf.index, dtype="float64")
+
+
 def _build_suffering_frame(service_blocks: dict[str, gpd.GeoDataFrame]) -> gpd.GeoDataFrame:
     merged: gpd.GeoDataFrame | None = None
     for service, gdf in service_blocks.items():
         work = _normalize_block_id_index(gdf)
-        work[f"{service}_access_gap"] = pd.to_numeric(work.get("demand_without", 0.0), errors="coerce").fillna(0.0)
-        work[f"{service}_capacity_gap"] = pd.to_numeric(work.get("demand_left", 0.0), errors="coerce").fillna(0.0)
+        work[f"{service}_access_gap"] = _extract_gap_series(
+            work,
+            "demand_without_after_routes",
+            "demand_without_after",
+            "demand_without",
+        )
+        work[f"{service}_capacity_gap"] = _extract_gap_series(
+            work,
+            "demand_left_after_routes",
+            "demand_left_after",
+            "demand_left",
+        )
         work[f"{service}_demand"] = pd.to_numeric(work.get("demand", 0.0), errors="coerce").fillna(0.0)
         cols = ["geometry", f"{service}_access_gap", f"{service}_capacity_gap", f"{service}_demand"]
         part = work[cols].copy()
@@ -235,10 +318,18 @@ def _run_route_generator(
     repo_root: Path,
     city_dir: Path,
     args: argparse.Namespace,
+    od_matrix_path: Path | None = None,
 ) -> dict:
-    python_path = repo_root / ".venv" / "bin" / "python"
-    if not python_path.exists():
-        raise FileNotFoundError(f"Missing project runtime: {python_path}")
+    runtime_candidates = [
+        repo_root / "connectpt" / ".venv" / "bin" / "python",
+        repo_root / ".venv" / "bin" / "python",
+    ]
+    python_path = next((path for path in runtime_candidates if path.exists()), None)
+    if python_path is None:
+        raise FileNotFoundError(
+            "Missing route-generator runtime. Checked: "
+            + ", ".join(str(path) for path in runtime_candidates)
+        )
 
     min_route_len = int(args.min_route_len)
     max_route_len = int(args.max_route_len)
@@ -310,6 +401,8 @@ def _run_route_generator(
         "--median-connectivity-weight",
         str(float(args.median_connectivity_weight)),
     ]
+    if od_matrix_path is not None:
+        cmd.extend(["--od-matrix-path", str(od_matrix_path)])
     if args.replace_in_intermodal:
         cmd.append("--replace-in-intermodal")
     if args.recompute_accessibility:
@@ -318,7 +411,10 @@ def _run_route_generator(
     env = dict(os.environ)
     env["PYTHONPATH"] = os.pathsep.join([str(repo_root), str(repo_root / "connectpt")])
     env["MPLCONFIGDIR"] = repo_mplconfigdir("mpl-pipeline2-access-first", root=repo_root)
-    _log(f"Running ConnectPT route generator: modality={args.modality}, n_routes={args.n_routes}")
+    _log(
+        f"Running ConnectPT route generator: modality={args.modality}, "
+        f"n_routes={args.n_routes}, runtime={python_path}"
+    )
     subprocess.run(cmd, check=True, cwd=str(repo_root), env=env)
 
     summary_path = city_dir / "connectpt_routes_generator" / str(args.modality) / "summary.json"
@@ -326,6 +422,139 @@ def _run_route_generator(
         raise FileNotFoundError(f"Missing route-generator summary after run: {summary_path}")
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     summary["pipeline_route_length_policy"] = route_len_policy
+    return summary
+
+
+def _build_stop_points_from_connectpt_graph(city_dir: Path, modality: str, crs) -> gpd.GeoDataFrame:
+    graph_path = city_dir / "connectpt_osm" / modality / "graph.pkl"
+    if not graph_path.exists():
+        raise FileNotFoundError(f"Missing ConnectPT graph for modality={modality}: {graph_path}")
+    with graph_path.open("rb") as fh:
+        graph = pickle.load(fh)
+
+    records = []
+    for seq_idx, node_id in enumerate(sorted(graph.nodes())):
+        records.append(
+            {
+                "stop_idx": int(seq_idx),
+                "graph_node_id": int(node_id),
+                "geometry": Point(float(graph.nodes[node_id]["x"]), float(graph.nodes[node_id]["y"])),
+            }
+        )
+    return gpd.GeoDataFrame(records, geometry="geometry", crs=crs)
+
+
+def _map_blocks_to_stop_indices(blocks_gdf: gpd.GeoDataFrame, stop_points: gpd.GeoDataFrame) -> dict[str, int]:
+    work = _normalize_block_id_index(blocks_gdf)
+    points = work[["geometry"]].copy()
+    points["geometry"] = points.geometry.representative_point()
+    points = points[points.geometry.notna() & ~points.geometry.is_empty].copy()
+    if points.empty:
+        return {}
+    if points.crs is not None and stop_points.crs is not None and points.crs != stop_points.crs:
+        points = points.to_crs(stop_points.crs)
+    joined = points.sjoin_nearest(stop_points[["stop_idx", "geometry"]], how="left", distance_col="distance_to_stop")
+    mapping: dict[str, int] = {}
+    for block_id, row in joined.iterrows():
+        if pd.isna(row.get("stop_idx")):
+            continue
+        mapping[str(block_id)] = int(row["stop_idx"])
+    return mapping
+
+
+def _build_service_target_od_from_placement(
+    *,
+    city_dir: Path,
+    services: list[str],
+    modality: str,
+    placement_root_name: str,
+    output_root: Path,
+    service_blocks: dict[str, gpd.GeoDataFrame],
+) -> dict | None:
+    if not services:
+        return None
+    first_blocks = next(iter(service_blocks.values()))
+    stop_points = _build_stop_points_from_connectpt_graph(city_dir, modality, first_blocks.crs)
+    if stop_points.empty:
+        raise ValueError(f"No ConnectPT stops found for modality={modality}")
+
+    od = pd.DataFrame(
+        0.0,
+        index=range(len(stop_points)),
+        columns=range(len(stop_points)),
+        dtype=float,
+    )
+    summary_rows: list[dict] = []
+    total_weight = 0.0
+
+    for service in services:
+        blocks_after = _normalize_block_id_index(service_blocks[service])
+        assignment_links_path = _service_placement_assignment_links_path(city_dir, service, placement_root_name)
+        if not assignment_links_path.exists():
+            _log(f"Placement assignment links are missing for service [{service}]; skipping target OD contribution.")
+            continue
+        assignment_links = pd.read_csv(assignment_links_path)
+        if assignment_links.empty:
+            _log(f"Placement assignment links are empty for service [{service}]; skipping target OD contribution.")
+            continue
+
+        unresolved = _extract_gap_series(blocks_after, "demand_without_after", "demand_without")
+        unresolved.index = unresolved.index.astype(str)
+        stop_by_block = _map_blocks_to_stop_indices(blocks_after, stop_points)
+        client_counts = assignment_links["client_id"].astype(str).value_counts().to_dict()
+
+        service_weight = 0.0
+        used_links = 0
+        skipped_missing_stops = 0
+        skipped_zero_gap = 0
+        for row in assignment_links.itertuples(index=False):
+            client_id = str(getattr(row, "client_id"))
+            facility_id = str(getattr(row, "facility_id"))
+            remaining_gap = float(unresolved.get(client_id, 0.0))
+            if remaining_gap <= 0.0:
+                skipped_zero_gap += 1
+                continue
+            origin_stop = stop_by_block.get(client_id)
+            destination_stop = stop_by_block.get(facility_id)
+            if origin_stop is None or destination_stop is None:
+                skipped_missing_stops += 1
+                continue
+            divisor = max(1, int(client_counts.get(client_id, 1)))
+            weight = remaining_gap / float(divisor)
+            od.loc[origin_stop, destination_stop] += weight
+            service_weight += weight
+            used_links += 1
+
+        total_weight += service_weight
+        summary_rows.append(
+            {
+                "service": service,
+                "assignment_links_path": str(assignment_links_path),
+                "used_links": int(used_links),
+                "skipped_zero_gap": int(skipped_zero_gap),
+                "skipped_missing_stops": int(skipped_missing_stops),
+                "target_weight_total": float(service_weight),
+            }
+        )
+
+    od_dir = output_root / "service_target_od"
+    od_dir.mkdir(parents=True, exist_ok=True)
+    od_path = od_dir / f"{modality}_service_target_od.csv"
+    od.to_csv(od_path)
+    summary = {
+        "placement_root_name": placement_root_name,
+        "modality": modality,
+        "stop_count": int(len(stop_points)),
+        "positive_pairs": int((od.to_numpy() > 0.0).sum()),
+        "target_weight_total": float(total_weight),
+        "files": {
+            "od_matrix_csv": str(od_path),
+        },
+        "services": summary_rows,
+    }
+    summary_path = od_dir / f"{modality}_service_target_od_summary.json"
+    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    summary["files"]["summary_json"] = str(summary_path)
     return summary
 
 
@@ -364,7 +593,7 @@ def _compute_existing_route_stop_stats(city_dir: Path, modality: str) -> dict | 
 
 def _recompute_provision_after_routes(
     *,
-    city_dir: Path,
+    service_blocks: dict[str, gpd.GeoDataFrame],
     services: list[str],
     route_summary: dict,
     output_root: Path,
@@ -375,6 +604,7 @@ def _recompute_provision_after_routes(
         raise ValueError("Route summary does not provide recomputed accessibility matrix path.")
     matrix = pd.read_parquet(Path(matrix_path))
 
+    city_dir = Path(route_summary.get("city_dir", ""))
     boundary_path = city_dir / "analysis_territory" / "buffer.parquet"
     boundary = gpd.read_parquet(boundary_path) if boundary_path.exists() else None
     blocks_ref_path = city_dir / "derived_layers" / "blocks_clipped.parquet"
@@ -383,8 +613,7 @@ def _recompute_provision_after_routes(
     out: dict[str, dict] = {}
 
     for service in services:
-        baseline_path = _service_solver_path(city_dir, service)
-        baseline = _normalize_block_id_index(gpd.read_parquet(baseline_path))
+        baseline = _normalize_block_id_index(service_blocks[service])
         mx = matrix.copy()
         mx.index = mx.index.astype(str)
         mx.columns = mx.columns.astype(str)
@@ -396,13 +625,32 @@ def _recompute_provision_after_routes(
 
         radius = float(pd.to_numeric(baseline_work.get("service_radius_min"), errors="coerce").dropna().iloc[0])
         demand_per_1000 = float(pd.to_numeric(baseline_work.get("service_demand_per_1000"), errors="coerce").dropna().iloc[0])
-        recomputed, links = _run_arctic_lp_provision(
-            blocks_df=baseline_work,
+        reprovision_input = baseline_work[["name", "population", "demand", "geometry"]].copy()
+        capacity_source = "optimized_capacity_total" if "optimized_capacity_total" in baseline_work.columns else "capacity"
+        reprovision_input["capacity"] = pd.to_numeric(baseline_work.get(capacity_source, 0.0), errors="coerce").fillna(0.0)
+        recomputed_raw, links = _run_arctic_lp_provision(
+            blocks_df=gpd.GeoDataFrame(reprovision_input, geometry="geometry", crs=baseline_work.crs),
             accessibility_matrix=sub_mx,
             service=service,
             service_radius_min=radius,
             service_demand_per_1000=demand_per_1000,
         )
+        recomputed = baseline_work.copy()
+        for column in (
+            "demand_within",
+            "demand_without",
+            "capacity_left",
+            "provision",
+            "demand_left",
+            "capacity_within",
+            "capacity_without",
+            "provision_strong",
+            "provision_weak",
+        ):
+            if column in recomputed_raw.columns:
+                values = pd.to_numeric(recomputed_raw[column], errors="coerce").reindex(recomputed.index)
+                recomputed[column] = values
+                recomputed[f"{column}_after_routes"] = values
 
         service_out_dir = output_root / "provision_after_routes" / service
         service_out_dir.mkdir(parents=True, exist_ok=True)
@@ -412,10 +660,10 @@ def _recompute_provision_after_routes(
         recomputed.to_parquet(blocks_after_path)
         links.to_csv(links_after_path, index=False)
 
-        before_access = float(pd.to_numeric(baseline_work.get("demand_without", 0.0), errors="coerce").fillna(0.0).sum())
-        before_capacity = float(pd.to_numeric(baseline_work.get("demand_left", 0.0), errors="coerce").fillna(0.0).sum())
-        after_access = float(pd.to_numeric(recomputed.get("demand_without", 0.0), errors="coerce").fillna(0.0).sum())
-        after_capacity = float(pd.to_numeric(recomputed.get("demand_left", 0.0), errors="coerce").fillna(0.0).sum())
+        before_access = float(_extract_gap_series(baseline_work, "demand_without_after", "demand_without").sum())
+        before_capacity = float(_extract_gap_series(baseline_work, "demand_left_after", "demand_left").sum())
+        after_access = float(_extract_gap_series(recomputed, "demand_without_after_routes", "demand_without").sum())
+        after_capacity = float(_extract_gap_series(recomputed, "demand_left_after_routes", "demand_left").sum())
         demand_total = float(pd.to_numeric(recomputed.get("demand", 0.0), errors="coerce").fillna(0.0).sum())
         summary = {
             "service": service,
@@ -452,7 +700,12 @@ def main() -> None:
     output_root.mkdir(parents=True, exist_ok=True)
 
     _log(f"Starting accessibility-first step: city={city_dir.name}, services={services}")
-    baseline_blocks = _load_baseline_solver_blocks(city_dir, services)
+    baseline_blocks, service_block_paths, resolved_placement_root = _load_solver_blocks(
+        city_dir,
+        services,
+        use_placement_outputs=bool(args.use_placement_outputs),
+        placement_root_name=args.placement_root_name,
+    )
     suffering_baseline = _build_suffering_frame(baseline_blocks)
     baseline_summary = _save_suffering_outputs(
         suffering_baseline,
@@ -471,6 +724,8 @@ def main() -> None:
     route_summary = None
     after_route_summaries: dict[str, dict] | None = None
     after_summary = None
+    service_target_summary = None
+    service_target_od_path = None
     services_for_recompute: list[str] = list(services)
     skipped_services_no_access_problem: list[str] = []
     if args.recompute_provision_only_access_problem_services:
@@ -493,14 +748,56 @@ def main() -> None:
             )
 
     if args.generate_routes:
-        route_summary = _run_route_generator(repo_root=repo_root, city_dir=city_dir, args=args)
-        if (
-            args.recompute_provision
-            and services_for_recompute
+        if args.use_placement_outputs:
+            if resolved_placement_root is None:
+                raise RuntimeError("Placement outputs were requested but no placement root was resolved.")
+            service_target_summary = _build_service_target_od_from_placement(
+                city_dir=city_dir,
+                services=services,
+                modality=str(args.modality),
+                placement_root_name=resolved_placement_root,
+                output_root=output_root,
+                service_blocks=baseline_blocks,
+            )
+            if service_target_summary is not None:
+                service_target_od_path = Path(service_target_summary["files"]["od_matrix_csv"])
+                if float(service_target_summary.get("target_weight_total", 0.0)) <= 0.0:
+                    _log("Service-aware target OD has zero total weight after placement. Route generation is skipped.")
+                    route_summary = {
+                        "skipped": True,
+                        "reason": "zero_service_target_od",
+                        "service_target_od": service_target_summary,
+                    }
+
+        if route_summary is None:
+            route_summary = _run_route_generator(
+                repo_root=repo_root,
+                city_dir=city_dir,
+                args=args,
+                od_matrix_path=service_target_od_path,
+            )
+    elif args.recompute_provision and services_for_recompute:
+        existing_summary_path = (
+            Path(args.route_summary_path).resolve()
+            if args.route_summary_path
+            else _default_route_summary_path(city_dir, str(args.modality))
+        )
+        if not existing_summary_path.exists():
+            raise FileNotFoundError(
+                "Provision recompute requested without route generation, but no existing route summary was found: "
+                f"{existing_summary_path}"
+            )
+        route_summary = json.loads(existing_summary_path.read_text(encoding="utf-8"))
+        _log(f"Using existing ConnectPT route summary for provision recompute: {existing_summary_path}")
+
+    if (
+        args.recompute_provision
+        and services_for_recompute
+        and not route_summary.get("skipped")
             and route_summary.get("recomputed_accessibility", {}).get("matrix_path")
         ):
             after_route_summaries = _recompute_provision_after_routes(
-                city_dir=city_dir,
+                service_blocks=baseline_blocks,
                 services=services_for_recompute,
                 route_summary=route_summary,
                 output_root=output_root,
@@ -531,10 +828,14 @@ def main() -> None:
         "provision_engine": PROVISION_ENGINE_NAME,
         "connectpt_modality": str(args.modality),
         "connectpt_n_routes": int(args.n_routes),
+        "service_block_source": ("placement_after" if args.use_placement_outputs else "baseline_solver_inputs"),
+        "service_block_paths": {service: str(path) for service, path in service_block_paths.items()},
+        "placement_root_name": resolved_placement_root,
         "recompute_provision_only_access_problem_services": bool(args.recompute_provision_only_access_problem_services),
         "services_for_recompute": services_for_recompute,
         "services_skipped_no_access_problem": skipped_services_no_access_problem,
         "baseline": baseline_summary,
+        "service_target_od": service_target_summary,
         "route_generation": route_summary,
         "provision_after_routes": after_route_summaries,
         "after_routes": after_summary,

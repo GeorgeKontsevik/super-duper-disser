@@ -77,6 +77,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir")
     parser.add_argument("--boundary-path")
     parser.add_argument("--weights-path")
+    parser.add_argument(
+        "--od-matrix-path",
+        help=(
+            "Optional external stop-to-stop OD matrix (CSV or parquet). "
+            "When provided, skip gravity OD construction and use this matrix instead."
+        ),
+    )
     parser.add_argument("--n-routes", type=int, default=6)
     parser.add_argument("--min-route-len", type=int, default=2)
     parser.add_argument("--max-route-len", type=int, default=8)
@@ -84,6 +91,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--route-time-weight", type=float, default=0.33)
     parser.add_argument("--median-connectivity-weight", type=float, default=0.33)
     parser.add_argument("--replace-in-intermodal", action="store_true")
+    parser.add_argument(
+        "--replace-existing-modality-routes",
+        action="store_true",
+        help=(
+            "Replace existing routes of the chosen modality in the intermodal graph before "
+            "adding generated routes. Default behavior is additive merge: keep existing routes "
+            "and append generated ones."
+        ),
+    )
     parser.add_argument("--recompute-accessibility", action="store_true")
     return parser.parse_args()
 
@@ -234,6 +250,51 @@ def _compute_od_matrix(blocks: gpd.GeoDataFrame, stops: gpd.GeoDataFrame, graph)
     return get_OD(demand_blocks, stops.copy(), graph.to_directed(), blocks.crs)
 
 
+def _read_od_matrix(path: Path) -> pd.DataFrame:
+    suffix = path.suffix.lower()
+    if suffix == ".parquet":
+        od_matrix = pd.read_parquet(path)
+    else:
+        od_matrix = pd.read_csv(path, index_col=0)
+    if not isinstance(od_matrix, pd.DataFrame):
+        raise TypeError(f"Expected OD matrix dataframe from {path}, got {type(od_matrix)}")
+    return od_matrix
+
+
+def _load_external_od_matrix(path: Path, connectpt_nodes: list[int]) -> pd.DataFrame:
+    od_matrix = _read_od_matrix(path).copy()
+    if od_matrix.empty:
+        raise ValueError(f"External OD matrix is empty: {path}")
+
+    od_matrix.index = od_matrix.index.map(str)
+    od_matrix.columns = od_matrix.columns.map(str)
+    node_labels = [str(node) for node in connectpt_nodes]
+    sequential_labels = [str(idx) for idx in range(len(connectpt_nodes))]
+
+    if set(node_labels).issubset(set(od_matrix.index)) and set(node_labels).issubset(set(od_matrix.columns)):
+        aligned = od_matrix.loc[node_labels, node_labels].copy()
+    elif (
+        len(od_matrix.index) == len(connectpt_nodes)
+        and len(od_matrix.columns) == len(connectpt_nodes)
+        and list(od_matrix.index) == sequential_labels
+        and list(od_matrix.columns) == sequential_labels
+    ):
+        aligned = od_matrix.copy()
+        aligned.index = sequential_labels
+        aligned.columns = sequential_labels
+    else:
+        raise ValueError(
+            "External OD matrix labels do not match ConnectPT stop ids or positional stop order. "
+            f"path={path}"
+        )
+
+    aligned = aligned.apply(pd.to_numeric, errors="coerce").fillna(0.0)
+    aligned = aligned.clip(lower=0.0)
+    aligned.index = range(len(connectpt_nodes))
+    aligned.columns = range(len(connectpt_nodes))
+    return aligned
+
+
 def _extract_metric(metrics: dict, key: str) -> float | None:
     value = metrics.get(key)
     if value is None:
@@ -297,6 +358,7 @@ def _replace_modality_edges_in_intermodal(
     connectpt_stops: gpd.GeoDataFrame,
     routes_tensor: torch.Tensor,
     output_dir: Path,
+    replace_existing_modality_routes: bool = False,
 ) -> dict:
     with (city_dir / "intermodal_graph_iduedu" / "graph.pkl").open("rb") as fh:
         intermodal_graph = pickle.load(fh)
@@ -313,8 +375,9 @@ def _replace_modality_edges_in_intermodal(
         for u, v, key, data in intermodal_graph.edges(keys=True, data=True)
         if str(data.get("type")) == modality
     ]
-    for u, v, key in edges_to_remove:
-        intermodal_graph.remove_edge(u, v, key)
+    if replace_existing_modality_routes:
+        for u, v, key in edges_to_remove:
+            intermodal_graph.remove_edge(u, v, key)
 
     generated_sequences = _extract_connectpt_route_sequences(routes_tensor, connectpt_nodes)
     generated_edge_count = 0
@@ -337,6 +400,7 @@ def _replace_modality_edges_in_intermodal(
                 "length_meter": float(edge_data.get("weight", edge_data.get("length_meter", 0.0)) or 0.0),
                 "time_min": float(edge_data.get("time_min", 0.0) or 0.0),
                 "name": f"Generated {modality} route {route_idx}",
+                "is_generated": True,
                 "geometry": edge_data.get("geometry"),
             }
             intermodal_graph.add_edge(inter_u, inter_v, **attrs)
@@ -367,7 +431,9 @@ def _replace_modality_edges_in_intermodal(
         "graph_path": graph_out_path,
         "mapping_path": mapping_path,
         "generated_edges_path": route_edges_path,
-        "removed_modality_edges": len(edges_to_remove),
+        "merge_mode": ("replace_existing_modality_routes" if replace_existing_modality_routes else "append_to_existing_modality_routes"),
+        "removed_modality_edges": int(len(edges_to_remove) if replace_existing_modality_routes else 0),
+        "existing_modality_edges_before": int(len(edges_to_remove)),
         "generated_modality_edges": generated_edge_count,
         "mapping_distance_max_m": float(pd.to_numeric(mapping["distance_to_intermodal_m"], errors="coerce").max()),
         "mapping_distance_median_m": float(pd.to_numeric(mapping["distance_to_intermodal_m"], errors="coerce").median()),
@@ -501,13 +567,18 @@ def main() -> None:
     boundary = gpd.read_parquet(boundary_path) if boundary_path is not None and boundary_path.exists() else None
     weights_path = _resolve_weights_path(args.weights_path)
     graph = _load_stop_graph(city_dir, modality)
+    external_od_path = Path(args.od_matrix_path).resolve() if args.od_matrix_path else None
 
     _log(
         f"Preparing ConnectPT route-generator inputs: city={city_dir.name}, modality={modality}, blocks={blocks_path.name}"
     )
     blocks = _prepare_blocks_for_demand(blocks_path)
     nodes, node_to_idx, stops = _build_stops_gdf_from_graph(graph, blocks.crs)
-    od_matrix = _compute_od_matrix(blocks, stops, graph)
+    if external_od_path is not None:
+        _log(f"Using external OD matrix: {external_od_path.name}")
+        od_matrix = _load_external_od_matrix(external_od_path, nodes)
+    else:
+        od_matrix = _compute_od_matrix(blocks, stops, graph)
     node_locs = _build_node_locs(graph, nodes)
     street_adj = _build_street_adj(graph, nodes, node_to_idx)
     demand = torch.tensor(od_matrix.reindex(index=range(len(nodes)), columns=range(len(nodes)), fill_value=0.0).to_numpy(), dtype=torch.float32)
@@ -553,6 +624,8 @@ def main() -> None:
         "blocks_source": str(blocks_path),
         "boundary_source": str(boundary_path) if boundary_path is not None else None,
         "weights_path": str(weights_path),
+        "od_source": ("external" if external_od_path is not None else "gravity"),
+        "od_matrix_input_path": (str(external_od_path) if external_od_path is not None else None),
         "graph_node_count": int(len(nodes)),
         "graph_edge_count": int(graph.number_of_edges()),
         "blocks_count": int(len(blocks)),
@@ -594,6 +667,7 @@ def main() -> None:
             connectpt_stops=stops,
             routes_tensor=routes.cpu(),
             output_dir=output_dir,
+            replace_existing_modality_routes=bool(args.replace_existing_modality_routes),
         )
         summary["intermodal_replacement"] = {
             "enabled": True,
@@ -601,6 +675,7 @@ def main() -> None:
         }
         _log(
             f"Intermodal graph updated for modality={modality}: "
+            f"mode={replace_summary['merge_mode']}, "
             f"removed={replace_summary['removed_modality_edges']}, "
             f"added={replace_summary['generated_modality_edges']}"
         )
