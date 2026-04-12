@@ -1,5 +1,28 @@
 # Pipeline 2: Joint Service Placement + ConnectPT
 
+## Главная Команда Сейчас
+
+Если у сервиса гэп только в доступности и placement не нужен, основной быстрый запуск сейчас такой:
+
+```bash
+cd /Users/gk/Code/super-duper-disser
+
+PYTHONPATH=$PWD .venv/bin/python -m aggregated_spatial_pipeline.pipeline.run_pipeline2_accessibility_first \
+  --joint-input-dir /Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/active_19_good_cities_20260412/joint_inputs/bergen_norway \
+  --services polyclinic \
+  --modality bus \
+  --n-routes 1 \
+  --min-route-len 6 \
+  --max-route-len 10
+```
+
+Что делает этот запуск:
+
+- не делает placement;
+- строит `service_target_od` из `pipeline_2/solver_inputs/<service>/provision_links.csv` и текущего `demand_without`;
+- передает этот внешний service-aware target в `ConnectPT`;
+- пересчитывает accessibility и provision после маршрута.
+
 Этот README фиксирует рабочий запуск пайплайна для одного города в режиме:
 
 - доразмещение сервисов через `solver_flp`;
