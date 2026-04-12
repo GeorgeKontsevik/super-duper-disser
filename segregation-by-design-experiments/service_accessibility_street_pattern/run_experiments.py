@@ -350,6 +350,14 @@ def _save_dataframe(df: pd.DataFrame, path: Path) -> None:
     df.to_parquet(path)
 
 
+def _read_dataframe_parquet_or_none(path: Path, *, label: str) -> pd.DataFrame | None:
+    try:
+        return pd.read_parquet(path)
+    except Exception as exc:
+        _warn(f"{label}: failed to read parquet {path.name}; treating cache as invalid ({exc})")
+        return None
+
+
 def _load_blocks(blocks_path: Path) -> gpd.GeoDataFrame:
     blocks = read_geodata(blocks_path).copy()
     if blocks.empty:
@@ -694,20 +702,30 @@ def _compute_accessibility(
         empty_series = pd.Series(np.nan, index=blocks["block_id"].astype(str), dtype=float)
         return pd.DataFrame(), empty_series, access_mask
     if matrix_path.exists() and not no_cache:
-        matrix = pd.read_parquet(matrix_path)
-    elif reuse_matrix_path is not None and reuse_matrix_path.exists():
+        matrix = _read_dataframe_parquet_or_none(
+            matrix_path,
+            label=f"Accessibility matrix cache [{cache_name}]",
+        )
+    else:
+        matrix = None
+    if matrix is None and reuse_matrix_path is not None and reuse_matrix_path.exists():
         _log(
             f"Reusing prepared accessibility matrix: {reuse_matrix_path.name} "
             f"-> {matrix_path.name}"
         )
-        matrix = pd.read_parquet(reuse_matrix_path)
+        matrix = _read_dataframe_parquet_or_none(
+            reuse_matrix_path,
+            label=f"Prepared accessibility matrix reuse [{cache_name}]",
+        )
+        if matrix is None:
+            raise ValueError(f"Prepared accessibility matrix is unreadable: {reuse_matrix_path}")
         _save_dataframe(matrix, matrix_path)
-    elif require_ready_data:
+    elif matrix is None and require_ready_data:
         raise FileNotFoundError(
             f"Missing prepared accessibility matrix: {matrix_path} "
             f"(reuse source: {reuse_matrix_path})"
         )
-    else:
+    elif matrix is None:
         _log(f"Computing accessibility matrix for active blocks: n={len(active)}")
         matrix = calculate_accessibility_matrix(active[["geometry"]].copy(), graph, weight_key="time_min")
         _save_dataframe(matrix, matrix_path)
@@ -782,19 +800,27 @@ def _compute_service_assigned_accessibility(
     reuse_blocks_solver_path = reuse_service_dir / "blocks_solver.parquet" if reuse_service_dir is not None else None
     reuse_links_path = reuse_service_dir / "provision_links.csv" if reuse_service_dir is not None else None
 
+    cached_bundle_ready = False
     if matrix_path.exists() and blocks_solver_path.exists() and links_path.exists() and not no_cache:
-        service_matrix = pd.read_parquet(matrix_path)
-        service_matrix.index = service_matrix.index.astype(str)
-        service_matrix.columns = service_matrix.columns.astype(str)
-        solver_blocks = read_geodata(blocks_solver_path)
-        if "solver_index" in solver_blocks.columns:
-            solver_blocks = solver_blocks.set_index("solver_index")
-        elif "name" in solver_blocks.columns:
-            solver_blocks = solver_blocks.set_index("name")
-        else:
+        service_matrix = _read_dataframe_parquet_or_none(
+            matrix_path,
+            label=f"Service accessibility cache [{service}/{context_label}]",
+        )
+        if service_matrix is not None:
+            service_matrix.index = service_matrix.index.astype(str)
+            service_matrix.columns = service_matrix.columns.astype(str)
+            solver_blocks = read_geodata(blocks_solver_path)
+            if "solver_index" in solver_blocks.columns:
+                solver_blocks = solver_blocks.set_index("solver_index")
+            elif "name" in solver_blocks.columns:
+                solver_blocks = solver_blocks.set_index("name")
+            else:
+                solver_blocks.index = solver_blocks.index.astype(str)
             solver_blocks.index = solver_blocks.index.astype(str)
-        solver_blocks.index = solver_blocks.index.astype(str)
-        links_df = pd.read_csv(links_path)
+            links_df = pd.read_csv(links_path)
+            cached_bundle_ready = True
+    if cached_bundle_ready:
+        pass
     elif (
         reuse_matrix_path is not None
         and reuse_blocks_solver_path is not None
@@ -807,7 +833,12 @@ def _compute_service_assigned_accessibility(
             f"Reusing prepared service accessibility [{service}/{context_label}] "
             f"from {reuse_service_dir.name}"
         )
-        service_matrix = pd.read_parquet(reuse_matrix_path)
+        service_matrix = _read_dataframe_parquet_or_none(
+            reuse_matrix_path,
+            label=f"Prepared service accessibility reuse [{service}/{context_label}]",
+        )
+        if service_matrix is None:
+            raise ValueError(f"Prepared service accessibility matrix is unreadable: {reuse_matrix_path}")
         service_matrix.index = service_matrix.index.astype(str)
         service_matrix.columns = service_matrix.columns.astype(str)
         solver_blocks = read_geodata(reuse_blocks_solver_path)
