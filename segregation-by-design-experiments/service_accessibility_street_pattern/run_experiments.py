@@ -28,13 +28,12 @@ from aggregated_spatial_pipeline.geodata_io import prepare_geodata_for_parquet, 
 from aggregated_spatial_pipeline.pipeline.crosswalks import build_crosswalk
 from aggregated_spatial_pipeline.pipeline.run_pipeline2_prepare_solver_inputs import (
     SERVICE_SPECS,
-    _aggregate_capacity_to_quarters,
     _calc_service_demand,
-    _capacity_from_row,
-    _download_service_raw,
-    _load_solver_flp_optimize,
+    _capacity_from_row as _pipeline2_capacity_from_row,
     _normalize_raw_osm,
+    _plot_service_lp_preview,
     _read_graph_pickle,
+    _run_arctic_lp_provision,
     _service_accessibility_min,
     _service_demand_per_1000,
     _to_points,
@@ -77,6 +76,31 @@ NEAREST_SERVICE_UNREACHABLE_MIN = 120.0
 ensure_repo_mplconfigdir("mpl-sbd-service-accessibility", root=REPO_ROOT)
 
 
+def _capacity_from_row(row: pd.Series, service: str) -> float:
+    return _pipeline2_capacity_from_row(row, service, allow_default_fallback=True)
+
+
+def _download_service_raw(boundary: gpd.GeoDataFrame, service: str) -> gpd.GeoDataFrame:
+    boundary_wgs84 = boundary.to_crs(4326)
+    polygon = boundary_wgs84.union_all()
+    parts: list[gpd.GeoDataFrame] = []
+    for tags in SERVICE_SPECS[service].tags:
+        try:
+            raw = ox.features.features_from_polygon(polygon, tags=tags)
+        except Exception:
+            continue
+        if raw is None or raw.empty:
+            continue
+        if not isinstance(raw, gpd.GeoDataFrame):
+            raw = gpd.GeoDataFrame(raw, geometry="geometry", crs=4326)
+        parts.append(raw)
+    if not parts:
+        return gpd.GeoDataFrame({"geometry": []}, geometry="geometry", crs=boundary_wgs84.crs)
+    merged = pd.concat(parts, axis=0, ignore_index=False)
+    merged = gpd.GeoDataFrame(merged, geometry="geometry", crs=parts[0].crs or boundary_wgs84.crs)
+    return merged
+
+
 @dataclass(frozen=True)
 class CityPaths:
     slug: str
@@ -87,6 +111,10 @@ class CityPaths:
     street_cells_path: Path
     graph_path: Path
     connectpt_dir: Path
+    pipeline2_dir: Path
+    pipeline2_prepared_dir: Path
+    pipeline2_services_raw_dir: Path
+    pipeline2_solver_inputs_dir: Path
 
 
 def _configure_logging() -> None:
@@ -179,6 +207,14 @@ def parse_args() -> argparse.Namespace:
             "Default behavior uses quarters_clipped.parquet."
         ),
     )
+    parser.add_argument(
+        "--require-ready-data",
+        action="store_true",
+        help=(
+            "Use only already prepared city artifacts. "
+            "Do not download, infer, or rebuild intermodal/service inputs from fallback sources."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -186,14 +222,11 @@ def _resolve_city_paths(slug: str, joint_input_root: Path, output_root: Path, *,
     city_dir = (joint_input_root / slug).resolve()
     if not city_dir.exists():
         raise FileNotFoundError(f"City bundle not found: {city_dir}")
-    if use_sm_imputed:
-        blocks_path = city_dir / "derived_layers" / "quarters_sm_imputed.parquet"
-        if not blocks_path.exists():
-            blocks_path = city_dir / "derived_layers" / "quarters_clipped.parquet"
-    else:
-        blocks_path = city_dir / "derived_layers" / "quarters_clipped.parquet"
-        if not blocks_path.exists():
-            blocks_path = city_dir / "derived_layers" / "quarters_sm_imputed.parquet"
+    blocks_path = (
+        city_dir / "derived_layers" / "quarters_sm_imputed.parquet"
+        if use_sm_imputed
+        else city_dir / "derived_layers" / "quarters_clipped.parquet"
+    )
     if not blocks_path.exists():
         raise FileNotFoundError(f"Blocks layer not found for city {slug}: {blocks_path}")
     paths = CityPaths(
@@ -205,6 +238,10 @@ def _resolve_city_paths(slug: str, joint_input_root: Path, output_root: Path, *,
         street_cells_path=city_dir / "street_pattern" / slug / "predicted_cells.geojson",
         graph_path=city_dir / "intermodal_graph_iduedu" / "graph.pkl",
         connectpt_dir=city_dir / "connectpt_osm",
+        pipeline2_dir=city_dir / "pipeline_2",
+        pipeline2_prepared_dir=city_dir / "pipeline_2" / "prepared",
+        pipeline2_services_raw_dir=city_dir / "pipeline_2" / "services_raw",
+        pipeline2_solver_inputs_dir=city_dir / "pipeline_2" / "solver_inputs",
     )
     for check in (paths.boundary_path, paths.street_cells_path, paths.graph_path):
         if not check.exists():
@@ -458,10 +495,12 @@ def _collect_service_metrics(
     blocks: gpd.GeoDataFrame,
     service: str,
     raw_dir: Path,
+    reuse_raw_path: Path | None,
     fallback_raw_path: Path | None,
     fallback_buildings_path: Path | None,
     no_cache: bool,
     local_only: bool,
+    require_ready_data: bool,
 ) -> tuple[gpd.GeoDataFrame, pd.DataFrame]:
     raw_path = raw_dir / f"{service}.parquet"
     empty_raw = gpd.GeoDataFrame({"geometry": []}, geometry="geometry", crs=boundary.to_crs(4326).crs)
@@ -472,6 +511,17 @@ def _collect_service_metrics(
         cached_raw = read_geodata(raw_path)
         if not no_cache or not cached_raw.empty:
             raw = cached_raw
+
+    if raw is None and reuse_raw_path is not None and reuse_raw_path.exists():
+        raw = read_geodata(reuse_raw_path)
+        if raw_path != reuse_raw_path:
+            _save_geodata(raw, raw_path)
+
+    if raw is None and require_ready_data:
+        raise FileNotFoundError(
+            f"Missing prepared raw service layer for [{service}]. "
+            f"Checked experiment cache {raw_path} and prepared source {reuse_raw_path}."
+        )
 
     if raw is None and fallback_raw_path is not None and fallback_raw_path.exists():
         raw = read_geodata(fallback_raw_path)
@@ -632,6 +682,8 @@ def _compute_accessibility(
     prepared_dir: Path,
     no_cache: bool,
     cache_name: str,
+    reuse_matrix_path: Path | None = None,
+    require_ready_data: bool = False,
 ) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
     matrix_path = prepared_dir / cache_name
     access_mask = pd.to_numeric(blocks["population"], errors="coerce").fillna(0.0) > 0.0
@@ -643,6 +695,18 @@ def _compute_accessibility(
         return pd.DataFrame(), empty_series, access_mask
     if matrix_path.exists() and not no_cache:
         matrix = pd.read_parquet(matrix_path)
+    elif reuse_matrix_path is not None and reuse_matrix_path.exists():
+        _log(
+            f"Reusing prepared accessibility matrix: {reuse_matrix_path.name} "
+            f"-> {matrix_path.name}"
+        )
+        matrix = pd.read_parquet(reuse_matrix_path)
+        _save_dataframe(matrix, matrix_path)
+    elif require_ready_data:
+        raise FileNotFoundError(
+            f"Missing prepared accessibility matrix: {matrix_path} "
+            f"(reuse source: {reuse_matrix_path})"
+        )
     else:
         _log(f"Computing accessibility matrix for active blocks: n={len(active)}")
         matrix = calculate_accessibility_matrix(active[["geometry"]].copy(), graph, weight_key="time_min")
@@ -680,6 +744,8 @@ def _compute_service_assigned_accessibility(
     prepared_dir: Path,
     no_cache: bool,
     context_label: str,
+    reuse_service_dir: Path | None = None,
+    require_ready_data: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     metrics = pd.DataFrame(index=blocks.index)
     metrics[f"service_provision_{service}_{context_label}"] = np.nan
@@ -705,146 +771,106 @@ def _compute_service_assigned_accessibility(
         service,
         _service_demand_per_1000(service, argparse.Namespace(demand_per_1000=None)),
     ).astype(float)
+    common_block_ids = pd.Index(blocks.index.astype(str))
 
     service_dir = prepared_dir / "service_accessibility" / context_label / service
     service_dir.mkdir(parents=True, exist_ok=True)
     matrix_path = service_dir / "adj_matrix_time_min.parquet"
     blocks_solver_path = service_dir / "blocks_solver.parquet"
     links_path = service_dir / "provision_links.csv"
+    reuse_matrix_path = reuse_service_dir / "adj_matrix_time_min.parquet" if reuse_service_dir is not None else None
+    reuse_blocks_solver_path = reuse_service_dir / "blocks_solver.parquet" if reuse_service_dir is not None else None
+    reuse_links_path = reuse_service_dir / "provision_links.csv" if reuse_service_dir is not None else None
 
     if matrix_path.exists() and blocks_solver_path.exists() and links_path.exists() and not no_cache:
         service_matrix = pd.read_parquet(matrix_path)
-        solver_blocks = pd.read_parquet(blocks_solver_path).set_index("solver_index")
+        service_matrix.index = service_matrix.index.astype(str)
+        service_matrix.columns = service_matrix.columns.astype(str)
+        solver_blocks = read_geodata(blocks_solver_path)
+        if "solver_index" in solver_blocks.columns:
+            solver_blocks = solver_blocks.set_index("solver_index")
+        elif "name" in solver_blocks.columns:
+            solver_blocks = solver_blocks.set_index("name")
+        else:
+            solver_blocks.index = solver_blocks.index.astype(str)
+        solver_blocks.index = solver_blocks.index.astype(str)
         links_df = pd.read_csv(links_path)
+    elif (
+        reuse_matrix_path is not None
+        and reuse_blocks_solver_path is not None
+        and reuse_links_path is not None
+        and reuse_matrix_path.exists()
+        and reuse_blocks_solver_path.exists()
+        and reuse_links_path.exists()
+    ):
+        _log(
+            f"Reusing prepared service accessibility [{service}/{context_label}] "
+            f"from {reuse_service_dir.name}"
+        )
+        service_matrix = pd.read_parquet(reuse_matrix_path)
+        service_matrix.index = service_matrix.index.astype(str)
+        service_matrix.columns = service_matrix.columns.astype(str)
+        solver_blocks = read_geodata(reuse_blocks_solver_path)
+        if "solver_index" in solver_blocks.columns:
+            solver_blocks = solver_blocks.set_index("solver_index")
+        elif "name" in solver_blocks.columns:
+            solver_blocks = solver_blocks.set_index("name")
+        else:
+            solver_blocks.index = solver_blocks.index.astype(str)
+        solver_blocks.index = solver_blocks.index.astype(str)
+        links_df = pd.read_csv(reuse_links_path)
+        _save_dataframe(service_matrix, matrix_path)
+        prepare_geodata_for_parquet(gpd.GeoDataFrame(solver_blocks, geometry="geometry", crs=blocks.crs)).to_parquet(
+            blocks_solver_path,
+            index=False,
+        )
+        _normalize_provision_links(links_df).to_csv(links_path, index=False)
+    elif require_ready_data:
+        raise FileNotFoundError(
+            f"Missing prepared service accessibility [{service}/{context_label}] "
+            f"under {service_dir} and reuse source {reuse_service_dir}."
+        )
     else:
         service_matrix = calculate_accessibility_matrix(selected[["geometry"]].copy(), graph, weight_key="time_min")
         service_matrix = service_matrix.apply(pd.to_numeric, errors="coerce")
         service_radius_min = _service_accessibility_min(service, argparse.Namespace(service_radius_min=None))
-        optimize_placement = _load_solver_flp_optimize()
-
-        capacity_local = pd.to_numeric(selected["capacity"], errors="coerce").fillna(0.0)
-        demand_local = pd.to_numeric(selected["demand"], errors="coerce").fillna(0.0)
-        supply_ids = capacity_local[capacity_local > 0.0].index.astype(int).tolist()
-        demand_ids = demand_local[demand_local > 0.0].index.astype(int).tolist()
-
-        service_matrix_full = service_matrix.copy()
-        service_matrix_full.index = selected.index.astype(int)
-        service_matrix_full.columns = selected.index.astype(int)
-
-        reachable_demand_ids: list[int] = []
-        unreachable_demand_ids: list[int] = []
-        if supply_ids:
-            for src in demand_ids:
-                costs = pd.to_numeric(service_matrix_full.loc[int(src), supply_ids], errors="coerce")
-                if bool((costs <= float(service_radius_min)).fillna(False).any()):
-                    reachable_demand_ids.append(int(src))
-                else:
-                    unreachable_demand_ids.append(int(src))
-        else:
-            unreachable_demand_ids = demand_ids
-
-        solver_ids = sorted(set(supply_ids).union(reachable_demand_ids))
-        if not solver_ids:
-            return service_matrix, metrics
-
-        solver_selected = selected.loc[solver_ids, ["population", "demand", "capacity"]].copy()
-        solver_df = solver_selected.reset_index(drop=True)
-        solver_matrix = service_matrix_full.loc[solver_ids, solver_ids].copy().reset_index(drop=True)
-        solver_matrix.columns = solver_matrix.index
-
-        optimization = optimize_placement(
-            matrix=solver_matrix,
-            df=solver_df,
-            service_radius=float(service_radius_min),
-            id_matrix=solver_ids,
-            use_genetic=False,
-            demand_column="demand",
-            prefer_existing=False,
-            existing_column="capacity",
-            keep_existing_capacity=True,
-            allow_existing_expansion=True,
-            min_new_capacity=50.0,
-            heartbeat_interval_sec=20.0,
-            verbose=False,
+        service_matrix.index = selected.index.astype(str)
+        service_matrix.columns = selected.index.astype(str)
+        solver_selected = gpd.GeoDataFrame(
+            selected[["geometry", "population", "demand", "capacity"]].copy(),
+            geometry="geometry",
+            crs=blocks.crs,
         )
-
-        demand_by_id = {
-            int(src_id): float(pd.to_numeric(selected.loc[int(src_id), "demand"], errors="coerce"))
-            for src_id in solver_ids
-        }
-        capacity_by_id = {
-            int(solver_ids[idx]): float(cap)
-            for idx, cap in enumerate(optimization["capacities"])
-            if idx < len(solver_ids)
-        }
-        source_targets: dict[int, list[int]] = {}
-        for facility_id, client_ids in optimization["res_id"].items():
-            tgt = int(facility_id)
-            for client_id in client_ids:
-                src = int(client_id)
-                source_targets.setdefault(src, []).append(tgt)
-
-        raw_rows: list[dict[str, float | int]] = []
-        for src, targets in source_targets.items():
-            unique_targets = sorted(set(int(t) for t in targets))
-            if not unique_targets:
-                continue
-            demand_val = max(0.0, float(demand_by_id.get(int(src), 0.0)))
-            if demand_val <= 0.0:
-                continue
-            split = demand_val / float(len(unique_targets))
-            for tgt in unique_targets:
-                raw_rows.append({"source": int(src), "target": int(tgt), "value": float(split)})
-        links_df = pd.DataFrame(raw_rows, columns=["source", "target", "value"])
-
-        if not links_df.empty:
-            demand_by_target = links_df.groupby("target")["value"].sum()
-            scale_by_target = {
-                int(tgt): min(1.0, float(capacity_by_id.get(int(tgt), 0.0)) / float(total))
-                if float(total) > 0.0
-                else 1.0
-                for tgt, total in demand_by_target.items()
-            }
-            links_df["value"] = links_df.apply(
-                lambda row: float(row["value"]) * float(scale_by_target.get(int(row["target"]), 0.0)),
-                axis=1,
-            )
-            links_df = links_df[links_df["value"] > 0.0].copy()
-
-        served_by_source = (
-            links_df.groupby("source")["value"].sum().astype(float)
-            if not links_df.empty
-            else pd.Series(dtype=float)
+        solver_selected["name"] = selected.index.astype(str)
+        solver_blocks, links_df = _run_arctic_lp_provision(
+            blocks_df=solver_selected[["name", "population", "demand", "capacity", "geometry"]].copy(),
+            accessibility_matrix=service_matrix,
+            service=service,
+            service_radius_min=float(service_radius_min),
+            service_demand_per_1000=float(
+                _service_demand_per_1000(service, argparse.Namespace(demand_per_1000=None))
+            ),
         )
-        provision_series = pd.Series(np.nan, index=selected.index.astype(int), dtype=float)
-        if unreachable_demand_ids:
-            provision_series.loc[unreachable_demand_ids] = 0.0
-        for src in provision_series.index:
-            demand_val = max(0.0, float(demand_by_id.get(int(src), 0.0)))
-            if demand_val > 0.0:
-                served = max(0.0, float(served_by_source.get(int(src), 0.0)))
-                provision_series.loc[int(src)] = float(np.clip(served / demand_val, 0.0, 1.0))
-
-        solver_blocks = pd.DataFrame(
-            {
-                "solver_index": selected.index.astype(int),
-                "provision": provision_series.reindex(selected.index.astype(int)).to_numpy(dtype=float),
-            }
+        solver_blocks = solver_blocks.copy()
+        solver_blocks["solver_index"] = solver_blocks.index.astype(str)
+        prepare_geodata_for_parquet(gpd.GeoDataFrame(solver_blocks, geometry="geometry", crs=solver_selected.crs)).to_parquet(
+            blocks_solver_path,
+            index=False,
         )
-        solver_blocks.to_parquet(blocks_solver_path, index=False)
         _save_dataframe(service_matrix, matrix_path)
         _normalize_provision_links(links_df).to_csv(links_path, index=False)
-        solver_blocks = solver_blocks.set_index("solver_index")
+        solver_blocks.index = solver_blocks.index.astype(str)
 
     # Pure accessibility metric (independent from provision/assignment):
     # minimal travel time from each selected block to nearest block that has service capacity.
     service_capacity_selected = pd.to_numeric(capacity.loc[select_mask], errors="coerce").fillna(0.0)
-    service_targets = service_capacity_selected[service_capacity_selected > 0.0].index.astype(int).tolist()
+    service_targets = service_capacity_selected[service_capacity_selected > 0.0].index.astype(str).tolist()
     if service_targets:
         matrix_numeric_for_nearest = service_matrix.apply(pd.to_numeric, errors="coerce")
         try:
             nearest = matrix_numeric_for_nearest[service_targets].min(axis=1, skipna=True)
             nearest = pd.to_numeric(nearest, errors="coerce")
+            nearest.index = nearest.index.astype(str)
             metrics[f"nearest_service_time_{service}_{context_label}"] = common_block_ids.map(nearest)
         except Exception:
             pass
@@ -860,8 +886,7 @@ def _compute_service_assigned_accessibility(
     nearest_vals = nearest_vals.where(~non_residential, np.nan)
     metrics[nearest_col] = nearest_vals
 
-    solver_blocks.index = solver_blocks.index.astype(int)
-    common_block_ids = pd.Index(blocks.index)
+    solver_blocks.index = solver_blocks.index.astype(str)
     provision_map = solver_blocks.get("provision_strong", solver_blocks.get("provision")).astype(float) if not solver_blocks.empty else pd.Series(dtype=float)
     metrics[f"service_provision_{service}_{context_label}"] = common_block_ids.map(provision_map)
 
@@ -877,7 +902,12 @@ def _compute_service_assigned_accessibility(
         return service_matrix, metrics
     links["source"] = pd.to_numeric(links["source"], errors="coerce").astype("Int64")
     links["target"] = pd.to_numeric(links["target"], errors="coerce").astype("Int64")
+    links = links.dropna(subset=["source", "target"]).copy()
+    links["source"] = links["source"].astype(str)
+    links["target"] = links["target"].astype(str)
     matrix_numeric = service_matrix.apply(pd.to_numeric, errors="coerce")
+    matrix_numeric.index = matrix_numeric.index.astype(str)
+    matrix_numeric.columns = matrix_numeric.columns.astype(str)
     links["travel_time_min"] = [
         float(matrix_numeric.at[src, tgt]) if src in matrix_numeric.index and tgt in matrix_numeric.columns else np.nan
         for src, tgt in zip(links["source"], links["target"])
@@ -1437,11 +1467,27 @@ def _response_columns(services: list[str], stop_modalities: list[str]) -> tuple[
     return service_response_cols, stop_response_cols, accessibility_cols
 
 
+def _sanitize_numeric_inf_inplace(frame: pd.DataFrame) -> None:
+    for col in frame.columns:
+        if col == "geometry":
+            continue
+        series = frame[col]
+        if pd.api.types.is_bool_dtype(series):
+            continue
+        if pd.api.types.is_numeric_dtype(series):
+            frame[col] = pd.to_numeric(series, errors="coerce").replace([np.inf, -np.inf], np.nan)
+
+
 def _spearman_table(frame: pd.DataFrame, response_cols: list[str], feature_cols: list[str]) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     for response_col in response_cols:
         for feature_col in feature_cols:
-            subset = frame[[response_col, feature_col]].apply(pd.to_numeric, errors="coerce").dropna()
+            subset = (
+                frame[[response_col, feature_col]]
+                .apply(pd.to_numeric, errors="coerce")
+                .replace([np.inf, -np.inf], np.nan)
+                .dropna()
+            )
             if len(subset) < 3 or subset[response_col].nunique() < 2 or subset[feature_col].nunique() < 2:
                 rho, p_value = np.nan, np.nan
             else:
@@ -1474,7 +1520,7 @@ def _moran_tables(
 
     for response_col in response_cols:
         subset = base[["block_id", response_col, "geometry"]].copy()
-        subset[response_col] = pd.to_numeric(subset[response_col], errors="coerce")
+        subset[response_col] = pd.to_numeric(subset[response_col], errors="coerce").replace([np.inf, -np.inf], np.nan)
         subset = subset.dropna(subset=[response_col]).copy()
         if len(subset) < 4 or subset[response_col].nunique() < 2:
             continue
@@ -1496,8 +1542,8 @@ def _moran_tables(
     for response_col in response_cols:
         for feature_col in feature_cols:
             subset = base[["block_id", response_col, feature_col, "geometry"]].copy()
-            subset[response_col] = pd.to_numeric(subset[response_col], errors="coerce")
-            subset[feature_col] = pd.to_numeric(subset[feature_col], errors="coerce")
+            subset[response_col] = pd.to_numeric(subset[response_col], errors="coerce").replace([np.inf, -np.inf], np.nan)
+            subset[feature_col] = pd.to_numeric(subset[feature_col], errors="coerce").replace([np.inf, -np.inf], np.nan)
             subset = subset.dropna(subset=[response_col, feature_col]).copy()
             if len(subset) < 4 or subset[response_col].nunique() < 2 or subset[feature_col].nunique() < 2:
                 continue
@@ -2464,8 +2510,9 @@ def _city_level_accessibility_correlations(
     feature_cols: list[str],
     accessibility_response_cols: list[str],
 ) -> pd.DataFrame:
+    expected_columns = ["response", "street_pattern_feature", "spearman_rho", "p_value", "n_cities"]
     if frame.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=expected_columns)
     rows: list[dict[str, object]] = []
     for response_col in accessibility_response_cols:
         if response_col not in frame.columns:
@@ -2486,7 +2533,7 @@ def _city_level_accessibility_correlations(
                     "n_cities": int(len(subset)),
                 }
             )
-    return pd.DataFrame(rows)
+    return pd.DataFrame(rows, columns=expected_columns)
 
 
 def _plot_accessibility_between_city_effects(
@@ -3482,6 +3529,7 @@ def _prepare_city_dataset(
     services: list[str],
     no_cache: bool,
     local_only: bool,
+    require_ready_data: bool,
     include_stop_metrics: bool = True,
 ) -> tuple[gpd.GeoDataFrame, dict[str, str | int | float], bool]:
     prepared_dir = paths.output_dir / "prepared"
@@ -3515,6 +3563,7 @@ def _prepare_city_dataset(
                 if col in cached_blocks.columns:
                     cached_blocks[col] = pd.to_numeric(cached_blocks[col], errors="coerce").replace([np.inf, -np.inf], np.nan)
             _log(f"[{paths.slug}] cached accessibility contains inf values; normalized to NaN and reusing cache.")
+        _sanitize_numeric_inf_inplace(cached_blocks)
         assigned_cache_complete = True
         for service in services:
             capacity_col = f"service_capacity_{service}"
@@ -3550,6 +3599,8 @@ def _prepare_city_dataset(
             and assigned_cache_complete
             and stop_cache_complete
         ):
+            if cached_walk_has_inf:
+                _save_geodata(cached_blocks, final_path)
             return cached_blocks, cached_summary, True
         _log(f"[{paths.slug}] cached experiment dataset is incomplete for accessibility or assigned-service metrics, rebuilding prepared dataset.")
 
@@ -3568,10 +3619,12 @@ def _prepare_city_dataset(
             blocks=blocks,
             service=service,
             raw_dir=raw_services_dir,
+            reuse_raw_path=paths.pipeline2_services_raw_dir / f"{service}.parquet",
             fallback_raw_path=paths.city_dir / "pipeline_2" / "services_raw" / f"{service}.parquet",
             fallback_buildings_path=paths.city_dir / "blocksnet_raw_osm" / "buildings.parquet",
             no_cache=no_cache,
             local_only=local_only,
+            require_ready_data=require_ready_data,
         )
         for col in metrics.columns:
             blocks[col] = metrics[col].reindex(blocks.index).fillna(0.0).astype(float)
@@ -3607,6 +3660,8 @@ def _prepare_city_dataset(
         prepared_dir=prepared_dir,
         no_cache=no_cache,
         cache_name="accessibility_matrix_intermodal.parquet",
+        reuse_matrix_path=paths.pipeline2_prepared_dir / "adj_matrix_time_min_union.parquet",
+        require_ready_data=require_ready_data,
     )
     _, access_series_walk, _ = _compute_accessibility(
         blocks=blocks,
@@ -3652,6 +3707,12 @@ def _prepare_city_dataset(
                 prepared_dir=prepared_dir,
                 no_cache=no_cache,
                 context_label=context_label,
+                reuse_service_dir=(
+                    paths.pipeline2_solver_inputs_dir / service
+                    if context_label == "intermodal"
+                    else None
+                ),
+                require_ready_data=bool(require_ready_data and context_label == "intermodal"),
             )
             for col in service_metrics.columns:
                 blocks[col] = service_metrics[col].reindex(blocks.index)
@@ -3667,6 +3728,7 @@ def _prepare_city_dataset(
             }
         service_accessibility_stats[service] = context_stats
 
+    _sanitize_numeric_inf_inplace(blocks)
     _save_geodata(blocks, final_path)
     summary = {
         "city_slug": paths.slug,
@@ -3758,6 +3820,29 @@ def _write_city_outputs(
 
     _plot_dominant_class_map(blocks, boundary, preview_dir / "01_street_pattern_dominant_class.png")
     _plot_accessibility_map(blocks, boundary, preview_dir / "05_accessibility_mean_time_map.png")
+    for service in services:
+        for context_label in ("intermodal", "walk"):
+            solver_blocks_path = (
+                paths.output_dir
+                / "prepared"
+                / "service_accessibility"
+                / context_label
+                / service
+                / "blocks_solver.parquet"
+            )
+            if not solver_blocks_path.exists():
+                continue
+            try:
+                solver_blocks = read_geodata(solver_blocks_path)
+            except Exception:
+                continue
+            _plot_service_lp_preview(
+                solver_blocks,
+                service,
+                preview_dir / f"lp_{service}_provision_unmet_{context_label}.png",
+                blocks_ref=blocks,
+                boundary=boundary,
+            )
     grouped = dominant_summary.set_index("street_pattern_dominant_class")
     _plot_grouped_metric_bars(
         grouped,
@@ -4093,6 +4178,7 @@ def main() -> None:
             services=list(args.services),
             no_cache=bool(args.no_cache),
             local_only=bool(args.local_only),
+            require_ready_data=bool(args.require_ready_data),
             include_stop_metrics=True,
         )
         if not args.cross_city_only:

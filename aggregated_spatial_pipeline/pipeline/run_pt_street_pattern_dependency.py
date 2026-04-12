@@ -49,10 +49,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top-routes", type=int, default=30)
     parser.add_argument("--min-segment-length-m", type=float, default=1.0)
     parser.add_argument(
+        "--street-pattern-cells",
+        default=None,
+        help=(
+            "Optional explicit path to street-pattern predicted_cells.geojson. "
+            "If omitted, path is auto-resolved from --joint-input-dir."
+        ),
+    )
+    parser.add_argument(
         "--subway-stop-buffer-m",
         type=float,
         default=500.0,
         help="Buffer radius around subway stops for separate street-pattern analysis (meters). Set <=0 to disable.",
+    )
+    parser.add_argument(
+        "--require-ready-data",
+        action="store_true",
+        help=(
+            "Use only exact prepared inputs. "
+            "Do not auto-discover fallback street-pattern cell paths when the expected path is missing."
+        ),
     )
     return parser.parse_args()
 
@@ -76,6 +92,42 @@ def _resolve_output_dir(city_dir: Path, args: argparse.Namespace) -> Path:
     if args.output_dir:
         return Path(args.output_dir).resolve()
     return (city_dir / "pt_street_pattern_dependency").resolve()
+
+
+def _resolve_street_pattern_cells_path(city_dir: Path, explicit: str | None, *, require_ready_data: bool = False) -> Path:
+    if explicit:
+        explicit_path = Path(explicit).resolve()
+        if not explicit_path.exists():
+            raise FileNotFoundError(f"Missing explicit street-pattern cells: {explicit_path}")
+        return explicit_path
+
+    expected = city_dir / "street_pattern" / city_dir.name / "predicted_cells.geojson"
+    if expected.exists():
+        return expected
+
+    if require_ready_data:
+        raise FileNotFoundError(f"Missing street-pattern cells: {expected}")
+
+    street_pattern_dir = city_dir / "street_pattern"
+    candidates = sorted(street_pattern_dir.glob("*/predicted_cells.geojson")) if street_pattern_dir.exists() else []
+    if len(candidates) == 1:
+        resolved = candidates[0].resolve()
+        _log(
+            "Street-pattern cells path fallback selected: "
+            f"{resolved} (expected path was missing: {expected})"
+        )
+        return resolved
+    if len(candidates) > 1:
+        candidate_text = ", ".join(str(path.resolve()) for path in candidates)
+        raise FileNotFoundError(
+            "Missing street-pattern cells at expected path "
+            f"{expected}. Found multiple candidates under {street_pattern_dir}: {candidate_text}. "
+            "Pass --street-pattern-cells explicitly."
+        )
+    raise FileNotFoundError(
+        f"Missing street-pattern cells: {expected}. "
+        f"No predicted_cells.geojson found under {street_pattern_dir}."
+    )
 
 
 def _pick_class_column(cells: gpd.GeoDataFrame, explicit: str | None) -> str:
@@ -155,20 +207,10 @@ def _overlay_pt_with_street_pattern(
     *,
     class_col: str,
 ) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame]:
-    cells_work = cells[[class_col, "geometry"]].copy().rename(columns={class_col: "street_pattern_class"})
-    cells_work["street_pattern_class"] = cells_work["street_pattern_class"].astype("string").fillna("unknown")
-    cells_work = cells_work[cells_work.geometry.notna() & ~cells_work.geometry.is_empty].copy()
-    if cells_work.empty:
-        raise ValueError("Street-pattern cells are empty after geometry cleanup.")
-
-    if cells_work.crs is None:
-        cells_work = cells_work.set_crs(4326)
+    cells_local = _prepare_cells_local(cells, class_col=class_col)
     if pt_edges.crs is None:
         pt_edges = pt_edges.set_crs(4326)
-
-    local_crs = cells_work.estimate_utm_crs() or "EPSG:3857"
-    cells_local = cells_work.to_crs(local_crs)
-    pt_local = pt_edges.to_crs(local_crs)
+    pt_local = pt_edges.to_crs(cells_local.crs)
 
     overlay = gpd.overlay(
         pt_local[["edge_id", "type", "route_label", "length_meter", "geometry"]],
@@ -186,6 +228,18 @@ def _overlay_pt_with_street_pattern(
         raise ValueError("PT x street-pattern overlay contains no positive-length intersections.")
 
     return overlay, cells_local
+
+
+def _prepare_cells_local(cells: gpd.GeoDataFrame, *, class_col: str) -> gpd.GeoDataFrame:
+    cells_work = cells[[class_col, "geometry"]].copy().rename(columns={class_col: "street_pattern_class"})
+    cells_work["street_pattern_class"] = cells_work["street_pattern_class"].astype("string").fillna("unknown")
+    cells_work = cells_work[cells_work.geometry.notna() & ~cells_work.geometry.is_empty].copy()
+    if cells_work.empty:
+        raise ValueError("Street-pattern cells are empty after geometry cleanup.")
+    if cells_work.crs is None:
+        cells_work = cells_work.set_crs(4326)
+    local_crs = cells_work.estimate_utm_crs() or "EPSG:3857"
+    return cells_work.to_crs(local_crs)
 
 
 def _compute_dependency_tables(
@@ -452,10 +506,30 @@ def _save_previews(
         for cls in classes
     ]
 
+    roads_plot: gpd.GeoDataFrame | None = None
+    roads_path = city_dir / "derived_layers" / "roads_drive_osmnx.parquet"
+    if roads_path.exists():
+        try:
+            roads_plot = gpd.read_parquet(roads_path)
+            roads_plot = roads_plot[roads_plot.geometry.notna() & ~roads_plot.geometry.is_empty].copy()
+            roads_plot = roads_plot[roads_plot.geometry.geom_type.isin(["LineString", "MultiLineString"])].copy()
+            if (
+                roads_plot.crs is not None
+                and cells_local.crs is not None
+                and str(roads_plot.crs) != str(cells_local.crs)
+            ):
+                roads_plot = roads_plot.to_crs(cells_local.crs)
+            if roads_plot.empty:
+                roads_plot = None
+        except Exception:
+            roads_plot = None
+
     # Preview 1: map overlay
     fig, ax = plt.subplots(figsize=(11, 11))
+    if roads_plot is not None and not roads_plot.empty:
+        roads_plot.plot(ax=ax, color="#000000", linewidth=0.35, alpha=0.55, zorder=1)
     cell_colors = cells_local["street_pattern_class"].astype("string").fillna("unknown").map(class_colors)
-    cells_local.plot(ax=ax, color=cell_colors, alpha=0.35, linewidth=0.2, edgecolor="#6b7280")
+    cells_local.plot(ax=ax, color=cell_colors, alpha=0.35, linewidth=0.2, edgecolor="#6b7280", zorder=2)
 
     color_map = {"bus": "#1d4ed8", "tram": "#059669", "trolleybus": "#d97706", "subway": "#7c3aed"}
     modality_handles: list[Line2D] = []
@@ -463,10 +537,12 @@ def _save_previews(
         part = overlay[overlay["type"] == modality]
         if part.empty:
             continue
-        part.plot(ax=ax, color=color, linewidth=1.2, alpha=0.9, label=modality)
+        part.plot(ax=ax, color=color, linewidth=1.2, alpha=0.9, label=modality, zorder=4)
         modality_handles.append(Line2D([0], [0], color=color, linewidth=2, label=modality))
 
     context_handles: list[Line2D] = []
+    if roads_plot is not None and not roads_plot.empty:
+        context_handles.append(Line2D([0], [0], color="#000000", linewidth=1.6, label="road grid"))
     if subway_buffer_union is not None and not subway_buffer_union.empty:
         buffer_plot = subway_buffer_union
         if (
@@ -475,7 +551,7 @@ def _save_previews(
             and str(buffer_plot.crs) != str(cells_local.crs)
         ):
             buffer_plot = buffer_plot.to_crs(cells_local.crs)
-        buffer_plot.boundary.plot(ax=ax, color="#7f1d1d", linewidth=1.8, alpha=0.95)
+        buffer_plot.boundary.plot(ax=ax, color="#7f1d1d", linewidth=1.8, alpha=0.95, zorder=5)
         if subway_buffer_m is not None and subway_buffer_m > 0:
             label = f"subway {int(round(subway_buffer_m))}m buffer"
         else:
@@ -490,7 +566,7 @@ def _save_previews(
             and str(stops_plot.crs) != str(cells_local.crs)
         ):
             stops_plot = stops_plot.to_crs(cells_local.crs)
-        stops_plot.plot(ax=ax, color="#be185d", markersize=14, alpha=0.9)
+        stops_plot.plot(ax=ax, color="#be185d", markersize=14, alpha=0.9, zorder=6)
         context_handles.append(
             Line2D([0], [0], marker="o", linestyle="None", color="#be185d", markersize=6, label="subway stops")
         )
@@ -515,36 +591,47 @@ def _save_previews(
     plt.close(fig)
     outputs["overlay_map"] = str(map_path)
 
-    # Preview 2: modality shares by street-pattern class
-    pivot = (
-        class_modality.pivot_table(
-            index="street_pattern_class",
-            columns="type",
-            values="pt_length_m",
-            aggfunc="sum",
-            fill_value=0.0,
+    # Preview 2: BUS-only share by street-pattern class across all bus route lengths.
+    bus_overlay = overlay[overlay["type"].astype("string").str.lower() == "bus"].copy()
+    bar_path = preview_dir / "pt_street_pattern_modality_shares.png"
+    if not bus_overlay.empty:
+        bus_class = (
+            bus_overlay.groupby("street_pattern_class", as_index=False)
+            .agg(bus_length_m=("intersect_length_m", "sum"))
+            .sort_values("bus_length_m", ascending=False)
+            .reset_index(drop=True)
         )
-        .sort_index()
-    )
-    if not pivot.empty:
-        shares = pivot.div(pivot.sum(axis=1).replace(0.0, np.nan), axis=0).fillna(0.0)
+        total_bus_length = float(bus_class["bus_length_m"].sum())
+        bus_class["bus_length_share"] = (
+            bus_class["bus_length_m"] / total_bus_length if total_bus_length > 0 else 0.0
+        )
+
         fig, ax = plt.subplots(figsize=(12, 6))
-        shares.plot(
-            kind="bar",
-            stacked=True,
-            ax=ax,
-            color=[color_map.get(col, "#6b7280") for col in shares.columns],
+        ax.bar(
+            bus_class["street_pattern_class"],
+            bus_class["bus_length_share"],
+            color="#1d4ed8",
+            alpha=0.9,
         )
-        ax.set_ylabel("Share within class")
+        ax.set_ylabel("Share of total bus route length")
         ax.set_xlabel("Street pattern class")
         ax.set_ylim(0, 1.0)
-        ax.set_title("PT modality composition by street-pattern class")
-        ax.legend(title="Modality", loc="upper right")
+        ax.set_title("Bus route length share by street-pattern class")
+        ax.tick_params(axis="x", rotation=35)
         fig.tight_layout()
-        bar_path = preview_dir / "pt_street_pattern_modality_shares.png"
         fig.savefig(bar_path, dpi=180)
         plt.close(fig)
         outputs["modality_shares"] = str(bar_path)
+    else:
+        # No bus edges in overlay: keep semantics explicit and remove stale plot if present.
+        try:
+            bar_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        try:
+            (shared_dir / bar_path.name).unlink(missing_ok=True)
+        except Exception:
+            pass
 
     for key, src in list(outputs.items()):
         src_path = Path(src)
@@ -586,13 +673,15 @@ def main() -> None:
 
     edges_path = city_dir / "intermodal_graph_iduedu" / "graph_edges.parquet"
     nodes_path = city_dir / "intermodal_graph_iduedu" / "graph_nodes.parquet"
-    cells_path = city_dir / "street_pattern" / city_dir.name / "predicted_cells.geojson"
+    cells_path = _resolve_street_pattern_cells_path(
+        city_dir,
+        args.street_pattern_cells,
+        require_ready_data=bool(args.require_ready_data),
+    )
     if not edges_path.exists():
         raise FileNotFoundError(f"Missing intermodal edges: {edges_path}")
     if not nodes_path.exists():
         raise FileNotFoundError(f"Missing intermodal nodes: {nodes_path}")
-    if not cells_path.exists():
-        raise FileNotFoundError(f"Missing street-pattern cells: {cells_path}")
 
     _log(f"Loading intermodal PT edges: {edges_path.name}")
     edges = gpd.read_parquet(edges_path)
@@ -618,6 +707,19 @@ def main() -> None:
             pt_edges_out = output_dir / "pt_edges_filtered.parquet"
             pt_edges.to_parquet(pt_edges_out)
             skip_files["pt_edges_filtered"] = str(pt_edges_out)
+
+        # If dependency is skipped (for example, no PT overlay), remove stale PT overlay previews.
+        stale_preview_paths = [
+            output_dir / "preview_png" / "pt_street_pattern_overlay_map.png",
+            output_dir / "preview_png" / "pt_street_pattern_modality_shares.png",
+            city_dir / "preview_png" / "all_together" / "pt_street_pattern_overlay_map.png",
+            city_dir / "preview_png" / "all_together" / "pt_street_pattern_modality_shares.png",
+        ]
+        for stale_path in stale_preview_paths:
+            try:
+                stale_path.unlink(missing_ok=True)
+            except Exception:
+                pass
 
         skip_manifest = {
             "city_dir": str(city_dir),

@@ -141,6 +141,14 @@ def parse_args() -> argparse.Namespace:
             "Default behavior uses quarters_clipped.parquet."
         ),
     )
+    parser.add_argument(
+        "--require-ready-data",
+        action="store_true",
+        help=(
+            "Use only already prepared experiment inputs. "
+            "Do not rebuild block street-pattern features when prepared outputs are missing."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -155,14 +163,11 @@ def _resolve_city_paths(
     city_dir = (joint_input_root / slug).resolve()
     if not city_dir.exists():
         raise FileNotFoundError(f"City bundle not found: {city_dir}")
-    if use_sm_imputed:
-        blocks_path = city_dir / "derived_layers" / "quarters_sm_imputed.parquet"
-        if not blocks_path.exists():
-            blocks_path = city_dir / "derived_layers" / "quarters_clipped.parquet"
-    else:
-        blocks_path = city_dir / "derived_layers" / "quarters_clipped.parquet"
-        if not blocks_path.exists():
-            blocks_path = city_dir / "derived_layers" / "quarters_sm_imputed.parquet"
+    blocks_path = (
+        city_dir / "derived_layers" / "quarters_sm_imputed.parquet"
+        if use_sm_imputed
+        else city_dir / "derived_layers" / "quarters_clipped.parquet"
+    )
     paths = CityPaths(
         slug=slug,
         city_dir=city_dir,
@@ -284,9 +289,16 @@ def _transfer_street_pattern_to_blocks(
     return transferred
 
 
-def _load_blocks_with_street_pattern(paths: CityPaths, prepared_dir: Path, *, no_cache: bool) -> gpd.GeoDataFrame:
+def _load_blocks_with_street_pattern(
+    paths: CityPaths,
+    prepared_dir: Path,
+    *,
+    no_cache: bool,
+    require_ready_data: bool,
+) -> gpd.GeoDataFrame:
     output_path = prepared_dir / "blocks_with_street_pattern.parquet"
     if output_path.exists() and not no_cache:
+        _log(f"[{paths.slug}] reusing prepared blocks_with_street_pattern.parquet")
         return read_geodata(output_path)
 
     if (
@@ -294,10 +306,17 @@ def _load_blocks_with_street_pattern(paths: CityPaths, prepared_dir: Path, *, no
         and paths.service_accessibility_blocks_path.exists()
         and not no_cache
     ):
+        _log(f"[{paths.slug}] reusing block street-pattern features from service_accessibility output")
         blocks = read_geodata(paths.service_accessibility_blocks_path)
         if not blocks.empty and {"block_id", "street_pattern_dominant_class", *MODEL_FEATURE_COLUMNS}.issubset(blocks.columns):
             _save_geodata(blocks, output_path)
             return blocks
+
+    if require_ready_data:
+        raise FileNotFoundError(
+            "Missing prepared block-level street-pattern features. "
+            f"Checked {output_path} and {paths.service_accessibility_blocks_path}."
+        )
 
     blocks = _load_blocks(paths.blocks_path)
     street_cells = _load_street_cells(paths.street_cells_path)
@@ -418,6 +437,7 @@ def _extract_route_variants(
                 if data.get("type") == modality and data.get("route") is not None
             }
         )
+        _log(f"[{city_slug}] route extraction: modality={modality} routes={len(route_labels)}")
         for route in route_labels:
             nodes_in_route: set[int] = set()
             for u, v, _k, data in graph.edges(keys=True, data=True):
@@ -511,6 +531,7 @@ def _extract_route_variants(
             crs=crs,
         )
     variants = gpd.GeoDataFrame(records, geometry="geometry", crs=crs)
+    _log(f"[{city_slug}] route extraction complete: variants={len(variants)}")
     return variants
 
 
@@ -857,7 +878,12 @@ def main() -> None:
             routes_gdf = read_geodata(route_variants_path)
         else:
             _log(f"[{slug}] loading blocks and street-pattern context.")
-            blocks = _load_blocks_with_street_pattern(paths, prepared_dir, no_cache=args.no_cache)
+            blocks = _load_blocks_with_street_pattern(
+                paths,
+                prepared_dir,
+                no_cache=args.no_cache,
+                require_ready_data=bool(args.require_ready_data),
+            )
             graph = _read_graph_pickle(paths.graph_path)
             _log(f"[{slug}] extracting PT route variants from intermodal graph.")
             routes_gdf = _extract_route_variants(graph, slug, list(args.modalities))
