@@ -173,6 +173,21 @@ if [[ "$RUN_PHASE" == "all" || "$RUN_PHASE" == "ptdep" ]]; then
       printf "ptdep\t%s\tfail\tper-city\n" "$city" >> "$REPORT"
     fi
   done
+
+  if (( ${#pt_ok[@]} >= 2 )); then
+    echo
+    echo "=== Phase 3b: pt_street_pattern_dependency (cross-city pooled) ==="
+    if "$PY" "$ROOT/segregation-by-design-experiments/pt_street_pattern_cross_city/run_experiments.py" \
+        --output-root "$PT_OUT" \
+        --cities "${pt_ok[@]}"
+    then
+      printf "ptdep\t_cross_city\tok\tpooled on %s cities\n" "${#pt_ok[@]}" >> "$REPORT"
+    else
+      printf "ptdep\t_cross_city\tfail\tpooled on %s cities\n" "${#pt_ok[@]}" >> "$REPORT"
+    fi
+  else
+    printf "ptdep\t_cross_city\tskip\tneed>=2 succeeded cities (got %s)\n" "${#pt_ok[@]}" >> "$REPORT"
+  fi
 fi
 
 echo

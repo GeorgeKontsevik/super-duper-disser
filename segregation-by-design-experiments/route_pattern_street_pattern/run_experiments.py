@@ -12,6 +12,7 @@ import seaborn as sns
 import geopandas as gpd
 from loguru import logger
 
+from aggregated_spatial_pipeline.geodata_io import read_geodata
 from aggregated_spatial_pipeline.pipeline.run_pt_street_pattern_dependency import (
     _compute_dependency_tables,
     _compute_route_node_counts,
@@ -28,6 +29,9 @@ REPO_ROOT = ROOT
 SUBPROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_OUTPUT_ROOT = SUBPROJECT_ROOT / "outputs"
 DEFAULT_JOINT_INPUT_ROOT = REPO_ROOT / "aggregated_spatial_pipeline" / "outputs" / "joint_inputs"
+DEFAULT_SERVICE_ACCESSIBILITY_ROOT = (
+    REPO_ROOT / "aggregated_spatial_pipeline" / "outputs" / "experiments_active19_20260412" / "service_accessibility_street_pattern"
+)
 DEFAULT_CITIES = ("warsaw_poland", "berlin_germany")
 DEFAULT_MODALITIES = ("bus", "tram", "trolleybus")
 
@@ -42,6 +46,7 @@ class CityPaths:
     edges_path: Path
     nodes_path: Path
     street_cells_path: Path
+    service_accessibility_blocks_path: Path | None
 
 
 def _configure_logging() -> None:
@@ -71,6 +76,11 @@ def parse_args() -> argparse.Namespace:
         "--output-root",
         default=str(DEFAULT_OUTPUT_ROOT),
         help="Output root for this experiment subproject.",
+    )
+    parser.add_argument(
+        "--service-accessibility-root",
+        default=str(DEFAULT_SERVICE_ACCESSIBILITY_ROOT),
+        help="Root with prepared service_accessibility blocks_experiment.parquet for population-vs-route comparison.",
     )
     parser.add_argument(
         "--modalities",
@@ -113,7 +123,12 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _resolve_city_paths(slug: str, joint_input_root: Path, output_root: Path) -> CityPaths:
+def _resolve_city_paths(
+    slug: str,
+    joint_input_root: Path,
+    output_root: Path,
+    service_accessibility_root: Path | None,
+) -> CityPaths:
     city_dir = (joint_input_root / slug).resolve()
     if not city_dir.exists():
         raise FileNotFoundError(f"City bundle not found: {city_dir}")
@@ -124,6 +139,11 @@ def _resolve_city_paths(slug: str, joint_input_root: Path, output_root: Path) ->
         edges_path=city_dir / "intermodal_graph_iduedu" / "graph_edges.parquet",
         nodes_path=city_dir / "intermodal_graph_iduedu" / "graph_nodes.parquet",
         street_cells_path=city_dir / "street_pattern" / slug / "predicted_cells.geojson",
+        service_accessibility_blocks_path=(
+            (service_accessibility_root / slug / "prepared" / "blocks_experiment.parquet").resolve()
+            if service_accessibility_root is not None
+            else None
+        ),
     )
     for check in (paths.edges_path, paths.nodes_path, paths.street_cells_path):
         if not check.exists():
@@ -131,11 +151,15 @@ def _resolve_city_paths(slug: str, joint_input_root: Path, output_root: Path) ->
     return paths
 
 
-def _discover_available_city_slugs(joint_input_root: Path, output_root: Path) -> list[str]:
+def _discover_available_city_slugs(
+    joint_input_root: Path,
+    output_root: Path,
+    service_accessibility_root: Path | None,
+) -> list[str]:
     slugs: list[str] = []
     for city_dir in sorted(p for p in joint_input_root.iterdir() if p.is_dir()):
         try:
-            _resolve_city_paths(city_dir.name, joint_input_root, output_root)
+            _resolve_city_paths(city_dir.name, joint_input_root, output_root, service_accessibility_root)
         except Exception:
             continue
         slugs.append(city_dir.name)
@@ -207,22 +231,139 @@ def _plot_cross_city_heatmap(city_class: pd.DataFrame, output_path: Path) -> Non
     plt.close(fig)
 
 
-def _plot_cross_city_modality_heatmap(city_modality_class: pd.DataFrame, output_path: Path) -> None:
+def _plot_cross_city_modality_canvas(city_modality_class: pd.DataFrame, output_path: Path) -> None:
     if city_modality_class.empty:
         return
-    plot_df = city_modality_class.copy()
-    plot_df["city_modality"] = plot_df["city"].astype(str) + " | " + plot_df["type"].astype(str)
-    pivot = plot_df.pivot(index="city_modality", columns="street_pattern_class", values="route_length_share").fillna(0.0)
+    modalities = sorted(city_modality_class["type"].dropna().astype(str).unique().tolist())
+    if not modalities:
+        return
+    fig, axes = plt.subplots(
+        nrows=1,
+        ncols=len(modalities),
+        figsize=(5.4 * len(modalities), max(5.0, 0.45 * city_modality_class["city"].nunique() + 1.5)),
+        squeeze=False,
+    )
+    axes_flat = axes.ravel()
+    for ax, modality in zip(axes_flat, modalities):
+        modality_df = city_modality_class[city_modality_class["type"].astype(str) == modality].copy()
+        pivot = modality_df.pivot(index="city", columns="street_pattern_class", values="route_length_share").fillna(0.0)
+        if pivot.empty:
+            ax.axis("off")
+            continue
+        sns.heatmap(pivot, cmap="PuBuGn", annot=True, fmt=".2f", linewidths=0.2, ax=ax, vmin=0.0, vmax=1.0, cbar=False)
+        ax.set_title(modality, fontsize=13, fontweight="bold")
+        ax.set_xlabel("")
+        ax.set_ylabel("" if ax is not axes_flat[0] else "city")
+    fig.suptitle("Cross-City Route Length Share By Street Pattern And Modality", fontsize=16, fontweight="bold", y=0.98)
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    save_preview_figure(fig, output_path)
+    plt.close(fig)
+
+
+def _plot_cross_city_population_heatmap(city_population_class: pd.DataFrame, output_path: Path) -> None:
+    if city_population_class.empty:
+        return
+    pivot = city_population_class.pivot(index="city", columns="street_pattern_class", values="population_share").fillna(0.0)
     if pivot.empty:
         return
-    fig, ax = plt.subplots(figsize=(12, max(5.0, 0.28 * len(pivot.index) + 1.5)))
-    sns.heatmap(pivot, cmap="PuBuGn", annot=False, linewidths=0.2, ax=ax, vmin=0.0, vmax=1.0)
-    ax.set_title("Cross-City Route Length Share By City-Modality", fontsize=16, fontweight="bold")
+    fig, ax = plt.subplots(figsize=(12, max(5.0, 0.45 * len(pivot.index) + 1.5)))
+    sns.heatmap(pivot, cmap="Blues", annot=True, fmt=".2f", linewidths=0.3, ax=ax, vmin=0.0, vmax=1.0)
+    ax.set_title("Cross-City Population Share By Street Pattern", fontsize=16, fontweight="bold")
     ax.set_xlabel("")
     ax.set_ylabel("")
     fig.tight_layout()
     save_preview_figure(fig, output_path)
     plt.close(fig)
+
+
+def _plot_cross_city_route_population_gap_heatmap(city_gap: pd.DataFrame, output_path: Path) -> None:
+    if city_gap.empty:
+        return
+    pivot = city_gap.pivot(index="city", columns="street_pattern_class", values="route_minus_population_share").fillna(0.0)
+    if pivot.empty:
+        return
+    vmax = float(np.nanmax(np.abs(pivot.to_numpy(dtype=float)))) if pivot.size else 0.0
+    vmax = max(vmax, 0.05)
+    fig, ax = plt.subplots(figsize=(12, max(5.0, 0.45 * len(pivot.index) + 1.5)))
+    sns.heatmap(pivot, cmap="coolwarm", center=0.0, annot=True, fmt=".2f", linewidths=0.3, ax=ax, vmin=-vmax, vmax=vmax)
+    ax.set_title("Route Share Minus Population Share By Street Pattern", fontsize=16, fontweight="bold")
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    fig.tight_layout()
+    save_preview_figure(fig, output_path)
+    plt.close(fig)
+
+
+def _plot_cross_city_route_population_gap_modality_canvas(city_modality_gap: pd.DataFrame, output_path: Path) -> None:
+    if city_modality_gap.empty:
+        return
+    modalities = sorted(city_modality_gap["type"].dropna().astype(str).unique().tolist())
+    if not modalities:
+        return
+    fig, axes = plt.subplots(
+        nrows=1,
+        ncols=len(modalities),
+        figsize=(5.4 * len(modalities), max(5.0, 0.45 * city_modality_gap["city"].nunique() + 1.5)),
+        squeeze=False,
+    )
+    axes_flat = axes.ravel()
+    global_vmax = 0.05
+    for modality in modalities:
+        modality_df = city_modality_gap[city_modality_gap["type"].astype(str) == modality].copy()
+        pivot = modality_df.pivot(index="city", columns="street_pattern_class", values="route_minus_population_share").fillna(0.0)
+        if pivot.size:
+            global_vmax = max(global_vmax, float(np.nanmax(np.abs(pivot.to_numpy(dtype=float)))))
+    for ax, modality in zip(axes_flat, modalities):
+        modality_df = city_modality_gap[city_modality_gap["type"].astype(str) == modality].copy()
+        pivot = modality_df.pivot(index="city", columns="street_pattern_class", values="route_minus_population_share").fillna(0.0)
+        if pivot.empty:
+            ax.axis("off")
+            continue
+        sns.heatmap(
+            pivot,
+            cmap="coolwarm",
+            center=0.0,
+            annot=True,
+            fmt=".2f",
+            linewidths=0.2,
+            ax=ax,
+            vmin=-global_vmax,
+            vmax=global_vmax,
+            cbar=False,
+        )
+        ax.set_title(modality, fontsize=13, fontweight="bold")
+        ax.set_xlabel("")
+        ax.set_ylabel("" if ax is not axes_flat[0] else "city")
+    fig.suptitle("Route Share Minus Population Share By Street Pattern And Modality", fontsize=16, fontweight="bold", y=0.98)
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    save_preview_figure(fig, output_path)
+    plt.close(fig)
+
+
+def _load_city_population_pattern(paths: CityPaths) -> pd.DataFrame:
+    if paths.service_accessibility_blocks_path is None or not paths.service_accessibility_blocks_path.exists():
+        return pd.DataFrame()
+    blocks = read_geodata(paths.service_accessibility_blocks_path)
+    if blocks.empty:
+        return pd.DataFrame()
+    dominant = blocks.get("street_pattern_dominant_class")
+    population = pd.to_numeric(blocks.get("population"), errors="coerce").fillna(0.0)
+    if dominant is None or float(population.sum()) <= 0.0:
+        return pd.DataFrame()
+    grouped = (
+        pd.DataFrame(
+            {
+                "city": paths.slug,
+                "street_pattern_class": dominant.fillna("unknown").astype(str),
+                "population": population,
+            }
+        )
+        .groupby(["city", "street_pattern_class"], as_index=False)["population"]
+        .sum()
+    )
+    total = float(grouped["population"].sum())
+    grouped["population_share"] = grouped["population"] / total if total > 0 else np.nan
+    return grouped
 
 
 def _city_outputs_exist(paths: CityPaths) -> bool:
@@ -315,6 +456,7 @@ def _write_cross_city_outputs(
     *,
     route_class_frames: list[pd.DataFrame],
     route_stats_frames: list[pd.DataFrame],
+    city_population_frames: list[pd.DataFrame],
 ) -> None:
     cross_dir = output_root / "_cross_city"
     stats_dir = cross_dir / "stats"
@@ -363,17 +505,71 @@ def _write_cross_city_outputs(
         pooled_modality_totals > 0, np.nan
     )
 
+    city_population_class = pd.concat(city_population_frames, ignore_index=True) if city_population_frames else pd.DataFrame()
+    city_route_population_gap = pd.DataFrame()
+    city_modality_population_gap = pd.DataFrame()
+    if not city_population_class.empty:
+        city_route_population_gap = city_class.merge(
+            city_population_class[["city", "street_pattern_class", "population_share"]],
+            on=["city", "street_pattern_class"],
+            how="outer",
+        )
+        city_route_population_gap["route_length_share"] = pd.to_numeric(
+            city_route_population_gap["route_length_share"], errors="coerce"
+        ).fillna(0.0)
+        city_route_population_gap["population_share"] = pd.to_numeric(
+            city_route_population_gap["population_share"], errors="coerce"
+        ).fillna(0.0)
+        city_route_population_gap["route_minus_population_share"] = (
+            city_route_population_gap["route_length_share"] - city_route_population_gap["population_share"]
+        )
+        city_modality_population_gap = city_modality_class.merge(
+            city_population_class[["city", "street_pattern_class", "population_share"]],
+            on=["city", "street_pattern_class"],
+            how="outer",
+        )
+        city_modality_population_gap["route_length_share"] = pd.to_numeric(
+            city_modality_population_gap["route_length_share"], errors="coerce"
+        ).fillna(0.0)
+        city_modality_population_gap["population_share"] = pd.to_numeric(
+            city_modality_population_gap["population_share"], errors="coerce"
+        ).fillna(0.0)
+        city_modality_population_gap["route_minus_population_share"] = (
+            city_modality_population_gap["route_length_share"] - city_modality_population_gap["population_share"]
+        )
+
     route_class_all.to_csv(stats_dir / "route_class_length_all_cities.csv", index=False)
     route_stats_all.to_csv(stats_dir / "route_stats_all_cities.csv", index=False)
     city_class.to_csv(stats_dir / "city_route_length_share_by_class.csv", index=False)
     city_modality_class.to_csv(stats_dir / "city_modality_route_length_share_by_class.csv", index=False)
     pooled_modality_class.to_csv(stats_dir / "pooled_modality_route_length_share_by_class.csv", index=False)
+    if not city_population_class.empty:
+        city_population_class.to_csv(stats_dir / "city_population_share_by_class.csv", index=False)
+    if not city_route_population_gap.empty:
+        city_route_population_gap.to_csv(stats_dir / "city_route_minus_population_share_by_class.csv", index=False)
+    if not city_modality_population_gap.empty:
+        city_modality_population_gap.to_csv(stats_dir / "city_modality_route_minus_population_share_by_class.csv", index=False)
 
     _plot_cross_city_heatmap(city_class, preview_dir / "01_city_class_route_length_share_heatmap.png")
-    _plot_cross_city_modality_heatmap(
+    _plot_cross_city_modality_canvas(
         city_modality_class,
-        preview_dir / "02_city_modality_class_route_length_share_heatmap.png",
+        preview_dir / "02_city_class_route_length_share_by_modality_canvas.png",
     )
+    if not city_population_class.empty:
+        _plot_cross_city_population_heatmap(
+            city_population_class,
+            preview_dir / "03_city_class_population_share_heatmap.png",
+        )
+    if not city_route_population_gap.empty:
+        _plot_cross_city_route_population_gap_heatmap(
+            city_route_population_gap,
+            preview_dir / "04_city_class_route_minus_population_share_heatmap.png",
+        )
+    if not city_modality_population_gap.empty:
+        _plot_cross_city_route_population_gap_modality_canvas(
+            city_modality_population_gap,
+            preview_dir / "05_city_class_route_minus_population_share_by_modality_canvas.png",
+        )
 
     summary = {
         "cities": sorted(route_stats_all["city"].dropna().astype(str).unique().tolist()),
@@ -385,8 +581,30 @@ def _write_cross_city_outputs(
             "city_route_length_share_by_class": str((stats_dir / "city_route_length_share_by_class.csv").resolve()),
             "city_modality_route_length_share_by_class": str((stats_dir / "city_modality_route_length_share_by_class.csv").resolve()),
             "pooled_modality_route_length_share_by_class": str((stats_dir / "pooled_modality_route_length_share_by_class.csv").resolve()),
+            "city_class_route_length_share_by_modality_canvas": str(
+                (preview_dir / "02_city_class_route_length_share_by_modality_canvas.png").resolve()
+            ),
         },
     }
+    if not city_population_class.empty:
+        summary["files"]["city_population_share_by_class"] = str((stats_dir / "city_population_share_by_class.csv").resolve())
+        summary["files"]["city_class_population_share_heatmap"] = str(
+            (preview_dir / "03_city_class_population_share_heatmap.png").resolve()
+        )
+    if not city_route_population_gap.empty:
+        summary["files"]["city_route_minus_population_share_by_class"] = str(
+            (stats_dir / "city_route_minus_population_share_by_class.csv").resolve()
+        )
+        summary["files"]["city_class_route_minus_population_share_heatmap"] = str(
+            (preview_dir / "04_city_class_route_minus_population_share_heatmap.png").resolve()
+        )
+    if not city_modality_population_gap.empty:
+        summary["files"]["city_modality_route_minus_population_share_by_class"] = str(
+            (stats_dir / "city_modality_route_minus_population_share_by_class.csv").resolve()
+        )
+        summary["files"]["city_class_route_minus_population_share_by_modality_canvas"] = str(
+            (preview_dir / "05_city_class_route_minus_population_share_by_modality_canvas.png").resolve()
+        )
     (cross_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
@@ -395,10 +613,11 @@ def main() -> None:
     args = parse_args()
     joint_input_root = Path(args.joint_input_root).resolve()
     output_root = Path(args.output_root).resolve()
+    service_accessibility_root = Path(args.service_accessibility_root).resolve() if args.service_accessibility_root else None
     output_root.mkdir(parents=True, exist_ok=True)
 
     if list(args.cities) == ["all"]:
-        city_list = _discover_available_city_slugs(joint_input_root, output_root)
+        city_list = _discover_available_city_slugs(joint_input_root, output_root, service_accessibility_root)
     else:
         city_list = [str(city) for city in args.cities]
 
@@ -406,9 +625,10 @@ def main() -> None:
 
     route_class_frames: list[pd.DataFrame] = []
     route_stats_frames: list[pd.DataFrame] = []
+    city_population_frames: list[pd.DataFrame] = []
     if not args.cross_city_only:
         for slug in city_list:
-            paths = _resolve_city_paths(slug, joint_input_root, output_root)
+            paths = _resolve_city_paths(slug, joint_input_root, output_root, service_accessibility_root)
             _log(f"[{slug}] extracting route/class length shares from PT overlay.")
             route_class, route_stats = _prepare_city_outputs(
                 paths,
@@ -420,10 +640,13 @@ def main() -> None:
             )
             route_class_frames.append(route_class)
             route_stats_frames.append(route_stats)
+            population_frame = _load_city_population_pattern(paths)
+            if not population_frame.empty:
+                city_population_frames.append(population_frame)
             _log(f"[{slug}] done: {paths.output_dir}")
     else:
         for slug in city_list:
-            paths = _resolve_city_paths(slug, joint_input_root, output_root)
+            paths = _resolve_city_paths(slug, joint_input_root, output_root, service_accessibility_root)
             route_class_path = paths.output_dir / "stats" / "route_class_length.csv"
             route_stats_path = paths.output_dir / "stats" / "route_stats.csv"
             if not route_class_path.exists() or not route_stats_path.exists():
@@ -432,6 +655,9 @@ def main() -> None:
                 )
             route_class_frames.append(pd.read_csv(route_class_path))
             route_stats_frames.append(pd.read_csv(route_stats_path))
+            population_frame = _load_city_population_pattern(paths)
+            if not population_frame.empty:
+                city_population_frames.append(population_frame)
 
     if len(route_stats_frames) >= 2:
         _log(f"Writing cross-city route-pattern outputs for {len(route_stats_frames)} cities.")
@@ -439,6 +665,7 @@ def main() -> None:
             output_root,
             route_class_frames=route_class_frames,
             route_stats_frames=route_stats_frames,
+            city_population_frames=city_population_frames,
         )
 
 
