@@ -159,7 +159,7 @@ def _prepare_status_preview(
 
     fig, ax = plt.subplots(figsize=(12, 10))
     apply_preview_canvas(fig, ax, boundary_plot, title=title)
-    color_map = {"reference": "#2563eb", "target": "#f59e0b", "other": "#d1d5db"}
+    color_map = {"reference": "#0f766e", "target": "#c2410c", "other": "#d1d5db"}
     labels = {"reference": "reference quarters", "target": "target quarters", "other": "other quarters"}
     handles = []
     for status in ("other", "reference", "target"):

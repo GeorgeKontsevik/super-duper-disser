@@ -15,6 +15,14 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
 from aggregated_spatial_pipeline.runtime_config import configure_logger
+from aggregated_spatial_pipeline.visualization import (
+    CANVAS_GRID,
+    CANVAS_INK,
+    LEGEND_EDGE,
+    LEGEND_FACE,
+    get_palette,
+    order_street_pattern_classes,
+)
 
 
 DEFAULT_PT_TYPES = ("bus", "tram", "trolleybus")
@@ -497,13 +505,16 @@ def _save_previews(
     outputs: dict[str, str] = {}
 
     classes = sorted(cells_local["street_pattern_class"].astype("string").fillna("unknown").unique().tolist())
-    class_cmap = plt.get_cmap("tab20", max(len(classes), 1))
-    class_colors: dict[str, tuple[float, float, float, float]] = {
-        cls: class_cmap(i % class_cmap.N) for i, cls in enumerate(classes)
-    }
+    palette = get_palette("street_patterns")
+    palette_order = [name for name in order_street_pattern_classes(classes) if name != "unknown"]
+    classes_ordered = [name for name in palette_order if name in classes]
+    classes_ordered.extend([name for name in classes if name not in classes_ordered and name != "unknown"])
+    if "unknown" in classes:
+        classes_ordered.append("unknown")
+    class_colors: dict[str, str] = {cls: palette.get(cls, palette.get("unknown", "#d1d5db")) for cls in classes_ordered}
     street_handles = [
         Patch(facecolor=class_colors[cls], edgecolor="#6b7280", alpha=0.35, label=cls)
-        for cls in classes
+        for cls in classes_ordered
     ]
 
     roads_plot: gpd.GeoDataFrame | None = None
@@ -526,23 +537,31 @@ def _save_previews(
 
     # Preview 1: map overlay
     fig, ax = plt.subplots(figsize=(11, 11))
+    fig.patch.set_facecolor("#f4f1ea")
+    ax.set_facecolor("#f4f1ea")
     if roads_plot is not None and not roads_plot.empty:
-        roads_plot.plot(ax=ax, color="#000000", linewidth=0.35, alpha=0.55, zorder=1)
-    cell_colors = cells_local["street_pattern_class"].astype("string").fillna("unknown").map(class_colors)
-    cells_local.plot(ax=ax, color=cell_colors, alpha=0.35, linewidth=0.2, edgecolor="#6b7280", zorder=2)
+        roads_plot.plot(ax=ax, color="#94a3b8", linewidth=0.35, alpha=0.5, zorder=1)
+    cell_colors = (
+        cells_local["street_pattern_class"]
+        .astype("string")
+        .fillna("unknown")
+        .map(class_colors)
+        .fillna(palette.get("unknown", "#d1d5db"))
+    )
+    cells_local.plot(ax=ax, color=cell_colors, alpha=0.28, linewidth=0.18, edgecolor=CANVAS_GRID, zorder=2)
 
-    color_map = {"bus": "#1d4ed8", "tram": "#059669", "trolleybus": "#d97706", "subway": "#7c3aed"}
+    color_map = get_palette("pt_modes")
     modality_handles: list[Line2D] = []
     for modality, color in color_map.items():
         part = overlay[overlay["type"] == modality]
         if part.empty:
             continue
-        part.plot(ax=ax, color=color, linewidth=1.2, alpha=0.9, label=modality, zorder=4)
+        part.plot(ax=ax, color=color, linewidth=1.4, alpha=0.9, label=modality, zorder=4)
         modality_handles.append(Line2D([0], [0], color=color, linewidth=2, label=modality))
 
     context_handles: list[Line2D] = []
     if roads_plot is not None and not roads_plot.empty:
-        context_handles.append(Line2D([0], [0], color="#000000", linewidth=1.6, label="road grid"))
+        context_handles.append(Line2D([0], [0], color="#94a3b8", linewidth=1.6, label="road grid"))
     if subway_buffer_union is not None and not subway_buffer_union.empty:
         buffer_plot = subway_buffer_union
         if (
@@ -566,7 +585,7 @@ def _save_previews(
             and str(stops_plot.crs) != str(cells_local.crs)
         ):
             stops_plot = stops_plot.to_crs(cells_local.crs)
-        stops_plot.plot(ax=ax, color="#be185d", markersize=14, alpha=0.9, zorder=6)
+        stops_plot.plot(ax=ax, color="#be185d", markersize=12, alpha=0.85, zorder=6)
         context_handles.append(
             Line2D([0], [0], marker="o", linestyle="None", color="#be185d", markersize=6, label="subway stops")
         )
@@ -578,16 +597,18 @@ def _save_previews(
             title="Street pattern",
             frameon=True,
             fontsize=8,
+            facecolor=LEGEND_FACE,
+            edgecolor=LEGEND_EDGE,
         )
         ax.add_artist(street_legend)
     combined_handles = [*modality_handles, *context_handles]
     if combined_handles:
-        ax.legend(handles=combined_handles, loc="lower left", title="PT context", frameon=True)
-    ax.set_title("PT network overlay on street-pattern classes")
+        ax.legend(handles=combined_handles, loc="lower left", title="PT context", frameon=True, facecolor=LEGEND_FACE, edgecolor=LEGEND_EDGE)
+    ax.set_title("PT network overlay on street-pattern classes", fontsize=15, fontweight="bold", color=CANVAS_INK, pad=12)
     ax.set_axis_off()
     map_path = preview_dir / "pt_street_pattern_overlay_map.png"
     fig.tight_layout()
-    fig.savefig(map_path, dpi=180)
+    fig.savefig(map_path, dpi=220, facecolor=fig.get_facecolor())
     plt.close(fig)
     outputs["overlay_map"] = str(map_path)
 
@@ -607,19 +628,26 @@ def _save_previews(
         )
 
         fig, ax = plt.subplots(figsize=(12, 6))
+        fig.patch.set_facecolor("#f4f1ea")
+        ax.set_facecolor(LEGEND_FACE)
         ax.bar(
             bus_class["street_pattern_class"],
             bus_class["bus_length_share"],
-            color="#1d4ed8",
-            alpha=0.9,
+            color=color_map.get("bus", "#0f766e"),
+            alpha=0.88,
         )
-        ax.set_ylabel("Share of total bus route length")
-        ax.set_xlabel("Street pattern class")
+        ax.set_ylabel("Share Of Total Bus Route Length", color=CANVAS_INK)
+        ax.set_xlabel("Street Pattern Class", color=CANVAS_INK)
         ax.set_ylim(0, 1.0)
-        ax.set_title("Bus route length share by street-pattern class")
+        ax.set_title("Bus route length share by street-pattern class", fontsize=14, fontweight="bold", color=CANVAS_INK, pad=10)
+        ax.grid(axis="y", alpha=0.2, color="#94a3b8")
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.spines["left"].set_color(CANVAS_GRID)
+        ax.spines["bottom"].set_color(CANVAS_GRID)
         ax.tick_params(axis="x", rotation=35)
         fig.tight_layout()
-        fig.savefig(bar_path, dpi=180)
+        fig.savefig(bar_path, dpi=220, facecolor=fig.get_facecolor())
         plt.close(fig)
         outputs["modality_shares"] = str(bar_path)
     else:

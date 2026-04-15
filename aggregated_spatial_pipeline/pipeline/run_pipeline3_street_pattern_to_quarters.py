@@ -15,8 +15,10 @@ from aggregated_spatial_pipeline.geodata_io import prepare_geodata_for_parquet, 
 from aggregated_spatial_pipeline.runtime_config import configure_logger, ensure_repo_mplconfigdir
 from aggregated_spatial_pipeline.visualization import (
     apply_preview_canvas,
+    get_palette,
     legend_bottom,
     normalize_preview_gdf,
+    order_street_pattern_classes,
     save_preview_figure,
 )
 
@@ -35,15 +37,7 @@ CLASS_LABELS = {
     "prob_5": "Broken Grid",
 }
 
-CLASS_COLORS = {
-    "Loops & Lollipops": "#0f766e",
-    "Irregular Grid": "#0ea5e9",
-    "Regular Grid": "#16a34a",
-    "Warped Parallel": "#f97316",
-    "Sparse": "#64748b",
-    "Broken Grid": "#dc2626",
-    "unknown": "#d1d5db",
-}
+CLASS_COLORS = get_palette("street_patterns")
 def _log_name(path: Path | str | None) -> str:
     if path is None:
         return "none"
@@ -252,7 +246,11 @@ def _save_previews(
     fig, ax = plt.subplots(figsize=(12, 12))
     apply_preview_canvas(fig, ax, boundary_plot, title="Street Pattern Dominant Class On Quarters")
     legend_handles = []
-    class_order = [label for label in CLASS_LABELS.values() if label in set(plot_gdf["dominant_class"])]
+    class_order = [
+        label
+        for label in order_street_pattern_classes(set(plot_gdf["dominant_class"].astype(str).tolist()))
+        if label != "unknown"
+    ]
     if "unknown" in set(plot_gdf["dominant_class"]):
         class_order.append("unknown")
     for class_name in class_order:
@@ -283,7 +281,7 @@ def _save_previews(
     fig.subplots_adjust(right=0.76)
     _draw_multivariate_scale_legend(
         fig,
-        class_colors={label: CLASS_COLORS[label] for label in CLASS_LABELS.values()},
+        class_colors={label: CLASS_COLORS[label] for label in order_street_pattern_classes(list(CLASS_LABELS.values())) if label in CLASS_COLORS and label != "unknown"},
         uncovered_color=CLASS_COLORS["unknown"],
         title="Coverage x Anchor Color",
         text_color="#f8fafc",

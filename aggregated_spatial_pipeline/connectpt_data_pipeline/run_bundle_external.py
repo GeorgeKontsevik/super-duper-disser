@@ -13,7 +13,9 @@ from aggregated_spatial_pipeline.geodata_io import read_geodata
 from aggregated_spatial_pipeline.connectpt_data_pipeline.pipeline import build_connectpt_osm_bundle, parse_modalities
 from aggregated_spatial_pipeline.runtime_config import configure_logger
 from aggregated_spatial_pipeline.visualization import (
+    CANVAS_INK,
     apply_preview_canvas,
+    get_palette,
     legend_bottom,
     normalize_preview_gdf,
     save_preview_figure,
@@ -143,6 +145,7 @@ def _save_connectpt_previews(manifest: dict, output_dir: Path) -> dict[str, str]
 
     for modality in manifest.get("modalities", []):
         modality_name = modality.get("modality", "unknown")
+        mode_palette = get_palette("pt_modes")
         files = modality.get("files") or {}
         lines = normalize_preview_gdf(read_geodata(Path(files["lines"])), boundary, target_crs="EPSG:3857") if files.get("lines") else None
         projected_lines = normalize_preview_gdf(read_geodata(Path(files["projected_lines"])), boundary, target_crs="EPSG:3857") if files.get("projected_lines") else None
@@ -155,15 +158,15 @@ def _save_connectpt_previews(manifest: dict, output_dir: Path) -> dict[str, str]
             legend = []
             _apply_theme(fig, ax, f"ConnectPT {modality_name}")
             if lines is not None and not lines.empty:
-                lines.plot(ax=ax, color="#9ca3af", linewidth=0.35, alpha=0.6)
-                legend.append(Line2D([0], [0], color="#9ca3af", linewidth=2, label="roads/lines base"))
+                lines.plot(ax=ax, color="#cbd5e1", linewidth=0.4, alpha=0.6)
+                legend.append(Line2D([0], [0], color="#cbd5e1", linewidth=2, label="roads/lines base"))
             if projected_lines is not None and not projected_lines.empty:
-                projected_lines.plot(ax=ax, color="#0f766e", linewidth=0.85, alpha=0.95)
-                legend.append(Line2D([0], [0], color="#0f766e", linewidth=2, label="routes"))
+                route_color = mode_palette.get(modality_name, "#0f766e")
+                projected_lines.plot(ax=ax, color=route_color, linewidth=1.0, alpha=0.92)
+                legend.append(Line2D([0], [0], color=route_color, linewidth=2, label="routes"))
             if stops is not None and not stops.empty:
-                stops.plot(ax=ax, color="#111827", markersize=7, alpha=0.95)
-                legend.append(Line2D([0], [0], marker="o", color="none", markerfacecolor="#111827", markersize=7, label="stops"))
-            legend.append(Line2D([0], [0], color="#111111", linewidth=2, label="analysis boundary"))
+                stops.plot(ax=ax, color="#be123c", markersize=8, alpha=0.9)
+                legend.append(Line2D([0], [0], marker="o", color="none", markerfacecolor="#be123c", markersize=7, label="stops"))
             legend_bottom(ax, legend)
             _save(fig, f"pt_connectpt_{modality_name}")
 
@@ -172,12 +175,12 @@ def _save_connectpt_previews(manifest: dict, output_dir: Path) -> dict[str, str]
             legend = []
             _apply_theme(fig, ax, f"ConnectPT Graph {modality_name}")
             if graph_edges is not None and not graph_edges.empty:
-                graph_edges.plot(ax=ax, color="#0b7285", linewidth=0.4, alpha=0.7)
-                legend.append(Line2D([0], [0], color="#0b7285", linewidth=2, label="graph edges"))
+                edge_color = mode_palette.get(modality_name, "#0f766e")
+                graph_edges.plot(ax=ax, color=edge_color, linewidth=0.45, alpha=0.72)
+                legend.append(Line2D([0], [0], color=edge_color, linewidth=2, label="graph edges"))
             if graph_nodes is not None and not graph_nodes.empty:
-                graph_nodes.plot(ax=ax, color="#e03131", markersize=6, alpha=0.9)
-                legend.append(Line2D([0], [0], marker="o", color="none", markerfacecolor="#e03131", markersize=7, label="graph nodes"))
-            legend.append(Line2D([0], [0], color="#111111", linewidth=2, label="analysis boundary"))
+                graph_nodes.plot(ax=ax, color=CANVAS_INK, markersize=6, alpha=0.75)
+                legend.append(Line2D([0], [0], marker="o", color="none", markerfacecolor=CANVAS_INK, markersize=7, label="graph nodes"))
             legend_bottom(ax, legend)
             _save(fig, f"pt_connectpt_graph_{modality_name}")
 

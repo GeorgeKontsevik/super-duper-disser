@@ -13,7 +13,9 @@ from aggregated_spatial_pipeline.geodata_io import read_geodata
 from aggregated_spatial_pipeline.intermodal_graph_data_pipeline.pipeline import build_intermodal_graph_bundle
 from aggregated_spatial_pipeline.runtime_config import configure_logger
 from aggregated_spatial_pipeline.visualization import (
+    CANVAS_INK,
     apply_preview_canvas,
+    get_palette,
     legend_bottom,
     normalize_preview_gdf,
     save_preview_figure,
@@ -125,13 +127,7 @@ def _save_intermodal_previews(manifest: dict, output_dir: Path) -> dict[str, str
         fig, ax = plt.subplots(figsize=(12, 12))
         apply_preview_canvas(fig, ax, boundary, title="Intermodal Graph Modes", min_pad=120.0)
         legend_handles = []
-        color_by_mode = {
-            "bus": "#2563eb",
-            "tram": "#d97706",
-            "trolleybus": "#7c3aed",
-            "subway": "#059669",
-            "walk": "#6b7280",
-        }
+        color_by_mode = get_palette("pt_modes")
         mode_column = next(
             (
                 col
@@ -141,17 +137,16 @@ def _save_intermodal_previews(manifest: dict, output_dir: Path) -> dict[str, str
             None,
         )
         if mode_column is None:
-            edges.plot(ax=ax, color="#0b7285", linewidth=0.4, alpha=0.8)
-            legend_handles.append(Line2D([0], [0], color="#0b7285", linewidth=2, label="intermodal edges"))
+            edges.plot(ax=ax, color="#0f766e", linewidth=0.6, alpha=0.85)
+            legend_handles.append(Line2D([0], [0], color="#0f766e", linewidth=2, label="intermodal edges"))
         else:
             for mode_value, part in edges.groupby(edges[mode_column].astype(str).str.lower()):
-                color = color_by_mode.get(mode_value, "#0b7285")
-                part.plot(ax=ax, color=color, linewidth=0.45, alpha=0.85)
+                color = color_by_mode.get(mode_value, "#0f766e")
+                part.plot(ax=ax, color=color, linewidth=0.6, alpha=0.88)
                 legend_handles.append(Line2D([0], [0], color=color, linewidth=2, label=mode_value))
         if nodes is not None and not nodes.empty:
-            nodes.plot(ax=ax, color="#111827", markersize=4, alpha=0.65)
-            legend_handles.append(Line2D([0], [0], marker="o", color="none", markerfacecolor="#111827", markersize=6, label="graph nodes"))
-        legend_handles.append(Line2D([0], [0], color="#111111", linewidth=2, label="analysis boundary"))
+            nodes.plot(ax=ax, color=CANVAS_INK, markersize=5, alpha=0.7)
+            legend_handles.append(Line2D([0], [0], marker="o", color="none", markerfacecolor=CANVAS_INK, markersize=6, label="graph nodes"))
         legend_bottom(ax, legend_handles)
         ax.set_axis_off()
         _save(fig, "pt_intermodal_graph_modes")
@@ -160,14 +155,13 @@ def _save_intermodal_previews(manifest: dict, output_dir: Path) -> dict[str, str
         fig, ax = plt.subplots(figsize=(12, 12))
         apply_preview_canvas(fig, ax, boundary, title="Intermodal Graph Nodes", min_pad=120.0)
         if edges is not None and not edges.empty:
-            edges.plot(ax=ax, color="#cbd5e1", linewidth=0.25, alpha=0.6)
-        nodes.plot(ax=ax, color="#e03131", markersize=7, alpha=0.85)
+            edges.plot(ax=ax, color="#cbd5e1", linewidth=0.3, alpha=0.55)
+        nodes.plot(ax=ax, color="#be123c", markersize=7, alpha=0.82)
         legend_bottom(
             ax,
             [
                 Line2D([0], [0], color="#cbd5e1", linewidth=2, label="intermodal edges"),
-                Line2D([0], [0], marker="o", color="none", markerfacecolor="#e03131", markersize=7, label="graph nodes"),
-                Line2D([0], [0], color="#111111", linewidth=2, label="analysis boundary"),
+                Line2D([0], [0], marker="o", color="none", markerfacecolor="#be123c", markersize=7, label="graph nodes"),
             ],
         )
         ax.set_axis_off()

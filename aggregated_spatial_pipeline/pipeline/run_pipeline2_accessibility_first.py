@@ -25,6 +25,9 @@ from aggregated_spatial_pipeline.pipeline.run_pipeline2_prepare_solver_inputs im
 )
 from aggregated_spatial_pipeline.visualization import apply_preview_canvas, footer_text, normalize_preview_gdf, save_preview_figure
 
+QUARTER_EDGE_COLOR = "#8a8378"
+QUARTER_EDGE_WIDTH = 0.16
+
 
 def _configure_logging() -> None:
     configure_logger("[pipeline_2_accessibility_first]")
@@ -334,8 +337,8 @@ def _plot_service_provision_delta_preview(
         ax=ax,
         column="provision_delta",
         cmap="RdYlGn",
-        linewidth=0.05,
-        edgecolor="#d1d5db",
+        linewidth=QUARTER_EDGE_WIDTH,
+        edgecolor=QUARTER_EDGE_COLOR,
         legend=True,
         vmin=-vmax,
         vmax=vmax,

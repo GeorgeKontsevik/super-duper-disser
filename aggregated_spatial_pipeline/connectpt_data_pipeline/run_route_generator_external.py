@@ -20,7 +20,14 @@ from torch_geometric.loader import DataLoader
 
 from aggregated_spatial_pipeline.geodata_io import prepare_geodata_for_parquet
 from aggregated_spatial_pipeline.runtime_config import configure_logger, repo_mplconfigdir
-from aggregated_spatial_pipeline.visualization import apply_preview_canvas, normalize_preview_gdf, save_preview_figure
+from aggregated_spatial_pipeline.visualization import (
+    footer_text,
+    get_palette,
+    legend_bottom,
+    apply_preview_canvas,
+    normalize_preview_gdf,
+    save_preview_figure,
+)
 from aggregated_spatial_pipeline.pipeline.run_pipeline2_prepare_solver_inputs import _plot_accessibility_previews
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -497,6 +504,8 @@ def _save_route_preview(
     out_path: Path,
     draw_network: bool = True,
 ) -> None:
+    from matplotlib.lines import Line2D
+
     boundary_plot = normalize_preview_gdf(boundary, target_crs="EPSG:3857")
     graph_crs = graph.graph.get("crs") or "EPSG:4326"
     if boundary_plot is None or boundary_plot.empty:
@@ -522,17 +531,20 @@ def _save_route_preview(
                 edge_geoms.append(geom)
         if edge_geoms:
             gpd.GeoSeries(edge_geoms, crs=graph_crs).pipe(lambda s: s.to_crs("EPSG:3857") if getattr(s, "crs", None) else s).plot(
-                ax=ax, color="#9aa0a6", linewidth=1.2, alpha=0.45, zorder=1
+                ax=ax, color="#cbd5e1", linewidth=0.8, alpha=0.55, zorder=1
             )
 
         node_points = [Point(float(graph.nodes[n]["x"]), float(graph.nodes[n]["y"])) for n in sorted(graph.nodes())]
         gpd.GeoSeries(node_points, crs=graph_crs).pipe(lambda s: s.to_crs("EPSG:3857") if getattr(s, "crs", None) else s).plot(
-            ax=ax, color="#495057", markersize=18, alpha=0.9, zorder=2
+            ax=ax, color="#64748b", markersize=12, alpha=0.45, zorder=2
         )
 
-    palette = ["#e03131", "#1971c2", "#2f9e44", "#f08c00", "#7048e8", "#c2255c", "#0b7285", "#5c940d"]
+    route_palette = get_palette("route_generator")
+    palette = [route_palette[f"route_{idx}"] for idx in range(1, 9)]
+    legend_handles: list[Line2D] = []
     for idx, route in enumerate(_route_sequences(routes_tensor)):
         color = palette[idx % len(palette)]
+        legend_handles.append(Line2D([0], [0], color=color, linewidth=2.4, label=f"route {idx + 1}"))
         for u, v in zip(route[:-1], route[1:]):
             if graph.has_edge(u, v):
                 geom = graph.get_edge_data(u, v).get("geometry")
@@ -542,17 +554,17 @@ def _save_route_preview(
                     )
                     route_geoms_3857.extend(list(geom_3857))
                     geom_3857.plot(
-                        ax=ax, color=color, linewidth=3.6, alpha=0.95, zorder=4
+                        ax=ax, color=color, linewidth=3.0, alpha=0.92, zorder=4
                     )
         route_points = gpd.GeoSeries(
             [Point(float(graph.nodes[n]["x"]), float(graph.nodes[n]["y"])) for n in route],
             crs=graph_crs,
         ).to_crs("EPSG:3857")
         route_point_clouds_3857.append(route_points)
-        ax.scatter(route_points.x, route_points.y, s=24, color=color, zorder=5)
+        ax.scatter(route_points.x, route_points.y, s=18, color=color, alpha=0.9, zorder=5)
         if len(route_points) > 0:
-            ax.scatter([route_points.x.iloc[0]], [route_points.y.iloc[0]], s=120, color="#16a34a", edgecolors="white", linewidths=1.2, zorder=6)
-            ax.scatter([route_points.x.iloc[-1]], [route_points.y.iloc[-1]], s=120, color="#dc2626", edgecolors="white", linewidths=1.2, zorder=6)
+            ax.scatter([route_points.x.iloc[0]], [route_points.y.iloc[0]], s=90, color=route_palette["start"], edgecolors="white", linewidths=1.0, zorder=6)
+            ax.scatter([route_points.x.iloc[-1]], [route_points.y.iloc[-1]], s=90, color=route_palette["end"], edgecolors="white", linewidths=1.0, zorder=6)
 
     if (not draw_network) and (route_geoms_3857 or route_point_clouds_3857):
         bounds_sources = []
@@ -570,15 +582,21 @@ def _save_route_preview(
             ax.set_xlim(minx - pad_x, maxx + pad_x)
             ax.set_ylim(miny - pad_y, maxy + pad_y)
 
-    title = (
-        f"ConnectPT Route Generator ({summary['modality']})\n"
-        f"routes={summary['route_count']} | cost={summary['cost']:.3f} | "
-        f"ATT={summary['att']:.3f} | unserved={summary['unserved_demand_pct']:.2f}%"
+    ax.set_title(f"ConnectPT route generator ({summary['modality']})", fontsize=15, fontweight="bold", color="#1f2937", pad=12)
+    if legend_handles:
+        legend_handles.extend(
+            [
+                Line2D([0], [0], marker="o", color="none", markerfacecolor=route_palette["start"], markeredgecolor="white", markersize=7, label="route start"),
+                Line2D([0], [0], marker="o", color="none", markerfacecolor=route_palette["end"], markeredgecolor="white", markersize=7, label="route end"),
+            ]
+        )
+        legend_bottom(ax, legend_handles, max_cols=4, fontsize=8)
+    footer_text(
+        fig,
+        [f"routes={summary['route_count']} | cost={summary['cost']:.3f} | ATT={summary['att']:.3f} | unserved={summary['unserved_demand_pct']:.2f}%"],
     )
-    ax.set_title(title)
     ax.set_axis_off()
     ax.set_aspect("equal")
-    fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     save_preview_figure(fig, out_path)
     plt.close(fig)

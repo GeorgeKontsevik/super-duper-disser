@@ -2021,8 +2021,8 @@ def _save_collection_previews(
             label = plot_style.pop("label", None)
             geom_types = set(gdf.geom_type.astype(str))
             if any("Polygon" in geom for geom in geom_types):
-                plot_style.setdefault("edgecolor", "#d1d5db")
-                plot_style.setdefault("linewidth", 0.05)
+                plot_style.setdefault("edgecolor", "#8a8378")
+                plot_style.setdefault("linewidth", 0.16)
             gdf.plot(ax=ax, **plot_style)
             if label:
                 if any("Point" in g for g in geom_types):
@@ -2062,8 +2062,8 @@ def _save_collection_previews(
             style["markersize"] = markersize
         else:
             if "Polygon" in geom_type:
-                style["linewidth"] = 0.05
-                style["edgecolor"] = "#d1d5db"
+                style["linewidth"] = 0.16
+                style["edgecolor"] = "#8a8378"
                 style["alpha"] = 0.92
             else:
                 style["linewidth"] = linewidth
@@ -2116,7 +2116,7 @@ def _save_collection_previews(
         fig, ax = plt.subplots(figsize=(12, 12))
         legend_handles = []
         for gdf, color, label in normalized_valid:
-            gdf.plot(ax=ax, color=color, alpha=0.92, linewidth=0.05, edgecolor="#d1d5db")
+            gdf.plot(ax=ax, color=color, alpha=0.92, linewidth=0.16, edgecolor="#8a8378")
             legend_handles.append(Patch(facecolor=color, edgecolor="none", label=label))
         if buffer_norm is not None and not buffer_norm.empty:
             _apply_preview_theme(fig, ax, buffer_norm, title=title)
@@ -2202,7 +2202,7 @@ def _save_collection_previews(
         prep_png = _plot(
             _preview_path("overview_prepared_blocks_and_street_grid"),
             layers=[
-                (active_blocks_gdf, {"color": "#93c5fd", "alpha": 0.45, "linewidth": 0.1, "label": "blocks (accessibility set)"}),
+                (active_blocks_gdf, {"color": "#86efac", "alpha": 0.45, "linewidth": 0.1, "label": "blocks (accessibility set)"}),
                 (street_grid_gdf, {"color": "#ef4444", "alpha": 0.25, "linewidth": 0.1, "label": "street grid"}),
                 (blocks_gdf, {"facecolor": "none", "edgecolor": "#1f2937", "linewidth": 0.2, "alpha": 0.7, "label": "blocks"}),
                 (buffer_gdf, {"facecolor": "none", "edgecolor": "#111111", "linewidth": 1.1, "label": "analysis buffer"}),
@@ -2266,7 +2266,7 @@ def _save_collection_previews(
                 else:
                     mode_values = edges_plot[mode_col].astype("string").fillna("unknown")
                     top_modes = mode_values.value_counts().head(8).index.tolist()
-                    palette = ["#0f766e", "#0ea5e9", "#8b5cf6", "#f97316", "#16a34a", "#dc2626", "#334155", "#eab308"]
+                    palette = ["#0f766e", "#a16207", "#8b5cf6", "#f97316", "#16a34a", "#dc2626", "#334155", "#eab308"]
                     for idx, mode_name in enumerate(top_modes):
                         color = palette[idx % len(palette)]
                         part = edges_plot[mode_values == mode_name]
@@ -2320,11 +2320,11 @@ def _save_collection_previews(
         service_order = ["health", "post", "culture", "port", "airport", "marina"]
         service_colors = {
             "health": "#dc2626",
-            "post": "#2563eb",
+            "post": "#a16207",
             "culture": "#7c3aed",
             "port": "#0f766e",
             "airport": "#d97706",
-            "marina": "#0891b2",
+            "marina": "#0f766e",
         }
         service_layers: list[tuple[str, gpd.GeoDataFrame, str]] = []
         for service_name in service_order:
@@ -2411,7 +2411,7 @@ def _save_collection_previews(
                 legend_handles.append(Line2D([0], [0], color="#9ca3af", linewidth=2, label="roads"))
             classes = street_plot["top1_class_name"].astype("string").fillna("unknown")
             class_order = [v for v in classes.value_counts().index.tolist() if v][:8]
-            palette = ["#0f766e", "#0ea5e9", "#8b5cf6", "#f97316", "#16a34a", "#dc2626", "#334155", "#eab308"]
+            palette = ["#0f766e", "#a16207", "#8b5cf6", "#f97316", "#16a34a", "#dc2626", "#334155", "#eab308"]
             for idx, class_name in enumerate(class_order):
                 color = palette[idx % len(palette)]
                 part = street_plot[classes == class_name]
@@ -2492,7 +2492,7 @@ def _save_collection_previews(
                     else:
                         values = proj[route_col].astype("string").fillna("unknown")
                         top_values = values.value_counts().head(6).index.tolist()
-                        palette = ["#0f766e", "#0ea5e9", "#8b5cf6", "#f97316", "#16a34a", "#dc2626", "#334155"]
+                        palette = ["#0f766e", "#a16207", "#8b5cf6", "#f97316", "#16a34a", "#dc2626", "#334155"]
                         for idx, value in enumerate(top_values):
                             color = palette[idx % len(palette)]
                             part = proj[values == value]
@@ -2545,7 +2545,7 @@ def _save_collection_previews(
     if _should_render("blocks"):
         for item in [
             _single_layer("blocksnet_blocks", blocks_gdf, color="#334155", linewidth=0.2, alpha=0.75, title="BlocksNet Blocks"),
-            _single_layer("blocks_clipped", active_blocks_gdf, color="#2563eb", linewidth=0.15, alpha=0.55, title="Blocks Used For Accessibility"),
+            _single_layer("blocks_clipped", active_blocks_gdf, color="#0f766e", linewidth=0.15, alpha=0.55, title="Blocks Used For Accessibility"),
         ]:
             _remember_preview(item, item.stem if item is not None else "")
 
@@ -2576,7 +2576,7 @@ def _save_collection_previews(
                 ),
                 (
                     sm_imputed_gdf[pd.to_numeric(sm_imputed_gdf.get("sm_imputation_target"), errors="coerce").fillna(0) < 0.5],
-                    "#93c5fd",
+                    "#86efac",
                     "existing built form",
                 ),
             ],
@@ -2813,7 +2813,7 @@ def _save_collection_previews(
                     groups=[
                         (floor_base[known_storey_non_living], "#111111", "non-living with known storey"),
                         (floor_base[known_storey_living_predicted], "#f59e0b", "living with model-predicted storey"),
-                        (floor_base[known_storey_living_original], "#0ea5e9", "living with known storey"),
+                        (floor_base[known_storey_living_original], "#a16207", "living with known storey"),
                         (floor_base[missing_storey_non_living], "#a3a3a3", "non-living (storey skipped)"),
                         (floor_base[missing_storey_living], "#dc2626", "missing living"),
                         (floor_base[missing_storey_unknown], "#6b7280", "missing / unknown living"),

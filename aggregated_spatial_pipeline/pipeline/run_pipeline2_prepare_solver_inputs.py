@@ -25,8 +25,11 @@ from aggregated_spatial_pipeline.runtime_config import configure_logger, ensure_
 from aggregated_spatial_pipeline.visualization import (
     apply_preview_canvas,
     footer_text,
+    get_palette,
     legend_bottom,
+    load_city_water_layer,
     normalize_preview_gdf,
+    plot_water_layer,
     save_preview_figure,
 )
 
@@ -93,6 +96,9 @@ DEFAULT_DEMAND_PER_1000_BY_SERVICE = {
     "school": 120.0,
     "kindergarten": 120.0,
 }
+
+QUARTER_EDGE_COLOR = "#8a8378"
+QUARTER_EDGE_WIDTH = 0.16
 
 
 def parse_args() -> argparse.Namespace:
@@ -824,6 +830,8 @@ def _plot_services_raw_overview(
     out_path: Path,
     *,
     boundary: gpd.GeoDataFrame | None = None,
+    blocks_underlay: gpd.GeoDataFrame | None = None,
+    water_layer: gpd.GeoDataFrame | None = None,
 ) -> str | None:
     import matplotlib
 
@@ -836,14 +844,26 @@ def _plot_services_raw_overview(
 
     service_colors = {
         "hospital": "#dc2626",
-        "polyclinic": "#2563eb",
+        "polyclinic": "#0f766e",
         "school": "#16a34a",
-        "kindergarten": "#f59e0b",
+        "kindergarten": "#c2410c",
     }
     boundary_plot = normalize_preview_gdf(boundary, target_crs="EPSG:3857")
+    blocks_plot = normalize_preview_gdf(blocks_underlay, boundary_plot, target_crs="EPSG:3857")
     fig, ax = plt.subplots(figsize=(12, 10))
     apply_preview_canvas(fig, ax, boundary_plot, title="Pipeline_2 Raw Services (all categories)")
     legend_handles: list[Line2D] = []
+    plot_water_layer(ax, water_layer, boundary_layer=boundary_plot, polygon_zorder=0, line_zorder=1)
+
+    if blocks_plot is not None and not blocks_plot.empty:
+        blocks_plot.plot(
+            ax=ax,
+            color="#d9dde3",
+            linewidth=0.24,
+            edgecolor="#8e99a8",
+            alpha=1.0,
+            zorder=1,
+        )
 
     for service in SUPPORTED_SERVICES:
         raw = raw_service_points.get(service)
@@ -930,6 +950,7 @@ def _plot_accessibility_previews(
     *,
     boundary: gpd.GeoDataFrame | None = None,
     use_cache: bool = True,
+    water_layer: gpd.GeoDataFrame | None = None,
 ) -> dict[str, str]:
     import matplotlib
 
@@ -972,11 +993,12 @@ def _plot_accessibility_previews(
         res_plot = units_plot[units_plot["is_residential"]].copy()
         fig, ax = plt.subplots(figsize=(12, 10))
         apply_preview_canvas(fig, ax, boundary_plot)
+        plot_water_layer(ax, water_layer, boundary_layer=boundary_plot, polygon_zorder=0, line_zorder=1)
         base_plot.plot(
             ax=ax,
             color="#f3f4f6",
-            linewidth=0.05,
-            edgecolor="#d1d5db",
+            linewidth=QUARTER_EDGE_WIDTH,
+            edgecolor=QUARTER_EDGE_COLOR,
             alpha=0.95,
             zorder=2,
         )
@@ -985,8 +1007,8 @@ def _plot_accessibility_previews(
                 ax=ax,
                 column="access_time_mean_min",
                 cmap="RdYlGn_r",
-                linewidth=0.05,
-                edgecolor="#d1d5db",
+                linewidth=QUARTER_EDGE_WIDTH,
+                edgecolor=QUARTER_EDGE_COLOR,
                 legend=True,
                 legend_kwds={"label": "mean travel time (min), higher = worse"},
                 missing_kwds={"color": "#9ca3af", "label": "residential with no path"},
@@ -1018,6 +1040,7 @@ def _plot_block_selection_status(
     label_map: dict[str, str],
     footer_lines: list[str] | None = None,
     boundary: gpd.GeoDataFrame | None = None,
+    water_layer: gpd.GeoDataFrame | None = None,
 ) -> str | None:
     import matplotlib
 
@@ -1037,6 +1060,7 @@ def _plot_block_selection_status(
 
     fig, ax = plt.subplots(figsize=(12, 10))
     apply_preview_canvas(fig, ax, boundary_plot, title=title)
+    plot_water_layer(ax, water_layer, boundary_layer=boundary_plot, polygon_zorder=0, line_zorder=1)
 
     statuses = gdf[status_column].astype("string").fillna("unknown")
     legend_handles = []
@@ -1044,7 +1068,7 @@ def _plot_block_selection_status(
         part = gdf[statuses == status]
         if part.empty:
             continue
-        part.plot(ax=ax, color=color, linewidth=0.05, edgecolor="#d1d5db", alpha=0.92, zorder=2)
+        part.plot(ax=ax, color=color, linewidth=QUARTER_EDGE_WIDTH, edgecolor=QUARTER_EDGE_COLOR, alpha=0.92, zorder=2)
         legend_handles.append(Patch(facecolor=color, edgecolor="none", label=label_map.get(status, status)))
     if legend_handles:
         legend_bottom(ax, legend_handles, max_cols=4, fontsize=10)
@@ -1082,6 +1106,7 @@ def _plot_service_lp_preview(
     *,
     blocks_ref: gpd.GeoDataFrame | None = None,
     boundary: gpd.GeoDataFrame | None = None,
+    water_layer: gpd.GeoDataFrame | None = None,
 ) -> str | None:
     import matplotlib
 
@@ -1120,11 +1145,11 @@ def _plot_service_lp_preview(
     gdf.loc[provision.isna(), "gap_type"] = "missing_data"
 
     color_map = {
-        "no_gap": "#16a34a",
-        "capacity_gap": "#dc2626",
-        "accessibility_gap": "#2563eb",
-        "both_gaps": "#a21caf",
-        "missing_data": "#9ca3af",
+        "no_gap": "#7fc8a9",
+        "capacity_gap": "#d66a5e",
+        "accessibility_gap": "#e78b3c",
+        "both_gaps": "#8b5fbf",
+        "missing_data": "#b8bec7",
     }
     label_map = {
         "no_gap": "no unmet demand",
@@ -1138,12 +1163,13 @@ def _plot_service_lp_preview(
         2,
         1,
         figsize=(12, 12),
-        gridspec_kw={"height_ratios": [5, 1.7], "hspace": 0.18},
+        gridspec_kw={"height_ratios": [5.2, 1.35], "hspace": 0.14},
     )
     ax = axes[0]
     hist_ax = axes[1]
     apply_preview_canvas(fig, ax, boundary_plot)
-    hist_ax.set_facecolor("#f7f0dd")
+    plot_water_layer(ax, water_layer, boundary_layer=boundary_plot, polygon_zorder=0, line_zorder=1)
+    hist_ax.set_facecolor("#fffdf8")
     legend_handles = []
     for status in status_order:
         part = gdf[gdf["gap_type"] == status]
@@ -1152,42 +1178,43 @@ def _plot_service_lp_preview(
         part.plot(
             ax=ax,
             color=color_map[status],
-            linewidth=0.05,
-            edgecolor="#d1d5db",
-            alpha=0.9,
+            linewidth=QUARTER_EDGE_WIDTH,
+            edgecolor=QUARTER_EDGE_COLOR,
+            alpha=0.88,
             zorder=2,
         )
         legend_handles.append(Patch(facecolor=color_map[status], edgecolor="none", label=label_map[status]))
     if legend_handles:
-        legend_bottom(ax, legend_handles, max_cols=2, fontsize=10)
+        legend_bottom(ax, legend_handles, max_cols=3, fontsize=10)
     no_gap_cnt = int((gdf["gap_type"] == "no_gap").sum())
     cap_gap_cnt = int((gdf["gap_type"] == "capacity_gap").sum())
     access_gap_cnt = int((gdf["gap_type"] == "accessibility_gap").sum())
     both_gap_cnt = int((gdf["gap_type"] == "both_gaps").sum())
     ax.set_title(
-        (
-            f"{service}: unmet-demand type | "
-            f"no_gap={no_gap_cnt}, cap_gap={cap_gap_cnt}, "
-            f"access_gap={access_gap_cnt}, both={both_gap_cnt}"
-        ),
-        fontsize=16,
+        f"{service.title()} Unmet Demand",
+        fontsize=20,
         fontweight="bold",
-        color="#ffffff",
-        pad=16,
+        color="#1f2937",
+        pad=18,
     )
     ax.set_axis_off()
 
     prov_hist = pd.to_numeric(gdf[provision_col], errors="coerce").dropna().clip(lower=0.0, upper=1.0)
     if not prov_hist.empty:
         bins = np.linspace(0.0, 1.0, 21)
-        hist_ax.hist(prov_hist.to_numpy(dtype=float), bins=bins, color="#94a3b8", edgecolor="#334155", alpha=0.95)
-        hist_ax.axvline(1.0, color="#16a34a", linestyle="--", linewidth=1.6, label="target=1.0")
+        hist_ax.hist(prov_hist.to_numpy(dtype=float), bins=bins, color="#a8b8cf", edgecolor="#94a3b8", alpha=0.95)
+        hist_ax.axvline(1.0, color="#7c2d12", linestyle="--", linewidth=1.4, label="target")
         hist_ax.set_xlim(0.0, 1.0)
-        hist_ax.set_xlabel("provision")
-        hist_ax.set_ylabel("blocks")
-        hist_ax.set_title("Provision histogram", fontsize=10)
-        hist_ax.grid(alpha=0.25, axis="y")
-        hist_ax.legend(loc="upper left", fontsize=8, frameon=True)
+        hist_ax.set_xlabel("Provision", color="#475569")
+        hist_ax.set_ylabel("Blocks", color="#475569")
+        hist_ax.set_title("Distribution", fontsize=10, color="#475569")
+        hist_ax.grid(alpha=0.18, axis="y", color="#cbd5e1")
+        hist_ax.spines["top"].set_visible(False)
+        hist_ax.spines["right"].set_visible(False)
+        hist_ax.spines["left"].set_color("#cbd5e1")
+        hist_ax.spines["bottom"].set_color("#cbd5e1")
+        hist_ax.tick_params(colors="#64748b")
+        hist_ax.legend(loc="upper left", fontsize=8, frameon=True, facecolor="#fffdf8", edgecolor="#d6d3d1")
     else:
         hist_ax.text(0.5, 0.5, "no provision values", ha="center", va="center")
         hist_ax.set_axis_off()
@@ -1198,6 +1225,10 @@ def _plot_service_lp_preview(
     footer_text(
         fig,
         [
+            (
+                f"blocks: no_gap={no_gap_cnt}, access_gap={access_gap_cnt}, "
+                f"capacity_gap={cap_gap_cnt}, both={both_gap_cnt}"
+            ),
             (
                 f"unmet totals: accessibility={access_total:.0f} "
                 f"({(access_total / demand_total * 100.0) if demand_total > 0 else 0.0:.2f}%), "
@@ -1275,8 +1306,6 @@ def _plot_placement_status_preview(
 
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from shapely.geometry import box
-
     gdf = _coerce_solver_blocks_geodataframe(blocks_after, blocks_ref=blocks_ref)
     if gdf is None or gdf.empty:
         return None
@@ -1290,45 +1319,19 @@ def _plot_placement_status_preview(
         except Exception:
             pass
 
-    boundary_plot = None
-    outer_bg = None
-    outer_bounds = None
-    if boundary is not None and not boundary.empty:
-        boundary_plot = boundary.copy()
-        boundary_plot = boundary_plot[boundary_plot.geometry.notna() & ~boundary_plot.geometry.is_empty].copy()
-        if not boundary_plot.empty and boundary_plot.crs is not None:
-            try:
-                boundary_plot = boundary_plot.to_crs("EPSG:3857")
-            except Exception:
-                pass
-        if boundary_plot is not None and not boundary_plot.empty:
-            minx, miny, maxx, maxy = boundary_plot.total_bounds
-            pad_x = max((maxx - minx) * 0.08, 250.0)
-            pad_y = max((maxy - miny) * 0.08, 250.0)
-            outer_bounds = (minx - pad_x, miny - pad_y, maxx + pad_x, maxy + pad_y)
-            outer_bg = gpd.GeoDataFrame({"geometry": [box(*outer_bounds)]}, crs=boundary_plot.crs)
+    boundary_plot = normalize_preview_gdf(boundary, target_crs="EPSG:3857")
 
     if "placement_status" not in gdf.columns:
         return None
-    color_map = {
-        "existing": "#2563eb",
-        "expanded": "#7c3aed",
-        "new": "#dc2626",
-        "inactive": "#d1d5db",
-    }
+    color_map = get_palette("placement_status")
     label_map = {
-        "existing": "existing service kept",
-        "expanded": "existing service expanded",
-        "new": "new service added",
-        "inactive": "no service in block",
+        "existing": "existing kept",
+        "expanded": "existing expanded",
+        "new": "new added",
+        "inactive": "inactive",
     }
     fig, ax = plt.subplots(figsize=(12, 10))
-    fig.patch.set_facecolor("#6b6b6b")
-    ax.set_facecolor("#6b6b6b")
-    if outer_bg is not None and not outer_bg.empty:
-        outer_bg.plot(ax=ax, facecolor="#6b6b6b", edgecolor="none", alpha=1.0, zorder=-20)
-    if boundary_plot is not None and not boundary_plot.empty:
-        boundary_plot.plot(ax=ax, facecolor="#f7f0dd", edgecolor="none", linewidth=0.0, alpha=1.0, zorder=-10)
+    apply_preview_canvas(fig, ax, boundary_plot, title=None)
     active_statuses = [status for status in ("inactive", "existing", "expanded", "new") if status in set(gdf["placement_status"])]
     for status in active_statuses:
         part = gdf[gdf["placement_status"] == status]
@@ -1337,16 +1340,11 @@ def _plot_placement_status_preview(
         part.plot(
             ax=ax,
             color=color_map[status],
-            linewidth=0.05,
-            edgecolor="#d1d5db",
+            linewidth=QUARTER_EDGE_WIDTH,
+            edgecolor=QUARTER_EDGE_COLOR,
             alpha=0.92,
             zorder=2,
         )
-    if boundary_plot is not None and not boundary_plot.empty:
-        boundary_plot.boundary.plot(ax=ax, color="#ffffff", linewidth=1.4, zorder=3)
-    if outer_bounds is not None:
-        ax.set_xlim(outer_bounds[0], outer_bounds[2])
-        ax.set_ylim(outer_bounds[1], outer_bounds[3])
     counts = {status: int((gdf["placement_status"] == status).sum()) for status in color_map}
     title_bits = [
         f"existing={counts['existing']}",
@@ -1356,25 +1354,18 @@ def _plot_placement_status_preview(
         title_bits.append(f"expanded={counts['expanded']}")
     ax.set_title(
         f"{service}: exact placement status | " + ", ".join(title_bits),
-        fontsize=16,
+        fontsize=14,
         fontweight="bold",
-        color="#ffffff",
-        pad=16,
+        color="#1f2937",
+        pad=12,
     )
     from matplotlib.patches import Patch
     legend_handles = [Patch(facecolor=color_map[s], edgecolor="none", label=label_map[s]) for s in active_statuses if counts[s] > 0]
     if legend_handles:
-        ax.legend(
-            handles=legend_handles,
-            loc="lower left",
-            frameon=True,
-            facecolor="#f7f0dd",
-            edgecolor="#9ca3af",
-            fontsize=10,
-        )
+        legend_bottom(ax, legend_handles, max_cols=4, fontsize=9)
     ax.set_axis_off()
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, dpi=180, bbox_inches="tight", facecolor=fig.get_facecolor())
+    save_preview_figure(fig, out_path)
     plt.close(fig)
     _log(f"Preview step: saved exact placement-status map for service [{service}]: {out_path.name}")
     return str(out_path)
@@ -1451,8 +1442,8 @@ def _plot_service_provision_delta_preview(
         ax=ax,
         column="provision_delta",
         cmap="RdYlGn",
-        linewidth=0.05,
-        edgecolor="#d1d5db",
+        linewidth=QUARTER_EDGE_WIDTH,
+        edgecolor=QUARTER_EDGE_COLOR,
         legend=True,
         vmin=-vmax,
         vmax=vmax,
@@ -1836,6 +1827,7 @@ def main() -> None:
 
     boundary = _read_boundary(boundary_path)
     blocks = _read_blocks(blocks_layer_path)
+    water_layer = load_city_water_layer(city_dir)
     graph = _read_graph_pickle(graph_path)
 
     population_col = _detect_population_column(blocks)
@@ -2054,11 +2046,13 @@ def main() -> None:
         raw_service_points,
         preview_dir / PIPELINE2_GALLERY_FILENAMES["services_raw_all"],
         boundary=boundary,
+        blocks_underlay=blocks,
+        water_layer=water_layer,
     )
     if services_raw_overview_png is not None:
         preview_outputs["services_raw_all"] = services_raw_overview_png
     preview_outputs.update(
-        _plot_accessibility_previews(units, matrix_union, preview_dir, boundary=boundary, use_cache=(not args.no_cache))
+        _plot_accessibility_previews(units, matrix_union, preview_dir, boundary=boundary, use_cache=(not args.no_cache), water_layer=water_layer)
     )
     accessibility_selection_png = _plot_block_selection_status(
         accessibility_selection,
@@ -2066,8 +2060,8 @@ def main() -> None:
         title="Accessibility Input Selection",
         status_column="selection_detail",
         color_map={
-            "included_with_living_buildings": "#2563eb",
-            "included_population_only": "#93c5fd",
+            "included_with_living_buildings": "#0f766e",
+            "included_population_only": "#84cc16",
             "excluded_zero_population": "#d1d5db",
         },
         label_map={
@@ -2080,6 +2074,7 @@ def main() -> None:
             f"included={int(units_mask.sum())}, excluded={int((~units_mask).sum())}, included_with_living={int(living_units)}",
         ],
         boundary=boundary,
+        water_layer=water_layer,
     )
     if accessibility_selection_png is not None:
         preview_outputs["accessibility_block_selection_status"] = accessibility_selection_png
@@ -2102,8 +2097,8 @@ def main() -> None:
             status_column="selection_status",
             color_map={
                 "included_living_and_capacity": "#7c3aed",
-                "included_living_only": "#2563eb",
-                "included_capacity_only": "#f59e0b",
+                "included_living_only": "#0f766e",
+                "included_capacity_only": "#c2410c",
                 "excluded_no_living_no_capacity": "#d1d5db",
             },
             label_map={
@@ -2117,6 +2112,7 @@ def main() -> None:
                 f"living_only={int((living_mask & ~capacity_mask).sum())}, capacity_only={int((~living_mask & capacity_mask).sum())}, living_and_capacity={int((living_mask & capacity_mask).sum())}, excluded={int((~living_mask & ~capacity_mask).sum())}",
             ],
             boundary=boundary,
+            water_layer=water_layer,
         )
         if float(raw_stats.get(service, {}).get("capacity_total", 0.0)) <= 0.0:
             _warn(f"Service [{service}] has zero total capacity in territory; skipping.")
@@ -2171,6 +2167,7 @@ def main() -> None:
                             lp_preview_target,
                             blocks_ref=blocks,
                             boundary=boundary,
+                            water_layer=water_layer,
                         )
                     except Exception:
                         lp_preview_path = None
@@ -2277,6 +2274,7 @@ def main() -> None:
                 lp_preview_target,
                 blocks_ref=blocks,
                 boundary=boundary,
+                water_layer=water_layer,
             )
         summary = {
             "service": service,

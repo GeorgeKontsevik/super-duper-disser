@@ -14,6 +14,7 @@ from loguru import logger
 from aggregated_spatial_pipeline.geodata_io import read_geodata
 from aggregated_spatial_pipeline.runtime_config import configure_logger
 from aggregated_spatial_pipeline.visualization import (
+    get_palette,
     apply_preview_canvas,
     footer_text,
     legend_bottom,
@@ -178,10 +179,11 @@ def _save_floor_previews(
     status["floor_status"] = "usable building record"
     status.loc[resolved_mask.reindex(status.index).fillna(False), "floor_status"] = "resolved by floor step"
     status.loc[unresolved_mask.reindex(status.index).fillna(False), "floor_status"] = "still missing after floor step"
+    service_palette = get_palette("services")
     groups = [
-        ("usable building record", "#bfdbfe"),
-        ("resolved by floor step", "#f59e0b"),
-        ("still missing after floor step", "#dc2626"),
+        ("usable building record", "#86efac"),
+        ("resolved by floor step", service_palette["kindergarten"]),
+        ("still missing after floor step", "#be123c"),
     ]
 
     def _save(fig, stem: str) -> None:
@@ -197,10 +199,9 @@ def _save_floor_previews(
         part = status[status["floor_status"] == label]
         if part.empty:
             continue
-        part.plot(ax=ax, color=color, linewidth=0.05, edgecolor="#d1d5db", alpha=0.92)
+        part.plot(ax=ax, color=color, linewidth=0.08, edgecolor="#cbd5e1", alpha=0.9)
         legend_handles.append(Patch(facecolor=color, edgecolor="none", label=label))
     apply_preview_canvas(fig, ax, boundary_norm, title="Floor Enrichment Status", min_pad=100.0)
-    legend_handles.append(Line2D([0], [0], color="#111111", linewidth=2, label="analysis boundary"))
     legend_bottom(ax, legend_handles)
     footer_text(
         fig,
@@ -226,10 +227,10 @@ def _save_floor_previews(
         storey_plot.plot(
             ax=ax,
             column="storey",
-            cmap="YlGnBu",
-            linewidth=0.05,
-            edgecolor="#d1d5db",
-            alpha=0.92,
+            cmap="viridis",
+            linewidth=0.08,
+            edgecolor="#cbd5e1",
+            alpha=0.9,
             legend=True,
             legend_kwds={"shrink": 0.72, "label": "storey"},
         )

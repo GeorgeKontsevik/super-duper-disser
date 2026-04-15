@@ -5,12 +5,19 @@ from pathlib import Path
 import geopandas as gpd
 from shapely.geometry import box
 
+from .preview_theme import (
+    CANVAS_BACKGROUND,
+    CANVAS_BOUNDARY_EDGE,
+    CANVAS_BOUNDARY_FILL,
+    CANVAS_FRAME_EDGE,
+    CANVAS_INK,
+    DEFAULT_PREVIEW_DPI,
+    LEGEND_EDGE,
+    LEGEND_FACE,
+)
+
 
 DEFAULT_TARGET_CRS = "EPSG:3857"
-CANVAS_BACKGROUND = "#6b6b6b"
-CANVAS_BOUNDARY_FILL = "#f7f0dd"
-CANVAS_BOUNDARY_EDGE = "#ffffff"
-DEFAULT_PREVIEW_DPI = 180
 
 
 def clip_to_preview_boundary(
@@ -68,7 +75,7 @@ def apply_preview_canvas(
     ax.set_facecolor(CANVAS_BACKGROUND)
     if boundary_layer is None or boundary_layer.empty:
         if title:
-            ax.set_title(title, fontsize=19, fontweight="bold", color="#ffffff", pad=18)
+            ax.set_title(title, fontsize=15, fontweight="bold", color=CANVAS_INK, pad=12)
         return
     try:
         minx, miny, maxx, maxy = boundary_layer.total_bounds
@@ -89,14 +96,15 @@ def apply_preview_canvas(
         )
         outer.plot(ax=ax, facecolor=CANVAS_BACKGROUND, edgecolor="none", alpha=1.0, zorder=-20)
         boundary_layer.plot(ax=ax, facecolor=CANVAS_BOUNDARY_FILL, edgecolor="none", linewidth=0.0, alpha=1.0, zorder=-10)
-        boundary_layer.boundary.plot(ax=ax, color=CANVAS_BOUNDARY_EDGE, linewidth=1.4, zorder=20)
+        boundary_layer.boundary.plot(ax=ax, color=CANVAS_BOUNDARY_EDGE, linewidth=1.1, zorder=20)
+        outer.boundary.plot(ax=ax, color=CANVAS_FRAME_EDGE, linewidth=0.6, zorder=21)
         ax.set_xlim(frame_minx, frame_maxx)
         ax.set_ylim(frame_miny, frame_maxy)
         ax.set_aspect("equal", adjustable="box")
     except Exception:
         pass
     if title:
-        ax.set_title(title, fontsize=19, fontweight="bold", color="#ffffff", pad=18)
+        ax.set_title(title, fontsize=15, fontweight="bold", color=CANVAS_INK, pad=12)
 
 
 def legend_bottom(ax, handles: list, *, max_cols: int = 4, fontsize: int = 8) -> None:
@@ -109,6 +117,15 @@ def legend_bottom(ax, handles: list, *, max_cols: int = 4, fontsize: int = 8) ->
         ncol=min(max_cols, len(handles)),
         frameon=True,
         fontsize=fontsize,
+        facecolor=LEGEND_FACE,
+        edgecolor=LEGEND_EDGE,
+        labelcolor=CANVAS_INK,
+        framealpha=0.98,
+        borderpad=0.35,
+        handletextpad=0.5,
+        columnspacing=1.0,
+        handlelength=1.8,
+        borderaxespad=0.2,
     )
 
 
@@ -118,7 +135,7 @@ def footer_text(
     *,
     y: float = 0.02,
     fontsize: int = 8,
-    color: str = "#374151",
+    color: str = CANVAS_INK,
     bbox: dict | None = None,
 ) -> None:
     if not lines:
@@ -134,10 +151,16 @@ def footer_text(
     }
     if bbox is not None:
         kwargs["bbox"] = bbox
+    else:
+        kwargs["bbox"] = {
+            "facecolor": LEGEND_FACE,
+            "edgecolor": LEGEND_EDGE,
+            "boxstyle": "round,pad=0.24",
+            "alpha": 0.96,
+        }
     fig.text(0.5, y, text, **kwargs)
 
 
 def save_preview_figure(fig, output_path: Path, *, dpi: int = DEFAULT_PREVIEW_DPI) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=dpi, bbox_inches="tight", facecolor=fig.get_facecolor())
-
+    fig.savefig(output_path, dpi=dpi, bbox_inches="tight", pad_inches=0.06, facecolor=fig.get_facecolor())

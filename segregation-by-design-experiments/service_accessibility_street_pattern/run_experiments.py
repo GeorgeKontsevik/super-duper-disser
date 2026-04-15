@@ -1663,7 +1663,13 @@ def _prepare_cross_city_frame(city_frames: dict[str, gpd.GeoDataFrame], services
     response_cols = _cross_city_response_columns(services, all_stop_modalities)
 
     prepared_frames: list[gpd.GeoDataFrame] = []
-    expected_cols = list(dict.fromkeys(["city", "block_id", "geometry", "population", "street_pattern_dominant_class", *feature_cols, *response_cols]))
+    extra_cols = [
+        "accessibility_block_selected",
+        *[f"service_provision_{service}_{context}" for service in services for context in ("intermodal", "walk")],
+    ]
+    expected_cols = list(
+        dict.fromkeys(["city", "block_id", "geometry", "population", "street_pattern_dominant_class", *feature_cols, *response_cols, *extra_cols])
+    )
     for city, frame in city_frames.items():
         prepared = frame.copy().to_crs(common_crs)
         prepared["city"] = city
@@ -1676,6 +1682,13 @@ def _prepare_cross_city_frame(city_frames: dict[str, gpd.GeoDataFrame], services
             if col not in prepared.columns:
                 prepared[col] = np.nan if (col.startswith("accessibility_time_mean_pt") or col.startswith("assigned_service_time_")) else 0.0
             prepared[col] = pd.to_numeric(prepared[col], errors="coerce").replace([np.inf, -np.inf], np.nan)
+        for col in extra_cols:
+            if col == "accessibility_block_selected":
+                prepared[col] = prepared.get(col, False).fillna(False).astype(bool)
+                continue
+            if col not in prepared.columns:
+                prepared[col] = np.nan
+            prepared[col] = pd.to_numeric(prepared[col], errors="coerce").replace([np.inf, -np.inf], np.nan)
         prepared["population"] = pd.to_numeric(prepared.get("population"), errors="coerce").fillna(0.0)
         prepared["street_pattern_dominant_class"] = prepared.get("street_pattern_dominant_class", "unknown").fillna("unknown").astype(str)
         prepared_frames.append(prepared[expected_cols].copy())
@@ -1685,6 +1698,135 @@ def _prepare_cross_city_frame(city_frames: dict[str, gpd.GeoDataFrame], services
     combined["log_block_area"] = np.log1p(np.clip(combined["block_area"], a_min=0.0, a_max=None))
     combined["log_population"] = np.log1p(np.clip(combined["population"], a_min=0.0, a_max=None))
     return combined, feature_cols, all_stop_modalities
+
+
+def _build_unmet_street_pattern_tables(
+    frame: pd.DataFrame,
+    *,
+    services: list[str],
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if frame.empty:
+        return pd.DataFrame(), pd.DataFrame()
+    rows: list[pd.DataFrame] = []
+    selected = frame.get("accessibility_block_selected")
+    if isinstance(selected, pd.Series):
+        selected_mask = selected.fillna(False).astype(bool)
+    else:
+        selected_mask = pd.Series(True, index=frame.index, dtype=bool)
+    base = frame.copy()
+    base["population"] = pd.to_numeric(base.get("population"), errors="coerce").fillna(0.0)
+    base["street_pattern_dominant_class"] = (
+        base.get("street_pattern_dominant_class", "unknown").fillna("unknown").astype(str)
+    )
+    for service in services:
+        for context in ("intermodal", "walk"):
+            provision_col = f"service_provision_{service}_{context}"
+            if provision_col not in base.columns:
+                continue
+            provision = pd.to_numeric(base[provision_col], errors="coerce")
+            unmet_mask = selected_mask & provision.notna() & (provision < 0.999)
+            if not unmet_mask.any():
+                continue
+            part = base.loc[unmet_mask, ["city", "block_id", "street_pattern_dominant_class", "population"]].copy()
+            part["service"] = service
+            part["context"] = context
+            part["service_provision"] = provision.loc[unmet_mask].to_numpy(dtype=float)
+            part["unmet_share"] = np.clip(1.0 - part["service_provision"], 0.0, 1.0)
+            part["unmet_population_weighted"] = part["population"] * part["unmet_share"]
+            rows.append(part)
+    if not rows:
+        return pd.DataFrame(), pd.DataFrame()
+    detail = pd.concat(rows, ignore_index=True)
+    detail = detail[
+        detail["street_pattern_dominant_class"].astype(str).str.strip().str.lower() != "unknown"
+    ].copy()
+    if detail.empty:
+        return pd.DataFrame(), pd.DataFrame()
+    city_service_totals = (
+        detail.groupby(["city", "service", "context"], as_index=False)
+        .agg(
+            unmet_blocks_total=("block_id", "nunique"),
+            unmet_population_weighted_total=("unmet_population_weighted", "sum"),
+            unmet_share_total=("unmet_share", "sum"),
+        )
+    )
+    by_class = (
+        detail.groupby(["city", "service", "context", "street_pattern_dominant_class"], as_index=False)
+        .agg(
+            unmet_blocks=("block_id", "nunique"),
+            unmet_population_weighted=("unmet_population_weighted", "sum"),
+            unmet_share_sum=("unmet_share", "sum"),
+            mean_service_provision=("service_provision", "mean"),
+        )
+        .merge(city_service_totals, on=["city", "service", "context"], how="left")
+    )
+    by_class["unmet_population_weighted_share"] = by_class["unmet_population_weighted"] / by_class[
+        "unmet_population_weighted_total"
+    ].where(by_class["unmet_population_weighted_total"] > 0, np.nan)
+    by_class["unmet_blocks_share"] = by_class["unmet_blocks"] / by_class["unmet_blocks_total"].where(
+        by_class["unmet_blocks_total"] > 0, np.nan
+    )
+    return detail, by_class
+
+
+def _plot_cross_city_unmet_pattern_canvas(
+    by_class: pd.DataFrame,
+    *,
+    services: list[str],
+    context: str,
+    output_path: Path,
+) -> None:
+    if by_class.empty:
+        return
+    work = by_class[by_class["context"].astype(str) == str(context)].copy()
+    if work.empty:
+        return
+    city_order = sorted(work["city"].dropna().astype(str).unique().tolist())
+    class_order = [label for label in CLASS_LABELS.values() if label in set(work["street_pattern_dominant_class"].astype(str))]
+    if not class_order:
+        class_order = sorted(work["street_pattern_dominant_class"].dropna().astype(str).unique().tolist())
+    service_order = [s for s in services if s in set(work["service"].astype(str))]
+    if not service_order:
+        service_order = sorted(work["service"].dropna().astype(str).unique().tolist())
+    if not service_order:
+        return
+    fig, axes = plt.subplots(
+        nrows=1,
+        ncols=len(service_order),
+        figsize=(5.3 * len(service_order), max(5.0, 0.45 * len(city_order) + 1.5)),
+        squeeze=False,
+    )
+    axes_flat = axes.ravel()
+    for ax, service in zip(axes_flat, service_order):
+        part = work[work["service"].astype(str) == str(service)].copy()
+        pivot = part.pivot(index="city", columns="street_pattern_dominant_class", values="unmet_population_weighted_share").fillna(0.0)
+        pivot = pivot.reindex(index=city_order, columns=class_order, fill_value=0.0)
+        if pivot.empty:
+            ax.axis("off")
+            continue
+        sns.heatmap(
+            pivot,
+            cmap="YlOrRd",
+            annot=True,
+            fmt=".2f",
+            linewidths=0.2,
+            ax=ax,
+            vmin=0.0,
+            vmax=1.0,
+            cbar=False,
+        )
+        ax.set_title(service, fontsize=13, fontweight="bold")
+        ax.set_xlabel("")
+        ax.set_ylabel("" if ax is not axes_flat[0] else "city")
+    fig.suptitle(
+        f"Unmet Demand By Dominant Street Pattern (weighted share, {context})",
+        fontsize=16,
+        fontweight="bold",
+        y=0.98,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    save_preview_figure(fig, output_path)
+    plt.close(fig)
 
 
 def _distribution_tests(frame: pd.DataFrame, feature_cols: list[str]) -> pd.DataFrame:
@@ -2996,19 +3138,24 @@ def _plot_cross_city_accessibility_service_atlas(
             if total_population > 0 and not pop_by_class.empty:
                 pop_by_class["population_share"] = pop_by_class["population"] / total_population
                 pop_by_class = pop_by_class.sort_values("population_share", ascending=False).head(5).copy()
+                class_labels = pop_by_class["street_pattern_dominant_class"].astype(str).tolist()
+                class_shares = pop_by_class["population_share"].astype(float).to_numpy()
+                y_pos = np.arange(len(class_labels), dtype=float)
                 inset = ax.inset_axes([0.61, 0.04, 0.35, 0.26], zorder=20)
                 inset.set_facecolor((1.0, 1.0, 1.0, 0.88))
                 inset.barh(
-                    pop_by_class["street_pattern_dominant_class"],
-                    pop_by_class["population_share"],
+                    y_pos,
+                    class_shares,
                     color=[
                         CLASS_COLORS.get(class_name, CLASS_COLORS["unknown"])
-                        for class_name in pop_by_class["street_pattern_dominant_class"]
+                        for class_name in class_labels
                     ],
                     edgecolor="#ffffff",
                     linewidth=0.4,
                 )
                 inset.invert_yaxis()
+                inset.set_yticks(y_pos)
+                inset.set_yticklabels(class_labels)
                 inset.set_xlim(0.0, max(0.35, float(pop_by_class["population_share"].max()) * 1.12))
                 inset.set_title("population by pattern", fontsize=6.6, pad=1.5)
                 inset.tick_params(axis="x", labelsize=5.5, length=1.5)
@@ -3487,6 +3634,7 @@ def _write_cross_city_outputs(
         feature_cols,
         accessibility_response_cols,
     )
+    unmet_detail, unmet_by_class = _build_unmet_street_pattern_tables(combined, services=services)
 
     _save_geodata(combined, prepared_dir / "blocks_experiment_cross_city.parquet")
     for name, frame in {
@@ -3500,6 +3648,16 @@ def _write_cross_city_outputs(
         "accessibility_between_city_effects.csv": accessibility_between,
     }.items():
         (stats_dir / name).write_text(frame.to_csv(index=False), encoding="utf-8")
+    if not unmet_detail.empty:
+        (stats_dir / "unmet_blocks_by_service_street_pattern_detail.csv").write_text(
+            unmet_detail.to_csv(index=False),
+            encoding="utf-8",
+        )
+    if not unmet_by_class.empty:
+        (stats_dir / "unmet_blocks_by_service_street_pattern_city_service_class.csv").write_text(
+            unmet_by_class.to_csv(index=False),
+            encoding="utf-8",
+        )
 
     _plot_feature_distributions(combined, feature_cols, preview_dir / "10_street_pattern_feature_distributions_by_city.png")
     _plot_dominant_class_composition(class_composition, preview_dir / "11_dominant_class_composition_by_city.png")
@@ -3571,6 +3729,19 @@ def _write_cross_city_outputs(
         services=services,
         eligible_cities=eligible_cities,
     )
+    if not unmet_by_class.empty:
+        _plot_cross_city_unmet_pattern_canvas(
+            unmet_by_class,
+            services=services,
+            context="intermodal",
+            output_path=preview_dir / "30_unmet_demand_by_street_pattern_service_canvas_intermodal.png",
+        )
+        _plot_cross_city_unmet_pattern_canvas(
+            unmet_by_class,
+            services=services,
+            context="walk",
+            output_path=preview_dir / "31_unmet_demand_by_street_pattern_service_canvas_walk.png",
+        )
     _write_transport_story_outputs(
         combined=combined,
         output_root=output_root,

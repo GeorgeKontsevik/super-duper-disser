@@ -483,7 +483,7 @@ def _save_sm_previews(
         ),
         (
             blocks_norm[pd.to_numeric(blocks_norm.get("sm_imputation_target"), errors="coerce").fillna(0) < 0.5],
-            "#93c5fd",
+            "#86efac",
             "existing built form",
         ),
     ]
