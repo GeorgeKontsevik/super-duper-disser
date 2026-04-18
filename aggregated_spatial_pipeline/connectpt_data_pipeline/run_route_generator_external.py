@@ -29,6 +29,7 @@ from aggregated_spatial_pipeline.visualization import (
     save_preview_figure,
 )
 from aggregated_spatial_pipeline.pipeline.run_pipeline2_prepare_solver_inputs import _plot_accessibility_previews
+from aggregated_spatial_pipeline.pipeline.run_pipeline3_street_pattern_to_quarters import CLASS_LABELS
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -59,6 +60,246 @@ POPULATION_COLUMNS = [
     "residents",
     "res_population",
 ]
+
+
+def _resolve_street_pattern_cells_path_for_preview(city_dir: Path) -> Path | None:
+    candidates = [
+        city_dir / "derived_layers" / "street_grid_clipped.parquet",
+        city_dir / "street_pattern" / city_dir.name / "predicted_cells.geojson",
+    ]
+    for path in candidates:
+        if path.exists():
+            return path
+    return None
+
+
+def _street_pattern_multivariate_colors(cells: gpd.GeoDataFrame) -> pd.Series:
+    if "multivariate_color" in cells.columns:
+        return cells["multivariate_color"].astype(str).fillna("#d1d5db")
+    prob_cols = [c for c in CLASS_LABELS.keys() if c in cells.columns]
+    if not prob_cols:
+        return pd.Series(["#d1d5db"] * len(cells), index=cells.index, dtype=object)
+    palette = get_palette("street_patterns")
+    rgb = np.zeros((len(cells), 3), dtype=float)
+    for prob_col in prob_cols:
+        label = CLASS_LABELS.get(prob_col, "unknown")
+        color_hex = palette.get(label, "#d1d5db")
+        color_rgb = np.array(plt.matplotlib.colors.to_rgb(color_hex), dtype=float)
+        w = pd.to_numeric(cells[prob_col], errors="coerce").fillna(0.0).to_numpy()[:, None]
+        rgb += w * color_rgb
+    mass = cells[prob_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0).sum(axis=1).to_numpy()[:, None]
+    unknown_rgb = np.array(plt.matplotlib.colors.to_rgb(palette.get("unknown", "#d1d5db")), dtype=float)
+    rgb += np.clip(1.0 - mass, 0.0, 1.0) * unknown_rgb
+    rgb = np.clip(rgb, 0.0, 1.0)
+    return pd.Series(
+        ["#{:02x}{:02x}{:02x}".format(int(r * 255), int(g * 255), int(b * 255)) for r, g, b in rgb],
+        index=cells.index,
+        dtype=object,
+    )
+
+
+def _route_geometries_from_tensor(graph, routes_tensor: torch.Tensor) -> gpd.GeoSeries | None:
+    geoms = []
+    graph_crs = graph.graph.get("crs") or "EPSG:4326"
+    for route in _route_sequences(routes_tensor):
+        for u, v in zip(route[:-1], route[1:]):
+            if not graph.has_edge(u, v):
+                continue
+            geom = graph.get_edge_data(u, v).get("geometry")
+            if geom is not None and not geom.is_empty:
+                geoms.append(geom)
+    if not geoms:
+        return None
+    return gpd.GeoSeries(geoms, crs=graph_crs)
+
+
+def _save_route_overlay_on_polygons(
+    *,
+    cells: gpd.GeoDataFrame,
+    cell_color_col: str | None,
+    graph,
+    routes_tensor: torch.Tensor,
+    boundary: gpd.GeoDataFrame | None,
+    out_path: Path,
+    title: str,
+    draw_network: bool,
+    roads: gpd.GeoDataFrame | None = None,
+    numeric_fill_col: str | None = None,
+    numeric_cmap: str = "terrain",
+    numeric_vmin: float | None = None,
+    numeric_vmax: float | None = None,
+    colorbar_label: str | None = None,
+) -> bool:
+    if cells.empty:
+        return False
+    cells_plot = normalize_preview_gdf(cells, normalize_preview_gdf(boundary, target_crs="EPSG:3857"), target_crs="EPSG:3857")
+    if cells_plot is None or cells_plot.empty:
+        return False
+    boundary_plot = normalize_preview_gdf(boundary, target_crs="EPSG:3857")
+    fig, ax = plt.subplots(figsize=(11, 11))
+    apply_preview_canvas(fig, ax, boundary_plot, title=title)
+    roads_plot = normalize_preview_gdf(roads, boundary_plot, target_crs="EPSG:3857")
+    if roads_plot is not None and not roads_plot.empty:
+        roads_plot = roads_plot[roads_plot.geometry.notna() & ~roads_plot.geometry.is_empty].copy()
+        roads_plot = roads_plot[roads_plot.geometry.geom_type.isin(["LineString", "MultiLineString"])].copy()
+        if not roads_plot.empty:
+            roads_plot.plot(ax=ax, color="#9ca3af", linewidth=0.35, alpha=0.45, zorder=1)
+
+    if draw_network:
+        edge_geoms = [d.get("geometry") for _, _, d in graph.edges(data=True) if d.get("geometry") is not None]
+        if edge_geoms:
+            gpd.GeoSeries(edge_geoms, crs=graph.graph.get("crs") or "EPSG:4326").to_crs("EPSG:3857").plot(
+                ax=ax, color="#9ca3af", linewidth=0.35, alpha=0.35, zorder=1
+            )
+
+    if numeric_fill_col is not None:
+        values = pd.to_numeric(cells_plot[numeric_fill_col], errors="coerce")
+        cells_plot = cells_plot.copy()
+        cells_plot[numeric_fill_col] = values
+        valid = cells_plot[cells_plot[numeric_fill_col].notna()].copy()
+        if valid.empty:
+            return False
+        valid.plot(
+            ax=ax,
+            column=numeric_fill_col,
+            cmap=numeric_cmap,
+            vmin=numeric_vmin,
+            vmax=numeric_vmax,
+            linewidth=0.08,
+            edgecolor="#cbd5e1",
+            alpha=0.68,
+            legend=True,
+            legend_kwds={"label": (colorbar_label or numeric_fill_col), "shrink": 0.65},
+            zorder=2,
+        )
+    else:
+        if cell_color_col is None:
+            return False
+        cells_plot.plot(
+            ax=ax,
+            color=cells_plot[cell_color_col].astype(str),
+            linewidth=0.08,
+            edgecolor="#cbd5e1",
+            alpha=0.68,
+            zorder=2,
+        )
+
+    route_geoms = _route_geometries_from_tensor(graph, routes_tensor)
+    if route_geoms is not None and len(route_geoms) > 0:
+        route_geoms.to_crs("EPSG:3857").plot(
+            ax=ax,
+            color="#111827",
+            linewidth=2.3,
+            alpha=0.95,
+            zorder=4,
+        )
+        route_geoms.to_crs("EPSG:3857").plot(
+            ax=ax,
+            color="#fde047",
+            linewidth=1.2,
+            alpha=0.9,
+            zorder=5,
+        )
+
+    ax.set_axis_off()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    save_preview_figure(fig, out_path)
+    plt.close(fig)
+    return True
+
+
+def _save_street_pattern_and_elevation_route_overlays(
+    *,
+    city_dir: Path,
+    modality: str,
+    graph,
+    routes_tensor: torch.Tensor,
+    boundary: gpd.GeoDataFrame | None,
+    preview_dir: Path,
+    shared_preview_dir: Path,
+    summary: dict,
+    roads: gpd.GeoDataFrame | None = None,
+) -> None:
+    cells_path = _resolve_street_pattern_cells_path_for_preview(city_dir)
+    if cells_path is None:
+        _log("Route overlay on street-pattern/elevation skipped: street-pattern cells not found.")
+        return
+    cells = gpd.read_parquet(cells_path) if cells_path.suffix.lower() == ".parquet" else gpd.read_file(cells_path)
+    cells = cells[cells.geometry.notna() & ~cells.geometry.is_empty].copy()
+    cells = cells[cells.geometry.geom_type.isin(["Polygon", "MultiPolygon"])].copy()
+    if cells.empty:
+        _log("Route overlay on street-pattern/elevation skipped: empty street-pattern cells.")
+        return
+    cells["street_pattern_multivariate_color"] = _street_pattern_multivariate_colors(cells)
+
+    # Street-pattern multivariate overlays
+    for draw_network, suffix, title in [
+        (True, "with_existing", f"Generated {modality} routes on street pattern (with network)"),
+        (False, "generated_only", f"Generated {modality} routes on street pattern (generated only)"),
+    ]:
+        out_name = f"pt_route_generator_{modality}_{suffix}_over_street_pattern_multivariate.png"
+        out_path = preview_dir / out_name
+        ok = _save_route_overlay_on_polygons(
+            cells=cells,
+            cell_color_col="street_pattern_multivariate_color",
+            graph=graph,
+            routes_tensor=routes_tensor,
+            boundary=boundary,
+            out_path=out_path,
+            title=title,
+            draw_network=draw_network,
+            roads=roads,
+        )
+        if ok:
+            shared_path = shared_preview_dir / out_name
+            shared_path.write_bytes(out_path.read_bytes())
+            summary["files"][f"route_{suffix}_over_street_pattern_multivariate_preview"] = str(shared_path)
+
+    # Elevation overlays (if terrain step already exists)
+    terrain_grid_path = city_dir / "terrain_street_pattern_dependency" / "prepared" / "street_grid_terrain_street_pattern.parquet"
+    if not terrain_grid_path.exists():
+        _log("Route overlay on elevation skipped: terrain grid parquet not found.")
+        return
+    terrain_cells = gpd.read_parquet(terrain_grid_path)
+    terrain_cells = terrain_cells[terrain_cells.geometry.notna() & ~terrain_cells.geometry.is_empty].copy()
+    terrain_cells = terrain_cells[terrain_cells.geometry.geom_type.isin(["Polygon", "MultiPolygon"])].copy()
+    if terrain_cells.empty or "elevation_m_mean" not in terrain_cells.columns:
+        _log("Route overlay on elevation skipped: missing geometry or elevation_m_mean.")
+        return
+    elevation = pd.to_numeric(terrain_cells["elevation_m_mean"], errors="coerce")
+    vmin = float(np.nanmin(elevation.to_numpy())) if elevation.notna().any() else 0.0
+    vmax = float(np.nanmax(elevation.to_numpy())) if elevation.notna().any() else 1.0
+    if not np.isfinite(vmin) or not np.isfinite(vmax) or vmax <= vmin:
+        vmin, vmax = 0.0, 1.0
+    terrain_cells = terrain_cells.copy()
+    terrain_cells["elevation_m_mean"] = elevation
+
+    for draw_network, suffix, title in [
+        (True, "with_existing", f"Generated {modality} routes on elevation (with network)"),
+        (False, "generated_only", f"Generated {modality} routes on elevation (generated only)"),
+    ]:
+        out_name = f"pt_route_generator_{modality}_{suffix}_over_elevation.png"
+        out_path = preview_dir / out_name
+        ok = _save_route_overlay_on_polygons(
+            cells=terrain_cells,
+            cell_color_col=None,
+            graph=graph,
+            routes_tensor=routes_tensor,
+            boundary=boundary,
+            out_path=out_path,
+            title=title,
+            draw_network=draw_network,
+            roads=roads,
+            numeric_fill_col="elevation_m_mean",
+            numeric_cmap="terrain",
+            numeric_vmin=vmin,
+            numeric_vmax=vmax,
+            colorbar_label="mean elevation (m)",
+        )
+        if ok:
+            shared_path = shared_preview_dir / out_name
+            shared_path.write_bytes(out_path.read_bytes())
+            summary["files"][f"route_{suffix}_over_elevation_preview"] = str(shared_path)
 
 
 def _configure_logging() -> None:
@@ -503,6 +744,7 @@ def _save_route_preview(
     summary: dict,
     out_path: Path,
     draw_network: bool = True,
+    roads: gpd.GeoDataFrame | None = None,
 ) -> None:
     from matplotlib.lines import Line2D
 
@@ -522,6 +764,12 @@ def _save_route_preview(
     apply_preview_canvas(fig, ax, boundary_plot, title=None, min_pad=120.0)
     route_geoms_3857: list = []
     route_point_clouds_3857: list[gpd.GeoSeries] = []
+    roads_plot = normalize_preview_gdf(roads, boundary_plot, target_crs="EPSG:3857")
+    if roads_plot is not None and not roads_plot.empty:
+        roads_plot = roads_plot[roads_plot.geometry.notna() & ~roads_plot.geometry.is_empty].copy()
+        roads_plot = roads_plot[roads_plot.geometry.geom_type.isin(["LineString", "MultiLineString"])].copy()
+        if not roads_plot.empty:
+            roads_plot.plot(ax=ax, color="#9ca3af", linewidth=0.35, alpha=0.45, zorder=1)
 
     if draw_network:
         edge_geoms = []
@@ -701,6 +949,8 @@ def main() -> None:
     blocks_path = _resolve_blocks_path(city_dir, args.blocks_path)
     boundary_path = _resolve_boundary_path(city_dir, args.boundary_path)
     boundary = gpd.read_parquet(boundary_path) if boundary_path is not None and boundary_path.exists() else None
+    roads_path = city_dir / "derived_layers" / "roads_drive_osmnx.parquet"
+    roads = gpd.read_parquet(roads_path) if roads_path.exists() else None
     weights_path = _resolve_weights_path(args.weights_path)
     graph = _load_stop_graph(city_dir, modality)
     external_od_path = Path(args.od_matrix_path).resolve() if args.od_matrix_path else None
@@ -807,6 +1057,7 @@ def main() -> None:
         summary=summary,
         out_path=route_preview_path,
         draw_network=True,
+        roads=roads,
     )
     shared_preview_path = shared_preview_dir / f"pt_route_generator_{modality}.png"
     shared_preview_path.write_bytes(route_preview_path.read_bytes())
@@ -820,6 +1071,7 @@ def main() -> None:
         summary=summary,
         out_path=route_only_path,
         draw_network=False,
+        roads=roads,
     )
     shared_route_only_path = shared_preview_dir / f"pt_route_generator_{modality}_generated_only.png"
     shared_route_only_path.write_bytes(route_only_path.read_bytes())
@@ -828,6 +1080,17 @@ def main() -> None:
     summary["files"]["shared_route_with_existing_preview"] = str(route_with_existing_path)
     summary["files"]["route_generated_only_preview"] = str(route_only_path)
     summary["files"]["shared_route_generated_only_preview"] = str(shared_route_only_path)
+    _save_street_pattern_and_elevation_route_overlays(
+        city_dir=city_dir,
+        modality=modality,
+        graph=graph,
+        routes_tensor=routes.cpu(),
+        boundary=boundary.to_crs(blocks.crs) if boundary is not None and boundary.crs != blocks.crs else boundary,
+        preview_dir=preview_dir,
+        shared_preview_dir=shared_preview_dir,
+        summary=summary,
+        roads=roads,
+    )
 
     if args.replace_in_intermodal or args.recompute_accessibility:
         replace_summary = _replace_modality_edges_in_intermodal(

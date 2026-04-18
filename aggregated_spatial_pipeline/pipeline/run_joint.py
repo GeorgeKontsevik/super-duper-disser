@@ -283,6 +283,50 @@ def parse_args() -> argparse.Namespace:
         help="Subway stop buffer radius in meters for PT x street-pattern context.",
     )
     parser.add_argument(
+        "--terrain-street-pattern-dependency",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Run terrain x street-pattern dependency step (DEM elevation/slope per quarter "
+            "plus correlation with street-pattern probabilities/classes)."
+        ),
+    )
+    parser.add_argument(
+        "--terrain-dem-path",
+        default=None,
+        help="Path to DEM raster used in terrain x street-pattern dependency step.",
+    )
+    parser.add_argument(
+        "--terrain-dem-band",
+        type=int,
+        default=1,
+        help="DEM raster band index for terrain x street-pattern dependency. Default: 1.",
+    )
+    parser.add_argument(
+        "--terrain-dependency-output-dir",
+        default=None,
+        help=(
+            "Optional output directory for terrain x street-pattern dependency step. "
+            "Default: <joint-input-dir>/terrain_street_pattern_dependency."
+        ),
+    )
+    parser.add_argument(
+        "--terrain-blocks-path",
+        default=None,
+        help=(
+            "Optional explicit blocks layer for terrain x street-pattern dependency "
+            "(defaults to derived clipped quarters in city bundle)."
+        ),
+    )
+    parser.add_argument(
+        "--terrain-street-pattern-cells",
+        default=None,
+        help=(
+            "Optional explicit street-pattern cells layer for terrain x street-pattern dependency "
+            "(defaults to derived clipped street grid in city bundle)."
+        ),
+    )
+    parser.add_argument(
         "--is-living-model-path",
         default=None,
         help=(
@@ -347,6 +391,8 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise SystemExit("Use at most one territory override: --center-node-id or --relation-id.")
     if args.relation_geometry and args.relation_id is None:
         raise SystemExit("--relation-geometry requires --relation-id to label outputs.")
+    if bool(args.terrain_street_pattern_dependency) and not args.terrain_dem_path:
+        raise SystemExit("--terrain-street-pattern-dependency requires --terrain-dem-path.")
 
     has_auto_source = bool(args.place or args.center_node_id is not None or args.relation_id is not None)
     has_min_explicit = all([args.blocks, args.street_grid, args.cities])
@@ -935,6 +981,60 @@ def _run_pt_street_pattern_dependency_step(
     manifest = _try_load_json(manifest_path)
     if manifest is None:
         raise RuntimeError(f"Cannot read PT x street-pattern dependency manifest: {manifest_path}")
+    return manifest_path, manifest
+
+
+def _run_terrain_street_pattern_dependency_step(
+    *,
+    repo_root: Path,
+    city_dir: Path,
+    dem_path: Path,
+    dem_band: int,
+    output_dir: Path | None = None,
+    blocks_path: Path | None = None,
+    street_pattern_cells_path: Path | None = None,
+    no_cache: bool = False,
+) -> tuple[Path, dict]:
+    resolved_output_dir = output_dir.resolve() if output_dir is not None else (city_dir / "terrain_street_pattern_dependency")
+    resolved_output_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path = resolved_output_dir / "manifest.json"
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = f"{repo_root}{os.pathsep}{env['PYTHONPATH']}" if env.get("PYTHONPATH") else str(repo_root)
+    env.setdefault("MPLCONFIGDIR", _repo_mplconfigdir(repo_root, "mpl-terrain-street-dependency"))
+
+    command = [
+        sys.executable,
+        "-m",
+        "aggregated_spatial_pipeline.pipeline.run_terrain_street_pattern_dependency",
+        "--joint-input-dir",
+        str(city_dir),
+        "--output-dir",
+        str(resolved_output_dir),
+        "--dem-path",
+        str(dem_path),
+        "--dem-band",
+        str(int(dem_band)),
+    ]
+    if blocks_path is not None:
+        command.extend(["--blocks-path", str(blocks_path)])
+    if street_pattern_cells_path is not None:
+        command.extend(["--street-pattern-cells", str(street_pattern_cells_path)])
+    if no_cache:
+        command.append("--no-cache")
+
+    _log(
+        "Terrain x street-pattern dependency step start: "
+        f"city_dir={_log_name(city_dir)}, dem={_log_name(dem_path)}, band={int(dem_band)}, "
+        f"blocks={_log_name(blocks_path)}, street_pattern_cells={_log_name(street_pattern_cells_path)}"
+    )
+    started = time.time()
+    subprocess.run(command, check=True, cwd=str(repo_root), env=env)
+    _log(f"Terrain x street-pattern dependency step finished in {time.time() - started:.1f}s.")
+
+    manifest = _try_load_json(manifest_path)
+    if manifest is None:
+        raise RuntimeError(f"Cannot read terrain x street-pattern dependency manifest: {manifest_path}")
     return manifest_path, manifest
 
 
@@ -3362,6 +3462,39 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
     else:
         _log("PT x street-pattern dependency step is disabled (--no-pt-street-pattern-dependency).")
 
+    terrain_dependency_manifest_path: Path | None = None
+    terrain_dependency_manifest: dict = {
+        "enabled": False,
+        "reason": "disabled_by_flag",
+    }
+    if bool(args.terrain_street_pattern_dependency):
+        terrain_output_dir = Path(args.terrain_dependency_output_dir).resolve() if args.terrain_dependency_output_dir else None
+        terrain_blocks_path = Path(args.terrain_blocks_path).resolve() if args.terrain_blocks_path else None
+        terrain_cells_path = (
+            Path(args.terrain_street_pattern_cells).resolve()
+            if args.terrain_street_pattern_cells
+            else clipped_street_grid_path
+        )
+        terrain_dependency_manifest_path, terrain_dependency_manifest = _run_terrain_street_pattern_dependency_step(
+            repo_root=repo_root,
+            city_dir=data_root,
+            dem_path=Path(str(args.terrain_dem_path)).resolve(),
+            dem_band=int(args.terrain_dem_band),
+            output_dir=terrain_output_dir,
+            blocks_path=terrain_blocks_path,
+            street_pattern_cells_path=terrain_cells_path,
+            no_cache=bool(args.no_cache),
+        )
+        terrain_counts = terrain_dependency_manifest.get("counts", {}) if isinstance(terrain_dependency_manifest, dict) else {}
+        _log(
+            "Terrain x street-pattern dependency ready: "
+            f"blocks={int(pd.to_numeric(terrain_counts.get('blocks'), errors='coerce') or 0)}, "
+            f"elev_ok={int(pd.to_numeric(terrain_counts.get('blocks_with_elevation_mean'), errors='coerce') or 0)}, "
+            f"slope_ok={int(pd.to_numeric(terrain_counts.get('blocks_with_slope_mean'), errors='coerce') or 0)}"
+        )
+    else:
+        _log("Terrain x street-pattern dependency step is disabled (--no-terrain-street-pattern-dependency).")
+
     climate_grid_path = derived_dir / "climate_grid.parquet"
 
     climate_enabled = bool(args.climate_grid)
@@ -3419,9 +3552,13 @@ def _prepare_inputs_from_place(args: argparse.Namespace) -> PreparedInputs:
             "pt_street_pattern_dependency_manifest": (
                 str(pt_street_dependency_manifest_path) if pt_street_dependency_manifest_path is not None else None
             ),
+            "terrain_street_pattern_dependency_manifest": (
+                str(terrain_dependency_manifest_path) if terrain_dependency_manifest_path is not None else None
+            ),
         },
         "floor_predictor": floor_metrics,
         "pt_street_pattern_dependency": pt_street_dependency_manifest,
+        "terrain_street_pattern_dependency": terrain_dependency_manifest,
         "data_coverage_check": {
             "min_data_coverage_pct_threshold": float(args.min_data_coverage_pct),
             "metrics": data_coverage_metrics,

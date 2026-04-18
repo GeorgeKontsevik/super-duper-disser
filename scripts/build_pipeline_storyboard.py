@@ -12,6 +12,15 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_JOINT_INPUT_ROOT = (
     ROOT / "aggregated_spatial_pipeline" / "outputs" / "active_19_good_cities_20260412" / "joint_inputs"
 )
+DEFAULT_ROUTE_PATTERN_CROSS_CITY_PREVIEW_ROOT = (
+    ROOT
+    / "aggregated_spatial_pipeline"
+    / "outputs"
+    / "experiments_active19_20260412"
+    / "route_pattern_street_pattern"
+    / "_cross_city"
+    / "preview_png"
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -75,6 +84,10 @@ def _png(city_dir: Path, name: str) -> Path | None:
     return _existing(city_dir / "preview_png" / "all_together" / name)
 
 
+def _cross_city_png(name: str) -> Path | None:
+    return _existing(DEFAULT_ROUTE_PATTERN_CROSS_CITY_PREVIEW_ROOT / name)
+
+
 def _metric_pill(label: str, value: object) -> str:
     safe_label = html.escape(str(label))
     safe_value = html.escape(str(value))
@@ -120,6 +133,37 @@ def _stage_block(name: str, command: str, params: list[tuple[str, object]], imag
         f"{gallery}"
         "</article>"
     )
+
+
+def _chunked(items: list[str], size: int) -> list[list[str]]:
+    if size <= 0:
+        return [items]
+    return [items[i : i + size] for i in range(0, len(items), size)] or [[]]
+
+
+def _stage_slides(
+    *,
+    step_title: str,
+    step_kicker: str,
+    stage_name: str,
+    command: str,
+    params: list[tuple[str, object]],
+    images: list[str],
+    images_per_slide: int = 2,
+) -> list[str]:
+    chunks = _chunked(images, images_per_slide)
+    total_chunks = len(chunks)
+    slides: list[str] = []
+    for idx, chunk in enumerate(chunks, start=1):
+        suffix = f" (part {idx}/{total_chunks})" if total_chunks > 1 else ""
+        body = _stage_block(
+            name=f"{stage_name}{suffix}",
+            command=command,
+            params=params,
+            images=chunk,
+        )
+        slides.append(_slide(title=f"{step_title}{suffix}", kicker=step_kicker, body=body))
+    return slides
 
 
 def _cover_slide(city_dir: Path, prep_manifest: dict | None, street_summary: dict | None, asset_base: Path) -> str:
@@ -302,14 +346,14 @@ def _exact_slide(city_dir: Path, asset_base: Path) -> str | None:
     return _slide(title="Exact Placement", kicker="existing vs new service layout", body=block)
 
 
-def _flow_slide(
+def _flow_slides(
     city_dir: Path,
     prep_manifest: dict | None,
     access_manifest: dict | None,
     route_summary: dict | None,
     pt_manifest: dict | None,
     asset_base: Path,
-) -> str:
+) -> list[str]:
     solver_services = ", ".join((prep_manifest or {}).get("services", []))
     acc_sel = (prep_manifest or {}).get("accessibility_selection", {})
     route_generation = (access_manifest or {}).get("route_generation", route_summary or {})
@@ -317,60 +361,132 @@ def _flow_slide(
     comparison = recomputed.get("comparison_previews", {})
     route_files = route_generation.get("files", {})
     counts = (pt_manifest or {}).get("counts", {})
-    parts = [
-        _stage_block(
-            name="1) Raw + Street Pattern",
-            command="run_joint -> run_pipeline3_street_pattern_to_quarters",
-            params=[
-                ("street cells", (prep_manifest or {}).get("street_cells")),
+    step_defs = [
+        {
+            "name": "1) City base + missing building attributes restoration",
+            "command": "run_joint -> building restoration (is_living + storey)",
+            "params": [
                 ("active blocks", acc_sel.get("blocks_included")),
+                ("buildings", "restore missing is_living / storey"),
             ],
-            images=[
+            "images": [
                 _image_card("raw OSM", _png(city_dir, "overview_raw_osm_layers.png"), asset_base),
-                _image_card("street pattern", _png(city_dir, "street_pattern_top1.png"), asset_base),
+                _image_card("is_living restored", _png(city_dir, "buildings_is_living_restoration_status.png"), asset_base),
+                _image_card("storey restored", _png(city_dir, "buildings_storey_restoration_status.png"), asset_base),
+                _image_card("buildings overview", _png(city_dir, "raw_buildings.png"), asset_base),
             ],
-        ),
-        _stage_block(
-            name="2) Services + Accessibility",
-            command="run_pipeline2_prepare_solver_inputs",
-            params=[
+        },
+        {
+            "name": "2) Quarters + morphology (street pattern grid)",
+            "command": "run_joint -> run_pipeline3_street_pattern_to_quarters",
+            "params": [
+                ("street cells", (prep_manifest or {}).get("street_cells")),
+                ("morphology", "top-1 + multivariate"),
+            ],
+            "images": [
+                _image_card("prepared blocks + street grid", _png(city_dir, "overview_prepared_blocks_and_street_grid.png"), asset_base),
+                _image_card("street pattern top-1", _png(city_dir, "street_pattern_top1.png"), asset_base),
+                _image_card("street pattern multivariate", _png(city_dir, "street_pattern_multivariate.png"), asset_base),
+                _image_card("blocks (aggregation units)", _png(city_dir, "blocks_clipped.png"), asset_base),
+            ],
+        },
+        {
+            "name": "3) Accessibility and provision on intermodal graph",
+            "command": "run_pipeline2_prepare_solver_inputs",
+            "params": [
                 ("services", solver_services),
                 ("blocks total", acc_sel.get("blocks_total_before_filter")),
                 ("active blocks", acc_sel.get("blocks_included")),
+                ("issues", "accessibility gaps + capacity shortages"),
             ],
-            images=[
-                _image_card("before: services raw", _png(city_dir, "29_services_raw_all_categories.png"), asset_base),
-                _image_card("after: mean time", _png(city_dir, "30_accessibility_mean_time_map.png"), asset_base),
+            "images": [
+                _image_card("services baseline", _png(city_dir, "29_services_raw_all_categories.png"), asset_base),
+                _image_card("mean travel time", _png(city_dir, "30_accessibility_mean_time_map.png"), asset_base),
+                _image_card("unmet demand: accessibility", _png(city_dir, "32_lp_polyclinic_provision_unmet.png"), asset_base),
+                _image_card("unmet demand: capacity", _png(city_dir, "31_lp_hospital_provision_unmet.png"), asset_base),
             ],
-        ),
-        _stage_block(
-            name="3) Gap-driven PT Update",
-            command="run_pipeline2_accessibility_first -> run_route_generator_external",
-            params=[
+        },
+        {
+            "name": "4) Cross-city evidence: these patterns repeat in many cities",
+            "command": "README_ACTIVE19_SERVICE_GAPS + cross-city tables",
+            "params": [
+                ("evidence", "cross-city summary tables"),
+            ],
+            "images": [
+                _image_card(
+                    "unmet demand by accessibility (colored)",
+                    _cross_city_png("10_unmet_demand_accessibility_by_street_pattern_service_canvas_intermodal_multivariate.png"),
+                    asset_base,
+                ),
+                _image_card(
+                    "unmet demand by capacity (colored)",
+                    _cross_city_png("11_unmet_demand_capacity_by_street_pattern_service_canvas_intermodal_multivariate.png"),
+                    asset_base,
+                ),
+                _image_card(
+                    "route share by street pattern (multivariate)",
+                    _cross_city_png("06_city_class_route_length_share_by_modality_canvas_multivariate.png"),
+                    asset_base,
+                ),
+                _image_card(
+                    "service locations by street pattern",
+                    _cross_city_png("12_service_location_by_street_pattern_service_canvas_multivariate.png"),
+                    asset_base,
+                ),
+            ],
+        },
+        {
+            "name": "5) Joint solution: MCLP services + connectivity recommendation + generated routes",
+            "command": "run_pipeline2_accessibility_first -> run_route_generator_external",
+            "params": [
                 ("modality", route_generation.get("modality")),
                 ("routes", route_generation.get("route_count") or (access_manifest or {}).get("connectpt_n_routes")),
                 ("unserved %", route_generation.get("unserved_demand_pct")),
+                ("optimization", "joint service + route intervention"),
             ],
-            images=[
-                _image_card("route", _existing(Path(route_files["shared_route_with_existing_preview"])) if route_files.get("shared_route_with_existing_preview") else None, asset_base),
-                _image_card("delta", _existing(Path(comparison["delta_preview_path"])) if comparison.get("delta_preview_path") else None, asset_base),
+            "images": [
+                _image_card(
+                    "generated route with existing network",
+                    _existing(Path(route_files["shared_route_with_existing_preview"])) if route_files.get("shared_route_with_existing_preview") else None,
+                    asset_base,
+                ),
+                _image_card(
+                    "generated route only",
+                    _existing(Path(route_files["shared_route_generated_only_preview"])) if route_files.get("shared_route_generated_only_preview") else None,
+                    asset_base,
+                ),
+                _image_card(
+                    "accessibility delta after generated route",
+                    _existing(Path(comparison["delta_preview_path"])) if comparison.get("delta_preview_path") else None,
+                    asset_base,
+                ),
+                _image_card("exact service placement status", _png(city_dir, "36_exact_polyclinic_placement_status.png"), asset_base),
             ],
-        ),
-        _stage_block(
-            name="4) PT x Morphology",
-            command="run_pt_street_pattern_dependency",
-            params=[
-                ("overlay segments", counts.get("overlay_segments")),
-                ("routes total", counts.get("routes_total")),
-            ],
-            images=[
-                _image_card("overlay", _png(city_dir, "pt_street_pattern_overlay_map.png"), asset_base),
-                _image_card("shares", _png(city_dir, "pt_street_pattern_modality_shares.png"), asset_base),
-            ],
-        ),
+        },
     ]
-    body = '<div class="flow-stack">' + '<div class="flow-arrow">↓</div>'.join(parts) + "</div>"
-    return _slide(title="Pipeline Flow (arrows)", kicker="simple scheme", body=body)
+    slides: list[str] = []
+    total = len(step_defs)
+    for idx, spec in enumerate(step_defs, start=1):
+        slides.extend(
+            _stage_slides(
+                step_title=f"Pipeline Step {idx}/{total}",
+                step_kicker="16:9 step",
+                stage_name=str(spec["name"]),
+                command=str(spec["command"]),
+                params=list(spec["params"]),
+                images=list(spec["images"]),
+                images_per_slide=2,
+            )
+        )
+    if not slides:
+        slides.append(
+            _slide(
+                title="Pipeline Flow",
+                kicker="16:9 step",
+                body='<div class="empty-note">No pipeline flow data available.</div>',
+            )
+        )
+    return slides
 
 
 def _render_storyboard(city_dir: Path, output_dirname: str) -> Path:
@@ -384,8 +500,8 @@ def _render_storyboard(city_dir: Path, output_dirname: str) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     slides = [_cover_slide(city_dir, prep_manifest, street_summary, output_dir)]
-    slides.append(
-        _flow_slide(
+    slides.extend(
+        _flow_slides(
             city_dir=city_dir,
             prep_manifest=prep_manifest,
             access_manifest=access_manifest,
@@ -431,7 +547,8 @@ def _render_storyboard(city_dir: Path, output_dirname: str) -> Path:
       padding: 28px 24px 60px;
     }}
     .slide {{
-      min-height: 900px;
+      width: 1600px;
+      height: 900px;
       background: rgba(255, 253, 250, 0.85);
       border: 1px solid rgba(221, 212, 199, 0.8);
       border-radius: 28px;
@@ -442,6 +559,7 @@ def _render_storyboard(city_dir: Path, output_dirname: str) -> Path:
       flex-direction: column;
       gap: 18px;
       break-after: page;
+      overflow: hidden;
     }}
     .slide-kicker {{
       text-transform: uppercase;

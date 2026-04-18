@@ -296,6 +296,12 @@ DEFAULT_MIN_NEW_CAPACITY_BY_SERVICE = {
     "polyclinic": 50.0,
     "school": 1500.0,
 }
+DEFAULT_FIXED_NEW_CAPACITY_BY_SERVICE = {
+    "hospital": 200.0,
+    "polyclinic": 200.0,
+    "school": 200.0,
+    "kindergarten": 200.0,
+}
 def _log_name(path: Path | str | None) -> str:
     if path is None:
         return "none"
@@ -599,11 +605,8 @@ def _service_min_new_capacity(service: str) -> float:
 
 
 def _service_fixed_mean_capacity(service: str, solver_blocks: pd.DataFrame | gpd.GeoDataFrame) -> float:
-    capacities = pd.to_numeric(solver_blocks.get("capacity", 0.0), errors="coerce").fillna(0.0)
-    positive = capacities[capacities > 0.0]
-    if positive.empty:
-        return float(_service_min_new_capacity(service))
-    return float(max(1, int(round(float(positive.mean())))))
+    del solver_blocks
+    return float(DEFAULT_FIXED_NEW_CAPACITY_BY_SERVICE.get(service, 200.0))
 
 
 def _to_points(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
@@ -1459,6 +1462,88 @@ def _plot_service_provision_delta_preview(
     return str(out_path)
 
 
+def _build_genetic_history_frame(raw_history: object) -> pd.DataFrame:
+    if not isinstance(raw_history, list) or not raw_history:
+        return pd.DataFrame(columns=["generation", "candidate_rank", "fitness"])
+    rows: list[dict[str, float | int]] = []
+    for generation_idx, generation_scores in enumerate(raw_history, start=1):
+        if not isinstance(generation_scores, list) or not generation_scores:
+            continue
+        for rank_idx, score in enumerate(generation_scores, start=1):
+            try:
+                score_value = float(score)
+            except Exception:
+                continue
+            rows.append(
+                {
+                    "generation": int(generation_idx),
+                    "candidate_rank": int(rank_idx),
+                    "fitness": score_value,
+                }
+            )
+    if not rows:
+        return pd.DataFrame(columns=["generation", "candidate_rank", "fitness"])
+    history = pd.DataFrame(rows)
+    history = history.sort_values(["generation", "fitness"], ascending=[True, True]).reset_index(drop=True)
+    return history
+
+
+def _save_genetic_history_outputs(
+    *,
+    optimization: dict,
+    output_dir: Path,
+    preview_dir: Path,
+    service: str,
+) -> dict[str, str]:
+    history = _build_genetic_history_frame(optimization.get("fitness_history"))
+    if history.empty:
+        return {}
+
+    history_csv_path = output_dir / "genetic_fitness_history.csv"
+    history_json_path = output_dir / "genetic_fitness_history.json"
+    history_csv_path.parent.mkdir(parents=True, exist_ok=True)
+    history.to_csv(history_csv_path, index=False)
+
+    grouped = (
+        history.groupby("generation", as_index=False)
+        .agg(
+            best_fitness=("fitness", "min"),
+            mean_fitness=("fitness", "mean"),
+            median_fitness=("fitness", "median"),
+            worst_fitness=("fitness", "max"),
+            population_size=("fitness", "size"),
+        )
+        .sort_values("generation")
+        .reset_index(drop=True)
+    )
+    history_json_path.write_text(
+        json.dumps({"generations": grouped.to_dict(orient="records")}, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots(figsize=(9.6, 5.4))
+    ax.plot(grouped["generation"], grouped["mean_fitness"], color="#0f766e", linewidth=1.8, label="mean fitness")
+    ax.plot(grouped["generation"], grouped["best_fitness"], color="#b91c1c", linewidth=2.1, label="best fitness")
+    ax.set_title(f"Genetic convergence [{service}] (lower is better)", fontsize=13, fontweight="bold")
+    ax.set_xlabel("generation")
+    ax.set_ylabel("fitness")
+    ax.grid(alpha=0.25, linewidth=0.6)
+    ax.legend(loc="best", frameon=False)
+    fig.tight_layout()
+    convergence_png_path = preview_dir / f"genetic_fitness_convergence_{service}.png"
+    save_preview_figure(fig, convergence_png_path)
+    plt.close(fig)
+    _log(f"Preview step: saved genetic convergence plot for service [{service}]: {convergence_png_path.name}")
+
+    return {
+        "genetic_fitness_history_csv": str(history_csv_path),
+        "genetic_fitness_history_json": str(history_json_path),
+        "genetic_fitness_convergence_png": str(convergence_png_path),
+    }
+
+
 def _ensure_semantic_placement_previews(
     *,
     solver_blocks: pd.DataFrame | gpd.GeoDataFrame,
@@ -1565,6 +1650,9 @@ def _run_exact_placement_for_service(
         and assignment_links_path.exists()
         and cache_mode_matches
     )
+    expected_genetic_convergence_png = preview_dir / f"genetic_fitness_convergence_{service}.png"
+    if bool(use_genetic) and not expected_genetic_convergence_png.exists():
+        manifest_cache_ok = False
     if manifest_cache_ok:
         cached_blocks_after = gpd.read_parquet(blocks_after_path)
         semantic_preview_paths = _ensure_semantic_placement_previews(
@@ -1581,6 +1669,11 @@ def _run_exact_placement_for_service(
             "assignment_links_after": str(assignment_links_path),
             "status_preview_png": str(preview_dir / gallery_targets["status"]) if gallery_targets.get("status") and (preview_dir / gallery_targets["status"]).exists() else None,
             "after_preview_png": str(preview_dir / gallery_targets["after"]) if gallery_targets.get("after") and (preview_dir / gallery_targets["after"]).exists() else None,
+            "genetic_fitness_convergence_png": (
+                str(preview_dir / f"genetic_fitness_convergence_{service}.png")
+                if (preview_dir / f"genetic_fitness_convergence_{service}.png").exists()
+                else None
+            ),
             **semantic_preview_paths,
             "selected_count": int(cached_summary.get("selected_count", 0)),
             "new_count": int(cached_summary.get("new_count", 0)),
@@ -1721,6 +1814,12 @@ def _run_exact_placement_for_service(
         blocks_ref=blocks_ref,
         boundary=boundary,
     )
+    genetic_history_outputs = _save_genetic_history_outputs(
+        optimization=optimization,
+        output_dir=output_dir,
+        preview_dir=preview_dir,
+        service=service,
+    )
 
     total_demand = pd.to_numeric(blocks_after.get("demand", 0.0), errors="coerce").fillna(0.0)
     summary_after = {
@@ -1763,6 +1862,7 @@ def _run_exact_placement_for_service(
             "status_preview_png": status_png,
             "after_preview_png": after_png,
             **semantic_preview_paths,
+            **genetic_history_outputs,
         },
     }
     _log(
@@ -1787,6 +1887,7 @@ def _run_exact_placement_for_service(
         "assignment_links_after": str(assignment_links_path),
         "status_preview_png": status_png,
         "after_preview_png": after_png,
+        "genetic_fitness_convergence_png": genetic_history_outputs.get("genetic_fitness_convergence_png"),
         "selected_count": summary_after["selected_count"],
         "new_count": summary_after["new_count"],
         "expanded_count": summary_after["expanded_count"],
