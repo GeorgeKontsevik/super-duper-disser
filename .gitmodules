@@ -25,3 +25,6 @@
 [submodule "iduedu-fork"]
 	path = iduedu-fork
 	url = https://github.com/GeorgeKontsevik/IduEdu.git
+[submodule "equatorial"]
+	path = equatorial
+	url = https://github.com/GeorgeKontsevik/equatorial.git
