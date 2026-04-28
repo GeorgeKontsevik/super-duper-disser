@@ -50,6 +50,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--generated-summary", type=Path, default=DEFAULT_GENERATED_SUMMARY)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--modality", default="bus")
+    parser.add_argument("--generated-graph-path", type=Path, default=None)
+    parser.add_argument("--od-matrix-path", type=Path, default=None)
     parser.add_argument("--route-count", type=int, default=None)
     parser.add_argument(
         "--existing-route-policy",
@@ -76,6 +78,18 @@ def _read_od_matrix(path: Path) -> np.ndarray:
     if values.ndim != 2 or values.shape[0] != values.shape[1]:
         raise ValueError(f"OD matrix must be square after reading index column, got shape={values.shape}: {path}")
     return values
+
+
+def _resolve_od_matrix_path(generated_summary_path: Path, modality: str, explicit: Path | None) -> Path:
+    if explicit is not None:
+        return _require_path(explicit, "OD matrix")
+    return _require_path(generated_summary_path.parent / f"{modality}_od_matrix.csv", "generated OD matrix")
+
+
+def _resolve_generated_graph_path(city_dir: Path, modality: str, explicit: Path | None) -> Path:
+    if explicit is not None:
+        return _require_path(explicit, "generated-route graph")
+    return _require_path(city_dir / "connectpt_osm" / modality / "graph.pkl", "ConnectPT graph")
 
 
 def _require_path(path: Path, label: str) -> Path:
@@ -278,7 +292,7 @@ def _route_pattern_tables(overlay: gpd.GeoDataFrame, route_nodes: pd.DataFrame) 
         )
     )
     route_stats = (
-        route_totals.merge(route_nodes, on=["type", "route_label"], how="left")
+        route_nodes.merge(route_totals, on=["type", "route_label"], how="left")
         .merge(entropy, on=["type", "route_label"], how="left")
         .merge(
             dominant[
@@ -294,6 +308,7 @@ def _route_pattern_tables(overlay: gpd.GeoDataFrame, route_nodes: pd.DataFrame) 
             how="left",
         )
     )
+    route_stats["route_total_m"] = route_stats["route_total_m"].fillna(0.0)
     route_stats["route_total_km"] = route_stats["route_total_m"] / 1000.0
     route_stats["street_pattern_class_count"] = route_stats["street_pattern_class_count"].fillna(0).astype(int)
     route_stats["street_pattern_entropy"] = route_stats["street_pattern_entropy"].fillna(0.0)
@@ -501,16 +516,18 @@ def main() -> None:
     stats_dir.mkdir(parents=True, exist_ok=True)
     preview_dir.mkdir(parents=True, exist_ok=True)
 
-    graph_path = _require_path(city_dir / "connectpt_osm" / args.modality / "graph.pkl", "ConnectPT graph")
-    graph_nodes_path = _require_path(city_dir / "connectpt_osm" / args.modality / "graph_nodes.parquet", "ConnectPT graph nodes")
+    graph_path = _resolve_generated_graph_path(city_dir, args.modality, args.generated_graph_path)
+    graph_nodes_path = city_dir / "connectpt_osm" / args.modality / "graph_nodes.parquet"
     pt_edges_path = _require_path(city_dir / "pt_street_pattern_dependency" / "pt_edges_filtered.parquet", "current PT edges")
     current_route_stats_path = _require_path(city_dir / "pt_street_pattern_dependency" / "route_stats.csv", "current route stats")
-    od_path = _require_path(generated_summary_path.parent / f"{args.modality}_od_matrix.csv", "generated OD matrix")
+    od_path = _resolve_od_matrix_path(generated_summary_path, args.modality, args.od_matrix_path)
     cells_path = _resolve_street_cells(city_dir)
 
     graph = _load_graph(graph_path)
-    graph_nodes_ref = gpd.read_parquet(graph_nodes_path)
-    graph_nodes = _graph_nodes_gdf(graph, graph_nodes_ref.crs)
+    graph_crs = graph.graph.get("crs")
+    if graph_crs is None and graph_nodes_path.exists():
+        graph_crs = gpd.read_parquet(graph_nodes_path).crs
+    graph_nodes = _graph_nodes_gdf(graph, graph_crs)
     cells = gpd.read_file(cells_path)
     class_col = _pick_class_column(cells, None)
 
@@ -607,6 +624,7 @@ def main() -> None:
         "existing_stop_match_threshold_m": float(args.existing_stop_match_threshold_m),
         "street_pattern_cells": str(cells_path),
         "street_pattern_class_col": class_col,
+        "generated_graph": str(graph_path),
         "od_matrix": str(od_path),
         "coverage_mode": "direct_same_route_on_connectpt_od",
         "counts": {
