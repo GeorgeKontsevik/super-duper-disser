@@ -560,6 +560,9 @@ def build_connectpt_osm_bundle(
             )
             continue
 
+        for _, _, edge_data in simplified_graph.edges(data=True):
+            if edge_data.get("length_m") is None and edge_data.get("weight") is not None:
+                edge_data["length_m"] = float(edge_data["weight"])
         _save_pickle(simplified_graph, graph_pickle_path)
         if simplified_graph.number_of_edges() == 0:
             logger.warning(

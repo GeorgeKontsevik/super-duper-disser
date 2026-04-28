@@ -506,6 +506,15 @@ def _load_stop_graph(city_dir: Path, modality: str):
     return graph
 
 
+def _ensure_length_m_edges(graph) -> int:
+    filled = 0
+    for _, _, data in graph.edges(data=True):
+        if data.get("length_m") is None and data.get("weight") is not None:
+            data["length_m"] = float(data["weight"])
+            filled += 1
+    return filled
+
+
 def _load_existing_route_lines(city_dir: Path, modality: str) -> gpd.GeoDataFrame | None:
     lines_path = city_dir / "connectpt_osm" / modality / "lines.parquet"
     if not lines_path.exists():
@@ -550,6 +559,7 @@ def _build_node_locs(graph, nodes: list[int]) -> torch.Tensor:
 
 def _compute_od_matrix(blocks: gpd.GeoDataFrame, stops: gpd.GeoDataFrame, graph) -> pd.DataFrame:
     demand_blocks = blocks[["population", "density", "diversity", "land_use", "geometry"]].copy()
+    _ensure_length_m_edges(graph)
     return get_OD(demand_blocks, stops.copy(), graph.to_directed(), blocks.crs)
 
 
