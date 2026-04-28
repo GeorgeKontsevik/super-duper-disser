@@ -98,11 +98,26 @@ def _street_pattern_multivariate_colors(cells: gpd.GeoDataFrame) -> pd.Series:
     )
 
 
-def _route_geometries_from_tensor(graph, routes_tensor: torch.Tensor) -> gpd.GeoSeries | None:
+def _route_node_labels(route: list[int], graph_node_labels: list[int] | None) -> list[int]:
+    if graph_node_labels is None:
+        return route
+    labels = []
+    for node_idx in route:
+        if 0 <= int(node_idx) < len(graph_node_labels):
+            labels.append(graph_node_labels[int(node_idx)])
+    return labels
+
+
+def _route_geometries_from_tensor(
+    graph,
+    routes_tensor: torch.Tensor,
+    graph_node_labels: list[int] | None = None,
+) -> gpd.GeoSeries | None:
     geoms = []
     graph_crs = graph.graph.get("crs") or "EPSG:4326"
     for route in _route_sequences(routes_tensor):
-        for u, v in zip(route[:-1], route[1:]):
+        route_labels = _route_node_labels(route, graph_node_labels)
+        for u, v in zip(route_labels[:-1], route_labels[1:]):
             if not graph.has_edge(u, v):
                 continue
             geom = graph.get_edge_data(u, v).get("geometry")
@@ -119,6 +134,7 @@ def _save_route_overlay_on_polygons(
     cell_color_col: str | None,
     graph,
     routes_tensor: torch.Tensor,
+    graph_node_labels: list[int] | None,
     boundary: gpd.GeoDataFrame | None,
     out_path: Path,
     title: str,
@@ -184,7 +200,7 @@ def _save_route_overlay_on_polygons(
             zorder=2,
         )
 
-    route_geoms = _route_geometries_from_tensor(graph, routes_tensor)
+    route_geoms = _route_geometries_from_tensor(graph, routes_tensor, graph_node_labels)
     if route_geoms is not None and len(route_geoms) > 0:
         route_geoms.to_crs("EPSG:3857").plot(
             ax=ax,
@@ -214,6 +230,7 @@ def _save_street_pattern_and_elevation_route_overlays(
     modality: str,
     graph,
     routes_tensor: torch.Tensor,
+    graph_node_labels: list[int],
     boundary: gpd.GeoDataFrame | None,
     preview_dir: Path,
     shared_preview_dir: Path,
@@ -244,6 +261,7 @@ def _save_street_pattern_and_elevation_route_overlays(
             cell_color_col="street_pattern_multivariate_color",
             graph=graph,
             routes_tensor=routes_tensor,
+            graph_node_labels=graph_node_labels,
             boundary=boundary,
             out_path=out_path,
             title=title,
@@ -285,6 +303,7 @@ def _save_street_pattern_and_elevation_route_overlays(
             cell_color_col=None,
             graph=graph,
             routes_tensor=routes_tensor,
+            graph_node_labels=graph_node_labels,
             boundary=boundary,
             out_path=out_path,
             title=title,
@@ -324,6 +343,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--modality", default="bus")
     parser.add_argument("--blocks-path")
     parser.add_argument("--output-dir")
+    parser.add_argument(
+        "--shared-preview-dir",
+        help=(
+            "Optional directory for shared preview copies. "
+            "Default: <joint-input-dir>/preview_png/all_together."
+        ),
+    )
     parser.add_argument("--boundary-path")
     parser.add_argument("--weights-path")
     parser.add_argument(
@@ -741,6 +767,7 @@ def _save_route_preview(
     graph,
     boundary: gpd.GeoDataFrame | None,
     routes_tensor: torch.Tensor,
+    graph_node_labels: list[int],
     summary: dict,
     out_path: Path,
     draw_network: bool = True,
@@ -791,9 +818,10 @@ def _save_route_preview(
     palette = [route_palette[f"route_{idx}"] for idx in range(1, 9)]
     legend_handles: list[Line2D] = []
     for idx, route in enumerate(_route_sequences(routes_tensor)):
+        route_labels = _route_node_labels(route, graph_node_labels)
         color = palette[idx % len(palette)]
         legend_handles.append(Line2D([0], [0], color=color, linewidth=2.4, label=f"route {idx + 1}"))
-        for u, v in zip(route[:-1], route[1:]):
+        for u, v in zip(route_labels[:-1], route_labels[1:]):
             if graph.has_edge(u, v):
                 geom = graph.get_edge_data(u, v).get("geometry")
                 if geom is not None and not geom.is_empty:
@@ -805,7 +833,7 @@ def _save_route_preview(
                         ax=ax, color=color, linewidth=3.0, alpha=0.92, zorder=4
                     )
         route_points = gpd.GeoSeries(
-            [Point(float(graph.nodes[n]["x"]), float(graph.nodes[n]["y"])) for n in route],
+            [Point(float(graph.nodes[n]["x"]), float(graph.nodes[n]["y"])) for n in route_labels],
             crs=graph_crs,
         ).to_crs("EPSG:3857")
         route_point_clouds_3857.append(route_points)
@@ -943,7 +971,11 @@ def main() -> None:
     output_dir = _resolve_output_dir(city_dir, modality, args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     preview_dir = output_dir / "preview_png"
-    shared_preview_dir = city_dir / "preview_png" / "all_together"
+    shared_preview_dir = (
+        Path(args.shared_preview_dir).resolve()
+        if args.shared_preview_dir
+        else city_dir / "preview_png" / "all_together"
+    )
     shared_preview_dir.mkdir(parents=True, exist_ok=True)
 
     blocks_path = _resolve_blocks_path(city_dir, args.blocks_path)
@@ -1010,6 +1042,7 @@ def main() -> None:
     dump_routes(run_name, routes.cpu(), out_dir=output_dir)
     od_path = output_dir / f"{modality}_od_matrix.csv"
     od_matrix.to_csv(od_path)
+    route_sequences = _route_sequences(routes)
 
     summary = {
         "city_dir": str(city_dir),
@@ -1019,11 +1052,18 @@ def main() -> None:
         "weights_path": str(weights_path),
         "od_source": ("external" if external_od_path is not None else "gravity"),
         "od_matrix_input_path": (str(external_od_path) if external_od_path is not None else None),
+        "objective_weights": {
+            "demand_time_weight": float(args.demand_time_weight),
+            "route_time_weight": float(args.route_time_weight),
+            "median_connectivity_weight": float(args.median_connectivity_weight),
+        },
         "graph_node_count": int(len(nodes)),
         "graph_edge_count": int(graph.number_of_edges()),
         "blocks_count": int(len(blocks)),
         "population_total": float(pd.to_numeric(blocks["population"], errors="coerce").fillna(0.0).sum()),
-        "route_count": len(_route_sequences(routes)),
+        "route_count": len(route_sequences),
+        "unique_route_count": len({tuple(route) for route in route_sequences}),
+        "route_lengths": [len(route) for route in route_sequences],
         "cost": _extract_metric(metrics, "cost"),
         "att": _extract_metric(metrics, "ATT"),
         "unserved_demand_pct": _extract_metric(metrics, "$d_{un}$"),
@@ -1054,6 +1094,7 @@ def main() -> None:
         graph=graph,
         boundary=boundary.to_crs(blocks.crs) if boundary is not None and boundary.crs != blocks.crs else boundary,
         routes_tensor=routes.cpu(),
+        graph_node_labels=nodes,
         summary=summary,
         out_path=route_preview_path,
         draw_network=True,
@@ -1068,6 +1109,7 @@ def main() -> None:
         graph=graph,
         boundary=boundary.to_crs(blocks.crs) if boundary is not None and boundary.crs != blocks.crs else boundary,
         routes_tensor=routes.cpu(),
+        graph_node_labels=nodes,
         summary=summary,
         out_path=route_only_path,
         draw_network=False,
@@ -1085,6 +1127,7 @@ def main() -> None:
         modality=modality,
         graph=graph,
         routes_tensor=routes.cpu(),
+        graph_node_labels=nodes,
         boundary=boundary.to_crs(blocks.crs) if boundary is not None and boundary.crs != blocks.crs else boundary,
         preview_dir=preview_dir,
         shared_preview_dir=shared_preview_dir,
