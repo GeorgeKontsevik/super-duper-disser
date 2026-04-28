@@ -50,6 +50,8 @@ This file captures repo-specific working rules that should survive chat history 
 - Treat `iduedu` as the primary source for intermodal PT stops when that bundle exists.
 - Reuse already collected local layers instead of redownloading equivalent OSM data when possible.
 - Preserve and inspect mapping artifacts when simplifying or bridging stop layers.
+- For route generation experiments, do not add fallback route-generation paths to force route diversity.
+  If the model returns duplicate routes, report and store that fact honestly.
 
 ## Practical Review Habit
 

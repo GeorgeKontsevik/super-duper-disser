@@ -108,6 +108,10 @@ def _route_node_labels(route: list[int], graph_node_labels: list[int] | None) ->
     return labels
 
 
+def _unique_route_count(route_sequences: list[list[int]]) -> int:
+    return len({tuple(route) for route in route_sequences})
+
+
 def _route_geometries_from_tensor(
     graph,
     routes_tensor: torch.Tensor,
@@ -140,6 +144,8 @@ def _save_route_overlay_on_polygons(
     title: str,
     draw_network: bool,
     roads: gpd.GeoDataFrame | None = None,
+    existing_lines: gpd.GeoDataFrame | None = None,
+    draw_existing_routes: bool = False,
     numeric_fill_col: str | None = None,
     numeric_cmap: str = "terrain",
     numeric_vmin: float | None = None,
@@ -167,6 +173,13 @@ def _save_route_overlay_on_polygons(
             gpd.GeoSeries(edge_geoms, crs=graph.graph.get("crs") or "EPSG:4326").to_crs("EPSG:3857").plot(
                 ax=ax, color="#9ca3af", linewidth=0.35, alpha=0.35, zorder=1
             )
+    if draw_existing_routes:
+        existing_plot = normalize_preview_gdf(existing_lines, boundary_plot, target_crs="EPSG:3857")
+        if existing_plot is not None and not existing_plot.empty:
+            existing_plot = existing_plot[existing_plot.geometry.notna() & ~existing_plot.geometry.is_empty].copy()
+            existing_plot = existing_plot[existing_plot.geometry.geom_type.isin(["LineString", "MultiLineString"])].copy()
+            if not existing_plot.empty:
+                existing_plot.plot(ax=ax, color="#2563eb", linewidth=1.0, alpha=0.28, zorder=3)
 
     if numeric_fill_col is not None:
         values = pd.to_numeric(cells_plot[numeric_fill_col], errors="coerce")
@@ -236,6 +249,7 @@ def _save_street_pattern_and_elevation_route_overlays(
     shared_preview_dir: Path,
     summary: dict,
     roads: gpd.GeoDataFrame | None = None,
+    existing_lines: gpd.GeoDataFrame | None = None,
 ) -> None:
     cells_path = _resolve_street_pattern_cells_path_for_preview(city_dir)
     if cells_path is None:
@@ -251,7 +265,7 @@ def _save_street_pattern_and_elevation_route_overlays(
 
     # Street-pattern multivariate overlays
     for draw_network, suffix, title in [
-        (True, "with_existing", f"Generated {modality} routes on street pattern (with network)"),
+        (True, "with_existing", f"Generated {modality} routes on street pattern (with existing)"),
         (False, "generated_only", f"Generated {modality} routes on street pattern (generated only)"),
     ]:
         out_name = f"pt_route_generator_{modality}_{suffix}_over_street_pattern_multivariate.png"
@@ -265,8 +279,10 @@ def _save_street_pattern_and_elevation_route_overlays(
             boundary=boundary,
             out_path=out_path,
             title=title,
-            draw_network=draw_network,
+            draw_network=False,
             roads=roads,
+            existing_lines=existing_lines,
+            draw_existing_routes=draw_network,
         )
         if ok:
             shared_path = shared_preview_dir / out_name
@@ -293,7 +309,7 @@ def _save_street_pattern_and_elevation_route_overlays(
     terrain_cells["elevation_m_mean"] = elevation
 
     for draw_network, suffix, title in [
-        (True, "with_existing", f"Generated {modality} routes on elevation (with network)"),
+        (True, "with_existing", f"Generated {modality} routes on elevation (with existing)"),
         (False, "generated_only", f"Generated {modality} routes on elevation (generated only)"),
     ]:
         out_name = f"pt_route_generator_{modality}_{suffix}_over_elevation.png"
@@ -307,8 +323,10 @@ def _save_street_pattern_and_elevation_route_overlays(
             boundary=boundary,
             out_path=out_path,
             title=title,
-            draw_network=draw_network,
+            draw_network=False,
             roads=roads,
+            existing_lines=existing_lines,
+            draw_existing_routes=draw_network,
             numeric_fill_col="elevation_m_mean",
             numeric_cmap="terrain",
             numeric_vmin=vmin,
@@ -362,9 +380,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--n-routes", type=int, default=6)
     parser.add_argument("--min-route-len", type=int, default=6)
     parser.add_argument("--max-route-len", type=int, default=10)
-    parser.add_argument("--demand-time-weight", type=float, default=0.0)
-    parser.add_argument("--route-time-weight", type=float, default=0.0)
-    parser.add_argument("--median-connectivity-weight", type=float, default=1.0)
+    parser.add_argument("--demand-time-weight", type=float, default=0.3)
+    parser.add_argument("--route-time-weight", type=float, default=0.3)
+    parser.add_argument("--median-connectivity-weight", type=float, default=0.3)
     parser.add_argument("--replace-in-intermodal", action="store_true")
     parser.add_argument(
         "--replace-existing-modality-routes",
@@ -486,6 +504,16 @@ def _load_stop_graph(city_dir: Path, modality: str):
     with graph_path.open("rb") as fh:
         graph = pickle.load(fh)
     return graph
+
+
+def _load_existing_route_lines(city_dir: Path, modality: str) -> gpd.GeoDataFrame | None:
+    lines_path = city_dir / "connectpt_osm" / modality / "lines.parquet"
+    if not lines_path.exists():
+        return None
+    lines = gpd.read_parquet(lines_path)
+    lines = lines[lines.geometry.notna() & ~lines.geometry.is_empty].copy()
+    lines = lines[lines.geometry.geom_type.isin(["LineString", "MultiLineString"])].copy()
+    return lines if not lines.empty else None
 
 
 def _build_stops_gdf_from_graph(graph, crs) -> tuple[list[int], dict[int, int], gpd.GeoDataFrame]:
@@ -772,6 +800,8 @@ def _save_route_preview(
     out_path: Path,
     draw_network: bool = True,
     roads: gpd.GeoDataFrame | None = None,
+    existing_lines: gpd.GeoDataFrame | None = None,
+    draw_existing_routes: bool = False,
 ) -> None:
     from matplotlib.lines import Line2D
 
@@ -813,6 +843,14 @@ def _save_route_preview(
         gpd.GeoSeries(node_points, crs=graph_crs).pipe(lambda s: s.to_crs("EPSG:3857") if getattr(s, "crs", None) else s).plot(
             ax=ax, color="#64748b", markersize=12, alpha=0.45, zorder=2
         )
+
+    if draw_existing_routes:
+        existing_plot = normalize_preview_gdf(existing_lines, boundary_plot, target_crs="EPSG:3857")
+        if existing_plot is not None and not existing_plot.empty:
+            existing_plot = existing_plot[existing_plot.geometry.notna() & ~existing_plot.geometry.is_empty].copy()
+            existing_plot = existing_plot[existing_plot.geometry.geom_type.isin(["LineString", "MultiLineString"])].copy()
+            if not existing_plot.empty:
+                existing_plot.plot(ax=ax, color="#2563eb", linewidth=1.1, alpha=0.32, zorder=3)
 
     route_palette = get_palette("route_generator")
     palette = [route_palette[f"route_{idx}"] for idx in range(1, 9)]
@@ -985,6 +1023,7 @@ def main() -> None:
     roads = gpd.read_parquet(roads_path) if roads_path.exists() else None
     weights_path = _resolve_weights_path(args.weights_path)
     graph = _load_stop_graph(city_dir, modality)
+    existing_lines = _load_existing_route_lines(city_dir, modality)
     external_od_path = Path(args.od_matrix_path).resolve() if args.od_matrix_path else None
 
     _log(
@@ -1059,10 +1098,11 @@ def main() -> None:
         },
         "graph_node_count": int(len(nodes)),
         "graph_edge_count": int(graph.number_of_edges()),
+        "existing_route_line_count": int(len(existing_lines)) if existing_lines is not None else 0,
         "blocks_count": int(len(blocks)),
         "population_total": float(pd.to_numeric(blocks["population"], errors="coerce").fillna(0.0).sum()),
         "route_count": len(route_sequences),
-        "unique_route_count": len({tuple(route) for route in route_sequences}),
+        "unique_route_count": _unique_route_count(route_sequences),
         "route_lengths": [len(route) for route in route_sequences],
         "cost": _extract_metric(metrics, "cost"),
         "att": _extract_metric(metrics, "ATT"),
@@ -1102,8 +1142,21 @@ def main() -> None:
     )
     shared_preview_path = shared_preview_dir / f"pt_route_generator_{modality}.png"
     shared_preview_path.write_bytes(route_preview_path.read_bytes())
-    route_with_existing_path = shared_preview_dir / f"pt_route_generator_{modality}_with_existing.png"
-    route_with_existing_path.write_bytes(route_preview_path.read_bytes())
+    route_with_existing_path = preview_dir / f"pt_route_generator_{modality}_with_existing.png"
+    _save_route_preview(
+        graph=graph,
+        boundary=boundary.to_crs(blocks.crs) if boundary is not None and boundary.crs != blocks.crs else boundary,
+        routes_tensor=routes.cpu(),
+        graph_node_labels=nodes,
+        summary=summary,
+        out_path=route_with_existing_path,
+        draw_network=False,
+        roads=roads,
+        existing_lines=existing_lines,
+        draw_existing_routes=True,
+    )
+    shared_route_with_existing_path = shared_preview_dir / f"pt_route_generator_{modality}_with_existing.png"
+    shared_route_with_existing_path.write_bytes(route_with_existing_path.read_bytes())
     route_only_path = preview_dir / f"pt_route_generator_{modality}_generated_only.png"
     _save_route_preview(
         graph=graph,
@@ -1119,7 +1172,8 @@ def main() -> None:
     shared_route_only_path.write_bytes(route_only_path.read_bytes())
     summary["files"]["route_preview"] = str(route_preview_path)
     summary["files"]["shared_route_preview"] = str(shared_preview_path)
-    summary["files"]["shared_route_with_existing_preview"] = str(route_with_existing_path)
+    summary["files"]["route_with_existing_preview"] = str(route_with_existing_path)
+    summary["files"]["shared_route_with_existing_preview"] = str(shared_route_with_existing_path)
     summary["files"]["route_generated_only_preview"] = str(route_only_path)
     summary["files"]["shared_route_generated_only_preview"] = str(shared_route_only_path)
     _save_street_pattern_and_elevation_route_overlays(
@@ -1133,6 +1187,7 @@ def main() -> None:
         shared_preview_dir=shared_preview_dir,
         summary=summary,
         roads=roads,
+        existing_lines=existing_lines,
     )
 
     if args.replace_in_intermodal or args.recompute_accessibility:

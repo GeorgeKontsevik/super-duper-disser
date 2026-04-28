@@ -127,9 +127,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--min-route-len", type=int, default=6)
     parser.add_argument("--max-route-len", type=int, default=10)
-    parser.add_argument("--demand-time-weight", type=float, default=0.0)
-    parser.add_argument("--route-time-weight", type=float, default=0.0)
-    parser.add_argument("--median-connectivity-weight", type=float, default=1.0)
+    parser.add_argument("--demand-time-weight", type=float, default=0.3)
+    parser.add_argument("--route-time-weight", type=float, default=0.3)
+    parser.add_argument("--median-connectivity-weight", type=float, default=0.3)
     return parser.parse_args()
 
 

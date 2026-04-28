@@ -284,11 +284,11 @@ for CITY in /Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/output
 done
 ```
 
-По умолчанию transport-side route generation теперь работает в connectivity-only режиме:
+По умолчанию transport-side route generation теперь работает с равными весами трех компонент:
 
-- `--demand-time-weight 0.0`
-- `--route-time-weight 0.0`
-- `--median-connectivity-weight 1.0`
+- `--demand-time-weight 0.3`
+- `--route-time-weight 0.3`
+- `--median-connectivity-weight 0.3`
 
 Для следующей базы экспериментов с голой OD можно запускать тот же генератор без `--od-matrix-path`.
 Тогда OD строится из текущих блоков и stops внутри `run_route_generator_external`, без service-aware target:
