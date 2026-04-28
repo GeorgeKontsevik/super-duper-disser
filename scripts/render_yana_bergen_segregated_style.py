@@ -217,6 +217,104 @@ def _plot_routes_map(
     plt.close(fig)
 
 
+def _draw_routes_panel(
+    fig,
+    ax,
+    *,
+    title: str,
+    boundary_plot: gpd.GeoDataFrame,
+    cells_plot: gpd.GeoDataFrame,
+    roads_plot: gpd.GeoDataFrame | None,
+    water: gpd.GeoDataFrame | None,
+    routes: gpd.GeoDataFrame,
+    route_stats: pd.DataFrame,
+    cmap,
+    norm,
+) -> None:
+    route_plot = normalize_preview_gdf(routes, boundary_plot)
+    counts = route_stats.set_index("route_label")["street_pattern_class_count"].to_dict()
+    apply_preview_canvas(fig, ax, boundary_plot, title=title, pad_ratio=0.055)
+    plot_water_layer(ax, water, boundary_layer=boundary_plot, polygon_zorder=1, line_zorder=2)
+
+    present = order_street_pattern_classes(cells_plot["street_pattern_class"].dropna().astype(str).unique())
+    for class_name in present:
+        part = cells_plot[cells_plot["street_pattern_class"] == class_name]
+        if part.empty:
+            continue
+        part.plot(
+            ax=ax,
+            color=CLASS_COLORS.get(class_name, CLASS_COLORS["unknown"]),
+            edgecolor="none",
+            linewidth=0.0,
+            alpha=0.25,
+            zorder=5,
+        )
+    if roads_plot is not None and not roads_plot.empty:
+        roads_plot.plot(ax=ax, color="#334155", linewidth=0.16, alpha=0.15, zorder=7)
+
+    for route_label, part in route_plot.groupby("route_label", sort=False):
+        count = float(counts.get(str(route_label), 0.0))
+        part.plot(ax=ax, color=cmap(norm(count)), linewidth=2.15, alpha=0.96, zorder=12)
+    ax.set_axis_off()
+
+
+def _plot_routes_side_by_side(
+    path: Path,
+    *,
+    boundary: gpd.GeoDataFrame,
+    cells: gpd.GeoDataFrame,
+    roads: gpd.GeoDataFrame | None,
+    water: gpd.GeoDataFrame | None,
+    existing_routes: gpd.GeoDataFrame,
+    generated_routes: gpd.GeoDataFrame,
+    route_stats: pd.DataFrame,
+) -> None:
+    boundary_plot = normalize_preview_gdf(boundary)
+    cells_plot = normalize_preview_gdf(cells, boundary_plot)
+    roads_plot = normalize_preview_gdf(roads, boundary_plot) if roads is not None else None
+    vmin = max(1.0, float(route_stats["street_pattern_class_count"].min()))
+    vmax = max(vmin, float(route_stats["street_pattern_class_count"].max()))
+    cmap = plt.get_cmap("magma_r")
+    norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
+
+    fig, axes = plt.subplots(1, 2, figsize=(15.6, 8.6), gridspec_kw={"wspace": 0.0})
+    fig.patch.set_facecolor(CANVAS_BACKGROUND)
+    _draw_routes_panel(
+        fig,
+        axes[0],
+        title="Current Bus Routes",
+        boundary_plot=boundary_plot,
+        cells_plot=cells_plot,
+        roads_plot=roads_plot,
+        water=water,
+        routes=existing_routes,
+        route_stats=route_stats[route_stats["scenario"] == "existing"],
+        cmap=cmap,
+        norm=norm,
+    )
+    _draw_routes_panel(
+        fig,
+        axes[1],
+        title="Generated Bare-OD Routes",
+        boundary_plot=boundary_plot,
+        cells_plot=cells_plot,
+        roads_plot=roads_plot,
+        water=water,
+        routes=generated_routes,
+        route_stats=route_stats[route_stats["scenario"] == "generated"],
+        cmap=cmap,
+        norm=norm,
+    )
+    sm = mpl.cm.ScalarMappable(norm=norm, cmap=cmap)
+    sm.set_array([])
+    cbar = fig.colorbar(sm, ax=axes.ravel().tolist(), fraction=0.025, pad=0.01)
+    cbar.set_label("street-pattern classes crossed", color=CANVAS_INK, fontsize=9)
+    cbar.ax.tick_params(colors=CANVAS_INK, labelsize=8)
+    footer_text(fig, ["Both panels use the same street-pattern background and route-breadth color scale."], y=0.016)
+    save_preview_figure(fig, path)
+    plt.close(fig)
+
+
 def _plot_route_mix(path: Path, route_class: pd.DataFrame, route_stats: pd.DataFrame) -> None:
     mix = route_class.copy()
     mix["route_key"] = mix["scenario"] + ":" + mix["route_label"]
@@ -404,6 +502,8 @@ def main() -> None:
     summary, boundary, cells, roads, water = _read_inputs()
     route_stats, route_class, coverage, existing_edges, generated_edges = _read_stats()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    for stale_png in OUTPUT_DIR.glob("*.png"):
+        stale_png.unlink()
 
     _plot_street_pattern_map(
         OUTPUT_DIR / "01_street_pattern_dominant_class.png",
@@ -432,10 +532,20 @@ def main() -> None:
         routes=generated_edges,
         route_stats=route_stats[route_stats["scenario"] == "generated"],
     )
-    _plot_route_mix(OUTPUT_DIR / "04_route_length_mix_by_street_pattern.png", route_class, route_stats)
-    _plot_scenario_mix(OUTPUT_DIR / "05_total_route_length_share_by_street_pattern.png", route_class)
-    _plot_class_count(OUTPUT_DIR / "06_street_pattern_breadth_per_route.png", route_stats)
-    _plot_od_coverage(OUTPUT_DIR / "07_route_count_vs_direct_od_coverage.png", coverage)
+    _plot_routes_side_by_side(
+        OUTPUT_DIR / "04_existing_vs_generated_routes_on_street_pattern.png",
+        boundary=boundary,
+        cells=cells,
+        roads=roads,
+        water=water,
+        existing_routes=existing_edges,
+        generated_routes=generated_edges,
+        route_stats=route_stats,
+    )
+    _plot_route_mix(OUTPUT_DIR / "05_route_length_mix_by_street_pattern.png", route_class, route_stats)
+    _plot_scenario_mix(OUTPUT_DIR / "06_total_route_length_share_by_street_pattern.png", route_class)
+    _plot_class_count(OUTPUT_DIR / "07_street_pattern_breadth_per_route.png", route_stats)
+    _plot_od_coverage(OUTPUT_DIR / "08_route_count_vs_direct_od_coverage.png", coverage)
 
     manifest = {
         "source_run_dir": str(RUN_DIR),
