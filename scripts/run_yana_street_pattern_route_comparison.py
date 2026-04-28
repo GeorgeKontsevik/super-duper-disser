@@ -51,6 +51,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--modality", default="bus")
     parser.add_argument("--route-count", type=int, default=None)
+    parser.add_argument(
+        "--existing-route-policy",
+        choices=("all", "closest_stop_count"),
+        default="all",
+        help=(
+            "all: compare against all current routes of the modality and require enough generated routes. "
+            "closest_stop_count: compare against --route-count current routes closest to generated stop count."
+        ),
+    )
     parser.add_argument("--existing-stop-match-threshold-m", type=float, default=100.0)
     return parser.parse_args()
 
@@ -85,7 +94,7 @@ def _load_routes_from_summary(summary: dict) -> list[list[int]]:
     raw = summary.get("routes_tensor")
     if not raw or not isinstance(raw, list) or not raw[0]:
         raise ValueError("Generated summary does not contain routes_tensor[0].")
-    routes = [[int(node_idx) for node_idx in route] for route in raw[0]]
+    routes = [[int(node_idx) for node_idx in route if int(node_idx) >= 0] for route in raw[0]]
     if any(len(route) < 2 for route in routes):
         raise ValueError("Generated routes must contain at least two stops each.")
     return routes
@@ -174,21 +183,38 @@ def _select_existing_routes(
     route_stats: pd.DataFrame,
     *,
     modality: str,
-    target_stop_count: int,
+    target_stop_count: int | None,
     route_count: int,
+    policy: str,
 ) -> pd.DataFrame:
     work = route_stats[route_stats["type"].astype("string").str.lower() == modality.lower()].copy()
     if work.empty:
         raise ValueError(f"No current routes found for modality={modality!r}.")
-    work["stop_gap"] = (pd.to_numeric(work["stop_count"], errors="coerce") - target_stop_count).abs()
+    work["stop_count"] = pd.to_numeric(work["stop_count"], errors="coerce")
     work["route_total_m"] = pd.to_numeric(work["route_total_m"], errors="coerce")
-    selected = (
-        work.sort_values(["stop_gap", "stop_count", "route_total_m", "route_label"], ascending=[True, True, True, True])
-        .head(route_count)
-        .reset_index(drop=True)
-    )
+
+    if policy == "all":
+        selected = work.sort_values(["route_total_m", "route_label"], ascending=[False, True]).reset_index(drop=True)
+        selected["stop_gap"] = 0
+    elif policy == "closest_stop_count":
+        if target_stop_count is None:
+            raise ValueError("closest_stop_count policy requires target_stop_count.")
+        selected = work.copy()
+        selected["stop_gap"] = (selected["stop_count"] - target_stop_count).abs()
+        selected = (
+            selected.sort_values(
+                ["stop_gap", "stop_count", "route_total_m", "route_label"],
+                ascending=[True, True, True, True],
+            )
+            .head(route_count)
+            .reset_index(drop=True)
+        )
+    else:
+        raise ValueError(f"Unsupported existing-route-policy: {policy}")
+
     if len(selected) < route_count:
         raise ValueError(f"Only {len(selected)} current routes available, need {route_count}.")
+    selected = selected.head(route_count).copy()
     selected["type"] = "existing"
     return selected
 
@@ -475,12 +501,6 @@ def main() -> None:
     stats_dir.mkdir(parents=True, exist_ok=True)
     preview_dir.mkdir(parents=True, exist_ok=True)
 
-    generated_summary = _read_json(generated_summary_path)
-    generated_routes = _load_routes_from_summary(generated_summary)
-    route_count = int(args.route_count or len(generated_routes))
-    generated_routes = generated_routes[:route_count]
-    target_stop_count = int(round(float(np.median([len(route) for route in generated_routes]))))
-
     graph_path = _require_path(city_dir / "connectpt_osm" / args.modality / "graph.pkl", "ConnectPT graph")
     graph_nodes_path = _require_path(city_dir / "connectpt_osm" / args.modality / "graph_nodes.parquet", "ConnectPT graph nodes")
     pt_edges_path = _require_path(city_dir / "pt_street_pattern_dependency" / "pt_edges_filtered.parquet", "current PT edges")
@@ -494,12 +514,26 @@ def main() -> None:
     cells = gpd.read_file(cells_path)
     class_col = _pick_class_column(cells, None)
 
+    generated_summary = _read_json(generated_summary_path)
+    generated_routes_all = _load_routes_from_summary(generated_summary)
     current_route_stats = pd.read_csv(current_route_stats_path)
+    existing_modality_count = int(
+        current_route_stats[current_route_stats["type"].astype("string").str.lower() == args.modality.lower()].shape[0]
+    )
+    route_count = int(args.route_count or (existing_modality_count if args.existing_route_policy == "all" else len(generated_routes_all)))
+    if len(generated_routes_all) < route_count:
+        raise ValueError(
+            f"Generated route summary has {len(generated_routes_all)} routes, "
+            f"but comparison needs {route_count} for policy={args.existing_route_policy!r}."
+        )
+    generated_routes = generated_routes_all[:route_count]
+    target_stop_count = int(round(float(np.median([len(route) for route in generated_routes]))))
     selected_existing = _select_existing_routes(
         current_route_stats,
         modality=args.modality,
         target_stop_count=target_stop_count,
         route_count=route_count,
+        policy=args.existing_route_policy,
     )
     pt_edges = gpd.read_parquet(pt_edges_path)
     existing_edges, existing_nodes = _existing_edges(pt_edges, selected_existing)
@@ -567,6 +601,8 @@ def main() -> None:
         "generated_summary": str(generated_summary_path),
         "modality": args.modality,
         "route_count": route_count,
+        "existing_route_policy": args.existing_route_policy,
+        "existing_modality_route_count": existing_modality_count,
         "target_generated_stop_count": target_stop_count,
         "existing_stop_match_threshold_m": float(args.existing_stop_match_threshold_m),
         "street_pattern_cells": str(cells_path),
