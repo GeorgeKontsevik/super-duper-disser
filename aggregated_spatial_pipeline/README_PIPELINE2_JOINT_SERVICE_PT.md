@@ -284,6 +284,23 @@ for CITY in /Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/output
 done
 ```
 
+По умолчанию transport-side route generation теперь работает в connectivity-only режиме:
+
+- `--demand-time-weight 0.0`
+- `--route-time-weight 0.0`
+- `--median-connectivity-weight 1.0`
+
+Для следующей базы экспериментов с голой OD можно запускать тот же генератор без `--od-matrix-path`.
+Тогда OD строится из текущих блоков и stops внутри `run_route_generator_external`, без service-aware target:
+
+```bash
+PYTHONPATH=$PWD MPLCONFIGDIR=/tmp/mpl-connectpt-bare-od \
+  connectpt/.venv/bin/python -m aggregated_spatial_pipeline.connectpt_data_pipeline.run_route_generator_external \
+  --joint-input-dir "$CITY" \
+  --modality bus \
+  --n-routes 1
+```
+
 ### Что Полезно Проверять После Каждого Города В Batch
 
 - `pipeline_2/placement_exact_genetic/<service>/summary_after.json`
