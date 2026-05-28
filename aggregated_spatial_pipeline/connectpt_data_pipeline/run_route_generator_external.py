@@ -30,6 +30,7 @@ from aggregated_spatial_pipeline.visualization import (
 )
 from aggregated_spatial_pipeline.pipeline.run_pipeline2_prepare_solver_inputs import _plot_accessibility_previews
 from aggregated_spatial_pipeline.pipeline.run_pipeline3_street_pattern_to_quarters import CLASS_LABELS
+from aggregated_spatial_pipeline.pipeline.run_pt_street_pattern_dependency import _overlay_pt_with_street_pattern, _pick_class_column
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -60,6 +61,7 @@ POPULATION_COLUMNS = [
     "residents",
     "res_population",
 ]
+DEFAULT_FOCUS_CLASS_NAME = "Loops & Lollipops"
 
 
 def _resolve_street_pattern_cells_path_for_preview(city_dir: Path) -> Path | None:
@@ -378,11 +380,121 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--n-routes", type=int, default=6)
+    parser.add_argument(
+        "--n-samples",
+        type=int,
+        default=None,
+        help="Number of sampled route sets to score during ConnectPT evaluation. Defaults to the eval config value.",
+    )
     parser.add_argument("--min-route-len", type=int, default=6)
     parser.add_argument("--max-route-len", type=int, default=10)
     parser.add_argument("--demand-time-weight", type=float, default=0.3)
     parser.add_argument("--route-time-weight", type=float, default=0.3)
     parser.add_argument("--median-connectivity-weight", type=float, default=0.3)
+    parser.add_argument(
+        "--street-pattern-weight",
+        type=float,
+        default=0.0,
+        help=(
+            "Penalty weight for generated routes that cross many street-pattern classes. "
+            "0 keeps the baseline ConnectPT objective."
+        ),
+    )
+    parser.add_argument(
+        "--focus-class-name",
+        default=DEFAULT_FOCUS_CLASS_NAME,
+        help="Street-pattern class to penalize directly by route stop share.",
+    )
+    parser.add_argument(
+        "--focus-class-weight",
+        type=float,
+        default=0.0,
+        help=(
+            "Penalty weight for the average share of route stops that fall into --focus-class-name. "
+            "0 disables the focused class-share penalty."
+        ),
+    )
+    parser.add_argument(
+        "--focus-class-presence-weight",
+        type=float,
+        default=0.0,
+        help=(
+            "Penalty weight for the fraction of generated routes that touch --focus-class-name at all. "
+            "This concentrates unavoidable focus-class exposure into fewer routes instead of penalizing "
+            "how much a touched route uses that class."
+        ),
+    )
+    parser.add_argument(
+        "--focus-class-presence-threshold",
+        type=float,
+        default=0.0,
+        help=(
+            "Per-route focus-class stop-share threshold above which a route counts as touching the focus class. "
+            "Default 0 counts any focus-class stop."
+        ),
+    )
+    parser.add_argument(
+        "--focus-class-distribution-weight",
+        type=float,
+        default=0.0,
+        help=(
+            "Penalty weight for mismatch between the generated sorted per-route focus-class shares "
+            "and the existing-route target distribution."
+        ),
+    )
+    parser.add_argument(
+        "--street-pattern-diversity-weight",
+        type=float,
+        default=0.0,
+        help=(
+            "Penalty weight for low diversity between per-route street-pattern composition vectors. "
+            "Higher values prefer generated routes whose street-pattern class shares differ from each other."
+        ),
+    )
+    parser.add_argument(
+        "--street-pattern-target-distribution-weight",
+        type=float,
+        default=0.0,
+        help=(
+            "Penalty weight for mismatch between generated per-route street-pattern class shares "
+            "and the existing-route class-share distribution."
+        ),
+    )
+    parser.add_argument(
+        "--street-pattern-target-focus-multiplier",
+        type=float,
+        default=4.0,
+        help=(
+            "Class weight multiplier for --focus-class-name inside the target-distribution penalty. "
+            "Use values >1 when the focus class is less efficient and should be matched more tightly."
+        ),
+    )
+    parser.add_argument(
+        "--route-overlap-weight",
+        type=float,
+        default=0.0,
+        help=(
+            "Penalty weight for duplicate physical graph-edge use between generated routes. "
+            "Higher values discourage several routes from sharing the same street segment."
+        ),
+    )
+    parser.add_argument(
+        "--focus-class-overlap-weight",
+        type=float,
+        default=0.0,
+        help=(
+            "Penalty weight for duplicate generated-route edge use specifically on edges touching "
+            "--focus-class-name. This discourages repeated traversal through inefficient street-pattern areas."
+        ),
+    )
+    parser.add_argument(
+        "--street-pattern-cells-path",
+        help=(
+            "Optional explicit predicted_cells path for street-pattern route penalty. "
+            "When --street-pattern-weight > 0 or --focus-class-weight > 0 and this is omitted, the exact city bundle "
+            "street_pattern/<city>/predicted_cells.geojson path is required."
+        ),
+    )
     parser.add_argument("--replace-in-intermodal", action="store_true")
     parser.add_argument(
         "--replace-existing-modality-routes",
@@ -555,6 +667,200 @@ def _build_street_adj(graph, nodes: list[int], node_to_idx: dict[int, int]) -> t
 
 def _build_node_locs(graph, nodes: list[int]) -> torch.Tensor:
     return torch.tensor([[graph.nodes[node]["x"], graph.nodes[node]["y"]] for node in nodes], dtype=torch.float32)
+
+
+def _resolve_street_pattern_cells_path_for_metric(city_dir: Path, explicit: str | None, required: bool) -> Path | None:
+    if explicit:
+        path = Path(explicit).resolve()
+    else:
+        path = city_dir / "street_pattern" / city_dir.name / "predicted_cells.geojson"
+    if path.exists():
+        return path.resolve()
+    if required:
+        raise FileNotFoundError(f"Missing street-pattern cells for route penalty: {path}")
+    return None
+
+
+def _build_street_pattern_class_tensor(
+    *,
+    city_dir: Path,
+    stops: gpd.GeoDataFrame,
+    explicit_cells_path: str | None,
+    required: bool,
+    focus_class_name: str | None = None,
+) -> tuple[torch.Tensor | None, dict]:
+    cells_path = _resolve_street_pattern_cells_path_for_metric(city_dir, explicit_cells_path, required)
+    if cells_path is None:
+        return None, {"enabled": False, "cells_path": None}
+    cells = gpd.read_file(cells_path)
+    if cells.empty:
+        if required:
+            raise ValueError(f"Street-pattern cells layer is empty: {cells_path}")
+        return None, {"enabled": False, "cells_path": str(cells_path), "reason": "empty_cells"}
+    class_col = _pick_class_column(cells, None)
+    cells = cells[[class_col, "geometry"]].copy()
+    cells = cells[cells.geometry.notna() & ~cells.geometry.is_empty].copy()
+    if cells.empty:
+        if required:
+            raise ValueError(f"Street-pattern cells layer has no valid geometries: {cells_path}")
+        return None, {"enabled": False, "cells_path": str(cells_path), "reason": "empty_geometries"}
+    if cells.crs is None and stops.crs is not None:
+        cells = cells.set_crs(stops.crs)
+    if stops.crs is not None and cells.crs is not None and cells.crs != stops.crs:
+        cells = cells.to_crs(stops.crs)
+
+    class_labels = sorted(cells[class_col].dropna().astype(str).unique().tolist())
+    class_to_id = {label: idx for idx, label in enumerate(class_labels)}
+    focus_class_id = None
+    if focus_class_name:
+        focus_class_id = class_to_id.get(str(focus_class_name))
+        if required and focus_class_id is None:
+            raise ValueError(
+                f"Focus street-pattern class {focus_class_name!r} is not present in {cells_path.name}. "
+                f"Available classes: {sorted(class_to_id)}"
+            )
+    joined = stops[["graph_node_id", "geometry"]].sjoin(
+        cells[[class_col, "geometry"]],
+        how="left",
+        predicate="within",
+    )
+    if joined.index.duplicated().any():
+        joined = joined[~joined.index.duplicated(keep="first")]
+    class_ids = pd.Series(-1, index=stops.index, dtype="int64")
+    matched = joined[class_col].dropna().astype(str).map(class_to_id)
+    class_ids.loc[matched.index] = matched.astype("int64")
+    tensor = torch.tensor(class_ids.to_numpy(), dtype=torch.long)
+    return tensor, {
+        "enabled": True,
+        "cells_path": str(cells_path),
+        "class_col": class_col,
+        "class_to_id": class_to_id,
+        "focus_class_name": (str(focus_class_name) if focus_class_name is not None else None),
+        "focus_class_id": (int(focus_class_id) if focus_class_id is not None else None),
+        "matched_stops": int((tensor >= 0).sum().item()),
+        "total_stops": int(len(tensor)),
+        "unmatched_stops": int((tensor < 0).sum().item()),
+    }
+
+
+def _build_focus_class_target_shares(
+    *,
+    city_dir: Path,
+    modality: str,
+    focus_class_name: str,
+    route_count: int,
+    explicit_cells_path: str | None,
+) -> tuple[torch.Tensor, dict]:
+    pt_edges_path = city_dir / "pt_street_pattern_dependency" / "pt_edges_filtered.parquet"
+    route_stats_path = city_dir / "pt_street_pattern_dependency" / "route_stats.csv"
+    if not pt_edges_path.exists() or not route_stats_path.exists():
+        raise FileNotFoundError(
+            f"Need existing PT street-pattern outputs to build focus-class target shares: "
+            f"{pt_edges_path} and {route_stats_path}"
+        )
+    cells_path = _resolve_street_pattern_cells_path_for_metric(city_dir, explicit_cells_path, required=True)
+    assert cells_path is not None
+    cells = gpd.read_file(cells_path)
+    class_col = _pick_class_column(cells, None)
+    pt_edges = gpd.read_parquet(pt_edges_path)
+    route_stats = pd.read_csv(route_stats_path)
+    route_stats = route_stats[route_stats["type"].astype(str).str.lower() == modality.lower()].copy()
+    if route_stats.empty:
+        raise ValueError(f"No existing routes found for modality={modality!r} in {route_stats_path}")
+    route_stats["route_total_m"] = pd.to_numeric(route_stats["route_total_m"], errors="coerce").fillna(0.0)
+    selected_labels = (
+        route_stats.sort_values(["route_total_m", "route_label"], ascending=[False, True])["route_label"].astype(str).tolist()
+    )
+    selected_labels = selected_labels[:route_count]
+    pt_edges = pt_edges[pt_edges["route_label"].astype(str).isin(selected_labels)].copy()
+    overlay, _ = _overlay_pt_with_street_pattern(pt_edges, cells, class_col=class_col)
+    route_class = (
+        overlay.groupby(["route_label", "street_pattern_class"], as_index=False)
+        .agg(pt_length_m=("intersect_length_m", "sum"))
+    )
+    route_totals = route_class.groupby("route_label", as_index=False)["pt_length_m"].sum().rename(columns={"pt_length_m": "route_total_m"})
+    route_class = route_class.merge(route_totals, on="route_label", how="left")
+    route_class["route_class_share"] = np.where(
+        route_class["route_total_m"] > 0,
+        route_class["pt_length_m"] / route_class["route_total_m"],
+        0.0,
+    )
+    focus = (
+        route_class[route_class["street_pattern_class"].astype(str) == str(focus_class_name)][["route_label", "route_class_share"]]
+        .rename(columns={"route_class_share": "focus_class_share"})
+    )
+    base = pd.DataFrame({"route_label": selected_labels})
+    focus = base.merge(focus, on="route_label", how="left")
+    focus["focus_class_share"] = focus["focus_class_share"].fillna(0.0)
+    sorted_shares = sorted(focus["focus_class_share"].astype(float).tolist(), reverse=True)
+    if len(sorted_shares) < route_count:
+        sorted_shares.extend([0.0] * (route_count - len(sorted_shares)))
+    tensor = torch.tensor(sorted_shares[:route_count], dtype=torch.float32)
+    return tensor, {
+        "focus_class_name": str(focus_class_name),
+        "target_route_count": int(route_count),
+        "target_route_labels": selected_labels,
+        "sorted_focus_class_shares": [float(v) for v in sorted_shares[:route_count]],
+    }
+
+
+def _build_street_pattern_target_distribution(
+    *,
+    city_dir: Path,
+    modality: str,
+    route_count: int,
+    class_to_id: dict[str, int],
+    focus_class_name: str | None,
+    focus_multiplier: float,
+) -> tuple[torch.Tensor, torch.Tensor, dict]:
+    route_class_path = city_dir / "pt_street_pattern_dependency" / "route_class_length.csv"
+    route_stats_path = city_dir / "pt_street_pattern_dependency" / "route_stats.csv"
+    if not route_class_path.exists() or not route_stats_path.exists():
+        raise FileNotFoundError(
+            "Need existing PT street-pattern route tables to build target distribution: "
+            f"{route_class_path} and {route_stats_path}"
+        )
+    route_class = pd.read_csv(route_class_path)
+    route_stats = pd.read_csv(route_stats_path)
+    route_stats = route_stats[route_stats["type"].astype(str).str.lower() == modality.lower()].copy()
+    if route_stats.empty:
+        raise ValueError(f"No existing routes found for modality={modality!r} in {route_stats_path}")
+    route_stats["route_total_m"] = pd.to_numeric(route_stats["route_total_m"], errors="coerce").fillna(0.0)
+    selected = route_stats.sort_values(["route_total_m", "route_label"], ascending=[False, True]).head(route_count)
+    selected_labels = selected["route_label"].astype(str).tolist()
+
+    n_classes = max(class_to_id.values(), default=-1) + 1
+    matrix = np.zeros((route_count, n_classes), dtype="float32")
+    work = route_class[
+        (route_class["type"].astype(str).str.lower() == modality.lower())
+        & route_class["route_label"].astype(str).isin(selected_labels)
+    ].copy()
+    work["route_class_share"] = pd.to_numeric(work["route_class_share"], errors="coerce").fillna(0.0)
+    label_to_row = {label: idx for idx, label in enumerate(selected_labels)}
+    for row in work.itertuples(index=False):
+        class_id = class_to_id.get(str(row.street_pattern_class))
+        route_row = label_to_row.get(str(row.route_label))
+        if class_id is None or route_row is None:
+            continue
+        matrix[route_row, class_id] = float(row.route_class_share)
+
+    class_weights = np.ones((n_classes,), dtype="float32")
+    focus_class_id = class_to_id.get(str(focus_class_name)) if focus_class_name is not None else None
+    if focus_class_id is not None:
+        class_weights[focus_class_id] = float(focus_multiplier)
+    id_to_class = {idx: label for label, idx in class_to_id.items()}
+    return (
+        torch.tensor(matrix, dtype=torch.float32),
+        torch.tensor(class_weights, dtype=torch.float32),
+        {
+            "target_route_count": int(route_count),
+            "target_route_labels": selected_labels,
+            "class_weights": {id_to_class[idx]: float(weight) for idx, weight in enumerate(class_weights)},
+            "focus_class_name": str(focus_class_name) if focus_class_name is not None else None,
+            "focus_multiplier": float(focus_multiplier),
+            "source": str(route_class_path),
+        },
+    )
 
 
 def _compute_od_matrix(blocks: gpd.GeoDataFrame, stops: gpd.GeoDataFrame, graph) -> pd.DataFrame:
@@ -812,6 +1118,9 @@ def _save_route_preview(
     roads: gpd.GeoDataFrame | None = None,
     existing_lines: gpd.GeoDataFrame | None = None,
     draw_existing_routes: bool = False,
+    title: str | None = None,
+    footer_lines: list[str] | None = None,
+    endpoint_node_pairs: list[tuple[int, int]] | None = None,
 ) -> None:
     from matplotlib.lines import Line2D
 
@@ -890,6 +1199,21 @@ def _save_route_preview(
             ax.scatter([route_points.x.iloc[0]], [route_points.y.iloc[0]], s=90, color=route_palette["start"], edgecolors="white", linewidths=1.0, zorder=6)
             ax.scatter([route_points.x.iloc[-1]], [route_points.y.iloc[-1]], s=90, color=route_palette["end"], edgecolors="white", linewidths=1.0, zorder=6)
 
+    if endpoint_node_pairs:
+        start_points = []
+        end_points = []
+        for start_node, end_node in endpoint_node_pairs:
+            if start_node in graph.nodes:
+                start_points.append(Point(float(graph.nodes[start_node]["x"]), float(graph.nodes[start_node]["y"])))
+            if end_node in graph.nodes:
+                end_points.append(Point(float(graph.nodes[end_node]["x"]), float(graph.nodes[end_node]["y"])))
+        if start_points:
+            starts = gpd.GeoSeries(start_points, crs=graph_crs).to_crs("EPSG:3857")
+            ax.scatter(starts.x, starts.y, s=240, color=route_palette["start"], edgecolors="white", linewidths=1.8, zorder=30)
+        if end_points:
+            ends = gpd.GeoSeries(end_points, crs=graph_crs).to_crs("EPSG:3857")
+            ax.scatter(ends.x, ends.y, s=240, color=route_palette["end"], edgecolors="white", linewidths=1.8, zorder=30)
+
     if (not draw_network) and (route_geoms_3857 or route_point_clouds_3857):
         bounds_sources = []
         if route_geoms_3857:
@@ -906,7 +1230,7 @@ def _save_route_preview(
             ax.set_xlim(minx - pad_x, maxx + pad_x)
             ax.set_ylim(miny - pad_y, maxy + pad_y)
 
-    ax.set_title(f"ConnectPT route generator ({summary['modality']})", fontsize=15, fontweight="bold", color="#1f2937", pad=12)
+    ax.set_title(title or f"ConnectPT route generator ({summary['modality']})", fontsize=15, fontweight="bold", color="#1f2937", pad=12)
     if legend_handles:
         legend_handles.extend(
             [
@@ -915,10 +1239,11 @@ def _save_route_preview(
             ]
         )
         legend_bottom(ax, legend_handles, max_cols=4, fontsize=8)
-    footer_text(
-        fig,
-        [f"routes={summary['route_count']} | cost={summary['cost']:.3f} | ATT={summary['att']:.3f} | unserved={summary['unserved_demand_pct']:.2f}%"],
-    )
+    if footer_lines is None:
+        footer_lines = [
+            f"routes={summary['route_count']} | cost={summary['cost']:.3f} | ATT={summary['att']:.3f} | unserved={summary['unserved_demand_pct']:.2f}%"
+        ]
+    footer_text(fig, footer_lines)
     ax.set_axis_off()
     ax.set_aspect("equal")
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1056,8 +1381,76 @@ def main() -> None:
     node_locs = _build_node_locs(graph, nodes)
     street_adj = _build_street_adj(graph, nodes, node_to_idx)
     demand = torch.tensor(od_matrix.reindex(index=range(len(nodes)), columns=range(len(nodes)), fill_value=0.0).to_numpy(), dtype=torch.float32)
+    street_pattern_classes, street_pattern_meta = _build_street_pattern_class_tensor(
+        city_dir=city_dir,
+        stops=stops,
+        explicit_cells_path=args.street_pattern_cells_path,
+        required=(
+            float(args.street_pattern_weight) > 0.0
+            or float(args.focus_class_weight) > 0.0
+            or float(args.focus_class_presence_weight) > 0.0
+            or float(args.focus_class_distribution_weight) > 0.0
+            or float(args.focus_class_overlap_weight) > 0.0
+            or float(args.street_pattern_diversity_weight) > 0.0
+            or float(args.street_pattern_target_distribution_weight) > 0.0
+        ),
+        focus_class_name=args.focus_class_name,
+    )
+    focus_class_target_shares = None
+    focus_class_target_meta = None
+    street_pattern_target_shares = None
+    street_pattern_class_weights = None
+    street_pattern_target_meta = None
+    if float(args.focus_class_distribution_weight) > 0.0:
+        focus_class_target_shares, focus_class_target_meta = _build_focus_class_target_shares(
+            city_dir=city_dir,
+            modality=modality,
+            focus_class_name=args.focus_class_name,
+            route_count=int(args.n_routes),
+            explicit_cells_path=args.street_pattern_cells_path,
+        )
+    if float(args.street_pattern_target_distribution_weight) > 0.0:
+        street_pattern_target_shares, street_pattern_class_weights, street_pattern_target_meta = (
+            _build_street_pattern_target_distribution(
+                city_dir=city_dir,
+                modality=modality,
+                route_count=int(args.n_routes),
+                class_to_id=street_pattern_meta["class_to_id"],
+                focus_class_name=args.focus_class_name,
+                focus_multiplier=float(args.street_pattern_target_focus_multiplier),
+            )
+        )
 
     tensors = {"street_adj": street_adj, "demand": demand, "node_locs": node_locs}
+    if street_pattern_classes is not None:
+        tensors["street_pattern_classes"] = street_pattern_classes
+        if street_pattern_meta.get("focus_class_id") is not None:
+            tensors["focus_class_id"] = torch.tensor([int(street_pattern_meta["focus_class_id"])], dtype=torch.long)
+        if focus_class_target_shares is not None:
+            tensors["focus_class_target_shares"] = focus_class_target_shares
+        if street_pattern_target_shares is not None:
+            tensors["street_pattern_target_shares"] = street_pattern_target_shares
+        if street_pattern_class_weights is not None:
+            tensors["street_pattern_class_weights"] = street_pattern_class_weights
+        _log(
+            "Street-pattern route penalty data prepared: "
+            f"matched_stops={street_pattern_meta['matched_stops']}/{street_pattern_meta['total_stops']}, "
+            f"classes={len(street_pattern_meta['class_to_id'])}, "
+            f"focus_class={street_pattern_meta.get('focus_class_name')}"
+        )
+    if focus_class_target_meta is not None:
+        _log(
+            "Focus-class target distribution prepared: "
+            f"routes={focus_class_target_meta['target_route_count']}, "
+            f"focus_class={focus_class_target_meta['focus_class_name']}"
+        )
+    if street_pattern_target_meta is not None:
+        _log(
+            "Street-pattern target distribution prepared: "
+            f"routes={street_pattern_target_meta['target_route_count']}, "
+            f"focus_class={street_pattern_target_meta['focus_class_name']}, "
+            f"focus_multiplier={street_pattern_target_meta['focus_multiplier']}"
+        )
     cfg_dir = str(ROOT / "connectpt" / "connectpt" / "routes_generator" / "cfg")
     params = {
         "dataset_name": "tensor",
@@ -1067,13 +1460,41 @@ def main() -> None:
         "demand_time_weight": args.demand_time_weight,
         "route_time_weight": args.route_time_weight,
         "median_connectivity_weight": args.median_connectivity_weight,
+        "street_pattern_weight": args.street_pattern_weight,
+        "focus_class_weight": args.focus_class_weight,
+        "focus_class_presence_weight": args.focus_class_presence_weight,
+        "focus_class_presence_threshold": args.focus_class_presence_threshold,
+        "focus_class_distribution_weight": args.focus_class_distribution_weight,
+        "street_pattern_diversity_weight": args.street_pattern_diversity_weight,
+        "street_pattern_target_distribution_weight": args.street_pattern_target_distribution_weight,
+        "route_overlap_weight": args.route_overlap_weight,
+        "focus_class_overlap_weight": args.focus_class_overlap_weight,
         "run_name": f"{city_dir.name}_{modality}_bundle_lc",
         "model_weights": str(weights_path),
     }
+    if args.n_samples is not None:
+        params["n_samples"] = int(args.n_samples)
     cfg = get_eval_cfg(cfg_dir=cfg_dir, base_cfg_name="eval_model_mumford", params=params)
     test_ds = get_dataset_from_config(cfg.eval.dataset, tensors=tensors)
     test_dl = DataLoader(test_ds, batch_size=cfg.batch_size)
     device, run_name, _, cost_obj, model = lrnu.process_standard_experiment_cfg(cfg, run_name_prefix="lc_", weights_required=True)
+    _log(
+        "Route generator objective weights: "
+        f"demand_time={args.demand_time_weight}, route_time={args.route_time_weight}, "
+        f"median_connectivity={args.median_connectivity_weight}, "
+        f"street_pattern_class_count={args.street_pattern_weight}, "
+        f"focus_share={args.focus_class_weight}, "
+        f"focus_presence={args.focus_class_presence_weight} "
+        f"(fraction of routes touching {args.focus_class_name!r}), "
+        f"focus_distribution={args.focus_class_distribution_weight}, "
+        f"composition_diversity={args.street_pattern_diversity_weight}, "
+        f"target_distribution={args.street_pattern_target_distribution_weight} "
+        f"(existing distribution, focus multiplier={args.street_pattern_target_focus_multiplier}), "
+        f"route_overlap={args.route_overlap_weight} "
+        f"(duplicate graph-edge use between generated routes), "
+        f"focus_overlap={args.focus_class_overlap_weight} "
+        f"(duplicate graph-edge use touching {args.focus_class_name!r})"
+    )
     _log(
         f"Running pretrained route generator on bundle data: nodes={len(nodes)}, blocks={len(blocks)}, n_routes={args.n_routes}"
     )
@@ -1105,19 +1526,47 @@ def main() -> None:
             "demand_time_weight": float(args.demand_time_weight),
             "route_time_weight": float(args.route_time_weight),
             "median_connectivity_weight": float(args.median_connectivity_weight),
+            "street_pattern_weight": float(args.street_pattern_weight),
+            "focus_class_weight": float(args.focus_class_weight),
+            "focus_class_presence_weight": float(args.focus_class_presence_weight),
+            "focus_class_presence_threshold": float(args.focus_class_presence_threshold),
+            "focus_class_distribution_weight": float(args.focus_class_distribution_weight),
+            "street_pattern_diversity_weight": float(args.street_pattern_diversity_weight),
+            "street_pattern_target_distribution_weight": float(args.street_pattern_target_distribution_weight),
+            "street_pattern_target_focus_multiplier": float(args.street_pattern_target_focus_multiplier),
+            "route_overlap_weight": float(args.route_overlap_weight),
+            "focus_class_overlap_weight": float(args.focus_class_overlap_weight),
         },
+        "street_pattern_penalty": street_pattern_meta,
+        "focus_class_target_distribution": focus_class_target_meta,
+        "street_pattern_target_distribution": street_pattern_target_meta,
         "graph_node_count": int(len(nodes)),
         "graph_edge_count": int(graph.number_of_edges()),
         "existing_route_line_count": int(len(existing_lines)) if existing_lines is not None else 0,
         "blocks_count": int(len(blocks)),
         "population_total": float(pd.to_numeric(blocks["population"], errors="coerce").fillna(0.0).sum()),
         "route_count": len(route_sequences),
+        "n_samples": int(cfg.get("n_samples", 1)),
         "unique_route_count": _unique_route_count(route_sequences),
         "route_lengths": [len(route) for route in route_sequences],
         "cost": _extract_metric(metrics, "cost"),
         "att": _extract_metric(metrics, "ATT"),
         "unserved_demand_pct": _extract_metric(metrics, "$d_{un}$"),
         "median_connectivity": _extract_metric(metrics, "median_connectivity"),
+        "street_pattern_class_count": _extract_metric(metrics, "street_pattern_class_count"),
+        "street_pattern_penalty_value": _extract_metric(metrics, "street_pattern_penalty"),
+        "street_pattern_focus_class_share": _extract_metric(metrics, "street_pattern_focus_class_share"),
+        "street_pattern_focus_class_penalty_value": _extract_metric(metrics, "street_pattern_focus_class_penalty"),
+        "street_pattern_focus_class_presence_share": _extract_metric(metrics, "street_pattern_focus_class_presence_share"),
+        "street_pattern_focus_class_presence_penalty_value": _extract_metric(metrics, "street_pattern_focus_class_presence_penalty"),
+        "street_pattern_focus_class_distribution_penalty_value": _extract_metric(metrics, "street_pattern_focus_class_distribution_penalty"),
+        "street_pattern_composition_diversity": _extract_metric(metrics, "street_pattern_composition_diversity"),
+        "street_pattern_composition_diversity_penalty_value": _extract_metric(metrics, "street_pattern_composition_diversity_penalty"),
+        "street_pattern_target_distribution_penalty_value": _extract_metric(metrics, "street_pattern_target_distribution_penalty"),
+        "route_overlap_duplicate_edge_share": _extract_metric(metrics, "route_overlap_duplicate_edge_share"),
+        "route_overlap_penalty_value": _extract_metric(metrics, "route_overlap_penalty"),
+        "route_focus_overlap_duplicate_edge_share": _extract_metric(metrics, "route_focus_overlap_duplicate_edge_share"),
+        "route_focus_overlap_penalty_value": _extract_metric(metrics, "route_focus_overlap_penalty"),
         "demand_sum": float(demand.sum().item()),
         "demand_max": float(demand.max().item()),
         "routes_shape": list(routes.shape),
@@ -1134,6 +1583,20 @@ def main() -> None:
         f"att={summary['att']}, "
         f"unserved_pct={summary['unserved_demand_pct']}, "
         f"median_connectivity={summary['median_connectivity']}, "
+        f"street_pattern_class_count={summary['street_pattern_class_count']}, "
+        f"street_pattern_penalty={summary['street_pattern_penalty_value']}, "
+        f"focus_class_share={summary['street_pattern_focus_class_share']}, "
+        f"focus_class_penalty={summary['street_pattern_focus_class_penalty_value']}, "
+        f"focus_class_presence_share={summary['street_pattern_focus_class_presence_share']}, "
+        f"focus_class_presence_penalty={summary['street_pattern_focus_class_presence_penalty_value']}, "
+        f"focus_class_distribution_penalty={summary['street_pattern_focus_class_distribution_penalty_value']}, "
+        f"composition_diversity={summary['street_pattern_composition_diversity']}, "
+        f"composition_diversity_penalty={summary['street_pattern_composition_diversity_penalty_value']}, "
+        f"target_distribution_penalty={summary['street_pattern_target_distribution_penalty_value']}, "
+        f"route_overlap_duplicate_edge_share={summary['route_overlap_duplicate_edge_share']}, "
+        f"route_overlap_penalty={summary['route_overlap_penalty_value']}, "
+        f"route_focus_overlap_duplicate_edge_share={summary['route_focus_overlap_duplicate_edge_share']}, "
+        f"route_focus_overlap_penalty={summary['route_focus_overlap_penalty_value']}, "
         f"demand_sum={summary['demand_sum']:.1f}, "
         f"demand_max={summary['demand_max']:.1f}, "
         f"routes_shape={summary['routes_shape']}"

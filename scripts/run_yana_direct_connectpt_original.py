@@ -45,6 +45,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--demand-time-weight", type=float, default=0.3)
     parser.add_argument("--route-time-weight", type=float, default=0.3)
     parser.add_argument("--median-connectivity-weight", type=float, default=0.3)
+    parser.add_argument("--street-pattern-weight", type=float, default=0.0)
     parser.add_argument(
         "--weights-path",
         type=Path,
@@ -62,6 +63,12 @@ def main() -> None:
     args = parse_args()
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+    if float(args.street_pattern_weight) > 0.0:
+        raise ValueError(
+            "direct_connectpt_original does not have city street-pattern cells. "
+            "Use aggregated_spatial_pipeline.connectpt_data_pipeline.run_route_generator_external "
+            "for street-pattern-aware city bundle experiments."
+        )
 
     graph = _load_graph(args.graph_path)
     nodes = sorted(graph.nodes())
@@ -79,6 +86,7 @@ def main() -> None:
         "demand_time_weight": float(args.demand_time_weight),
         "route_time_weight": float(args.route_time_weight),
         "median_connectivity_weight": float(args.median_connectivity_weight),
+        "street_pattern_weight": float(args.street_pattern_weight),
         "run_name": f"direct_original_{args.dataset}",
         "model_weights": str(args.weights_path.resolve()),
     }
@@ -117,6 +125,7 @@ def main() -> None:
             "demand_time_weight": float(args.demand_time_weight),
             "route_time_weight": float(args.route_time_weight),
             "median_connectivity_weight": float(args.median_connectivity_weight),
+            "street_pattern_weight": float(args.street_pattern_weight),
         },
         "n_routes_requested": int(args.n_routes),
         "min_route_len": int(args.min_route_len),
@@ -132,6 +141,8 @@ def main() -> None:
         "att": _extract_metric(metrics, "ATT"),
         "unserved_demand_pct": _extract_metric(metrics, "$d_{un}$"),
         "median_connectivity": _extract_metric(metrics, "median_connectivity"),
+        "street_pattern_class_count": _extract_metric(metrics, "street_pattern_class_count"),
+        "street_pattern_penalty_value": _extract_metric(metrics, "street_pattern_penalty"),
         "routes_shape": list(routes.shape),
         "routes_tensor": routes.cpu().tolist(),
         "files": {

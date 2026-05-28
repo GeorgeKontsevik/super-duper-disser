@@ -3,7 +3,12 @@ from __future__ import annotations
 import argparse
 import json
 import pickle
+import sys
 from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 import geopandas as gpd
 import matplotlib.pyplot as plt
@@ -40,6 +45,7 @@ DEFAULT_OUTPUT_DIR = Path(
     "bus_length_m_fixed_033_n6"
 )
 CLASS_COLUMN_CANDIDATES = ("top1_class_name", "class_name", "predicted_class", "street_pattern_class")
+DEFAULT_FOCUS_CLASS = "Loops & Lollipops"
 
 
 def parse_args() -> argparse.Namespace:
@@ -63,6 +69,14 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--existing-stop-match-threshold-m", type=float, default=100.0)
+    parser.add_argument(
+        "--focus-class",
+        default=DEFAULT_FOCUS_CLASS,
+        help=(
+            "Street-pattern class to track explicitly as an avoidance/exposure metric. "
+            "Per-route stats will include focus_class_share and focus_class_avoidance_score = 1 - share."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -226,7 +240,7 @@ def _select_existing_routes(
     else:
         raise ValueError(f"Unsupported existing-route-policy: {policy}")
 
-    if len(selected) < route_count:
+    if policy != "all" and len(selected) < route_count:
         raise ValueError(f"Only {len(selected)} current routes available, need {route_count}.")
     selected = selected.head(route_count).copy()
     selected["type"] = "existing"
@@ -245,7 +259,12 @@ def _existing_edges(pt_edges: gpd.GeoDataFrame, selected: pd.DataFrame) -> tuple
     return work, route_nodes
 
 
-def _route_pattern_tables(overlay: gpd.GeoDataFrame, route_nodes: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+def _route_pattern_tables(
+    overlay: gpd.GeoDataFrame,
+    route_nodes: pd.DataFrame,
+    *,
+    focus_class: str,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     route_class = (
         overlay.groupby(["type", "route_label", "street_pattern_class"], as_index=False)
         .agg(pt_length_m=("intersect_length_m", "sum"))
@@ -312,9 +331,57 @@ def _route_pattern_tables(overlay: gpd.GeoDataFrame, route_nodes: pd.DataFrame) 
     route_stats["route_total_km"] = route_stats["route_total_m"] / 1000.0
     route_stats["street_pattern_class_count"] = route_stats["street_pattern_class_count"].fillna(0).astype(int)
     route_stats["street_pattern_entropy"] = route_stats["street_pattern_entropy"].fillna(0.0)
+
+    focus_rows = (
+        route_class[route_class["street_pattern_class"].astype(str) == str(focus_class)][
+            ["type", "route_label", "pt_length_m", "route_class_share"]
+        ]
+        .rename(
+            columns={
+                "pt_length_m": "focus_class_length_m",
+                "route_class_share": "focus_class_share",
+            }
+        )
+        .copy()
+    )
+    route_stats = route_stats.merge(focus_rows, on=["type", "route_label"], how="left")
+    route_stats["focus_street_pattern_class"] = str(focus_class)
+    route_stats["focus_class_length_m"] = route_stats["focus_class_length_m"].fillna(0.0)
+    route_stats["focus_class_share"] = route_stats["focus_class_share"].fillna(0.0)
+    route_stats["focus_class_avoidance_score"] = 1.0 - route_stats["focus_class_share"]
+    route_stats["focus_class_is_dominant"] = (
+        route_stats["dominant_street_pattern_class"].astype(str) == str(focus_class)
+    )
+
+    scenario_focus = (
+        route_stats.groupby("type", as_index=False)
+        .agg(
+            route_count=("route_label", "size"),
+            route_total_m=("route_total_m", "sum"),
+            focus_class_length_m=("focus_class_length_m", "sum"),
+            mean_focus_class_share=("focus_class_share", "mean"),
+            median_focus_class_share=("focus_class_share", "median"),
+            mean_focus_class_avoidance_score=("focus_class_avoidance_score", "mean"),
+            dominant_focus_class_routes=("focus_class_is_dominant", "sum"),
+        )
+        .copy()
+    )
+    scenario_focus["focus_street_pattern_class"] = str(focus_class)
+    scenario_focus["focus_class_share_weighted"] = np.where(
+        scenario_focus["route_total_m"] > 0,
+        scenario_focus["focus_class_length_m"] / scenario_focus["route_total_m"],
+        0.0,
+    )
+    scenario_focus["dominant_focus_class_route_share"] = np.where(
+        scenario_focus["route_count"] > 0,
+        scenario_focus["dominant_focus_class_routes"] / scenario_focus["route_count"],
+        0.0,
+    )
+
     route_stats = route_stats.sort_values(["type", "route_label"]).reset_index(drop=True)
     route_class = route_class.sort_values(["type", "route_label", "pt_length_m"], ascending=[True, True, False]).reset_index(drop=True)
-    return route_class, route_stats
+    scenario_focus = scenario_focus.sort_values(["type"]).reset_index(drop=True)
+    return route_class, route_stats, scenario_focus
 
 
 def _existing_route_stop_sets(
@@ -558,20 +625,32 @@ def main() -> None:
 
     existing_overlay, cells_local = _overlay_pt_with_street_pattern(existing_edges, cells, class_col=class_col)
     generated_overlay, _ = _overlay_pt_with_street_pattern(generated_edges, cells, class_col=class_col)
-    existing_route_class, existing_stats = _route_pattern_tables(existing_overlay, existing_nodes)
-    generated_route_class, generated_stats = _route_pattern_tables(generated_overlay, generated_nodes)
+    existing_route_class, existing_stats, existing_focus_metrics = _route_pattern_tables(
+        existing_overlay,
+        existing_nodes,
+        focus_class=args.focus_class,
+    )
+    generated_route_class, generated_stats, generated_focus_metrics = _route_pattern_tables(
+        generated_overlay,
+        generated_nodes,
+        focus_class=args.focus_class,
+    )
 
     existing_stats["scenario"] = "existing"
     generated_stats["scenario"] = "generated"
     existing_route_class["scenario"] = "existing"
     generated_route_class["scenario"] = "generated"
+    existing_focus_metrics["scenario"] = "existing"
+    generated_focus_metrics["scenario"] = "generated"
     route_stats = pd.concat([existing_stats, generated_stats], ignore_index=True)
     route_class = pd.concat([existing_route_class, generated_route_class], ignore_index=True)
+    scenario_focus_metrics = pd.concat([existing_focus_metrics, generated_focus_metrics], ignore_index=True)
     route_stats["route_key"] = route_stats["scenario"] + ":" + route_stats["route_label"].astype(str)
 
     selected_existing.to_csv(stats_dir / "selected_existing_routes.csv", index=False)
     route_stats.to_csv(stats_dir / "route_street_pattern_stats.csv", index=False)
     route_class.to_csv(stats_dir / "route_street_pattern_class_length.csv", index=False)
+    scenario_focus_metrics.to_csv(stats_dir / "scenario_street_pattern_focus_metrics.csv", index=False)
     existing_edges.to_parquet(stats_dir / "existing_route_edges.parquet", index=False)
     generated_edges.to_parquet(stats_dir / "generated_route_edges.parquet", index=False)
 
@@ -624,6 +703,7 @@ def main() -> None:
         "existing_stop_match_threshold_m": float(args.existing_stop_match_threshold_m),
         "street_pattern_cells": str(cells_path),
         "street_pattern_class_col": class_col,
+        "focus_street_pattern_class": str(args.focus_class),
         "generated_graph": str(graph_path),
         "od_matrix": str(od_path),
         "coverage_mode": "direct_same_route_on_connectpt_od",
@@ -643,10 +723,12 @@ def main() -> None:
         .groupby("scenario", as_index=False)
         .tail(1)
         .to_dict(orient="records"),
+        "street_pattern_focus_metrics": scenario_focus_metrics.to_dict(orient="records"),
         "files": {
             "selected_existing_routes": str(stats_dir / "selected_existing_routes.csv"),
             "route_street_pattern_stats": str(stats_dir / "route_street_pattern_stats.csv"),
             "route_street_pattern_class_length": str(stats_dir / "route_street_pattern_class_length.csv"),
+            "scenario_street_pattern_focus_metrics": str(stats_dir / "scenario_street_pattern_focus_metrics.csv"),
             "od_coverage_by_route_count": str(stats_dir / "od_coverage_by_route_count.csv"),
             "existing_route_edges": str(stats_dir / "existing_route_edges.parquet"),
             "generated_route_edges": str(stats_dir / "generated_route_edges.parquet"),

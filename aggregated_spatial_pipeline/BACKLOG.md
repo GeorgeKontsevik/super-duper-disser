@@ -25,6 +25,20 @@
   - Remaining work: provide a lightweight cached/precomputed CLI report (or manifest-based summary) that returns per-city coverage and exclusion candidates in seconds.
   - Why deferred: not blocking experiment correctness, but needed for faster operational triage and rerun planning.
 
+## Deferred Flood-Depth Input
+
+- Add a real flood-depth source or hydraulic depth model for equatorial road fragility experiments.
+  - Current state: Copernicus GFM flood extent can be fetched and used as a binary weekly flood proxy, but the project has no water-depth raster in meters for the March-May exact runs.
+  - Remaining work: choose and document a valid depth source/model, ingest it under `equatorial/data/raw/flood_depth/<ISO3>/`, and verify resulting `flood_depth_week_*_max_m` columns against the produced overlay.
+  - Why deferred: flood extent is not a substitute for flood depth, so filling depth columns from GFM would be analytically misleading.
+
+## Deferred ConnectPT Dataset Expansion
+
+- Expand the real-morph ConnectPT route-generator training dataset beyond the current 6 gravity-usable cities.
+  - Current state: `connectpt_dataset_prep` owns the gravity-only dataset build, structure analysis, and synthetic-demand comparison; the current dataset has 480 gravity samples and skips 4 cities with missing blocks.
+  - Remaining work: follow [connectpt_dataset_prep/TODO.md](/Users/gk/Code/super-duper-disser/connectpt_dataset_prep/TODO.md) to add more eligible cities, preserve the no-fallback rule, and rebalance morphology coverage before clean retraining.
+  - Why deferred: the current dataset is usable for a clean baseline, but more city coverage is needed before treating training conclusions as stable.
+
 ## Deferred Solver Evolution
 
 - Rework placement genetic stage to a more controllable optimization backend (`Optuna` or another Python GA framework) with support for custom inner evaluation method.

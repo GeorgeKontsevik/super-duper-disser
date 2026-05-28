@@ -130,6 +130,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--demand-time-weight", type=float, default=0.3)
     parser.add_argument("--route-time-weight", type=float, default=0.3)
     parser.add_argument("--median-connectivity-weight", type=float, default=0.3)
+    parser.add_argument("--street-pattern-weight", type=float, default=0.0)
     return parser.parse_args()
 
 
@@ -485,6 +486,8 @@ def _run_route_generator(
         str(float(args.route_time_weight)),
         "--median-connectivity-weight",
         str(float(args.median_connectivity_weight)),
+        "--street-pattern-weight",
+        str(float(args.street_pattern_weight)),
     ]
     if od_matrix_path is not None:
         cmd.extend(["--od-matrix-path", str(od_matrix_path)])
