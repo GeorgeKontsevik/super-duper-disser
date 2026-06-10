@@ -1,0 +1,21 @@
+city,pattern_value,pattern_context,n,share
+adelaide_south_australia_australia,Irregular Grid,service,23.0,0.719
+adelaide_south_australia_australia,Loops & Lollipops,service,9.0,0.281
+adelaide_south_australia_australia,Regular Grid,service,0.0,0.0
+adelaide_south_australia_australia,UNKNOWN,service,0.0,0.0
+amsterdam_netherlands,UNKNOWN,service,1827.0,0.907
+amsterdam_netherlands,Irregular Grid,service,188.0,0.093
+amsterdam_netherlands,Loops & Lollipops,service,0.0,0.0
+amsterdam_netherlands,Regular Grid,service,0.0,0.0
+arequipa_peru,Irregular Grid,service,0.0,0.0
+arequipa_peru,Loops & Lollipops,service,0.0,0.0
+arequipa_peru,Regular Grid,service,0.0,0.0
+arequipa_peru,UNKNOWN,service,0.0,0.0
+delft_netherlands,Irregular Grid,service,0.0,0.0
+delft_netherlands,Loops & Lollipops,service,0.0,0.0
+delft_netherlands,Regular Grid,service,0.0,0.0
+delft_netherlands,UNKNOWN,service,0.0,0.0
+vologda_russia,Irregular Grid,service,192.0,0.889
+vologda_russia,Regular Grid,service,24.0,0.111
+vologda_russia,Loops & Lollipops,service,0.0,0.0
+vologda_russia,UNKNOWN,service,0.0,0.0

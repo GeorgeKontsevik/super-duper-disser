@@ -1,0 +1,2 @@
+scope,n,pct_ok_overall,pct_not_ok_overall,pct_ok_walk_only,pct_ok_walk_plus_pt,pct_not_ok_home_to_stop_overall,pct_not_ok_pt_only_overall,pct_not_ok_stop_to_service_overall,pct_not_ok_both_walks_overall,pct_not_ok_multi_component_overall,pct_not_ok_sum_no_single_overall
+all,288448.0,0.532,0.468,0.456,0.076,0.246,0.055,0.011,0.036,0.018,0.102

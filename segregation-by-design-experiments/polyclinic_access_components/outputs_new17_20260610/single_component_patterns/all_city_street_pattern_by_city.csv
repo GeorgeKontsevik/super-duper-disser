@@ -1,0 +1,103 @@
+city,pattern_value,pattern_context,n,share
+adelaide_south_australia_australia,Irregular Grid,city_street_pattern,110.0,0.491
+adelaide_south_australia_australia,Loops & Lollipops,city_street_pattern,74.0,0.33
+adelaide_south_australia_australia,Regular Grid,city_street_pattern,22.0,0.098
+adelaide_south_australia_australia,Warped Parallel,city_street_pattern,15.0,0.067
+adelaide_south_australia_australia,Broken Grid,city_street_pattern,3.0,0.013
+adelaide_south_australia_australia,Sparse,city_street_pattern,0.0,0.0
+amsterdam_netherlands,Irregular Grid,city_street_pattern,109.0,0.616
+amsterdam_netherlands,Loops & Lollipops,city_street_pattern,46.0,0.26
+amsterdam_netherlands,Regular Grid,city_street_pattern,14.0,0.079
+amsterdam_netherlands,Broken Grid,city_street_pattern,5.0,0.028
+amsterdam_netherlands,Warped Parallel,city_street_pattern,3.0,0.017
+amsterdam_netherlands,Sparse,city_street_pattern,0.0,0.0
+arequipa_peru,Irregular Grid,city_street_pattern,170.0,0.578
+arequipa_peru,Loops & Lollipops,city_street_pattern,89.0,0.303
+arequipa_peru,Regular Grid,city_street_pattern,21.0,0.071
+arequipa_peru,Warped Parallel,city_street_pattern,8.0,0.027
+arequipa_peru,Broken Grid,city_street_pattern,4.0,0.014
+arequipa_peru,Sparse,city_street_pattern,2.0,0.007
+delft_netherlands,Irregular Grid,city_street_pattern,53.0,0.582
+delft_netherlands,Loops & Lollipops,city_street_pattern,24.0,0.264
+delft_netherlands,Regular Grid,city_street_pattern,7.0,0.077
+delft_netherlands,Broken Grid,city_street_pattern,3.0,0.033
+delft_netherlands,Warped Parallel,city_street_pattern,3.0,0.033
+delft_netherlands,Sparse,city_street_pattern,1.0,0.011
+hai_duong_h_i_d_ng_vietnam,Loops & Lollipops,city_street_pattern,322.0,0.347
+hai_duong_h_i_d_ng_vietnam,Irregular Grid,city_street_pattern,307.0,0.331
+hai_duong_h_i_d_ng_vietnam,Regular Grid,city_street_pattern,130.0,0.14
+hai_duong_h_i_d_ng_vietnam,Warped Parallel,city_street_pattern,111.0,0.12
+hai_duong_h_i_d_ng_vietnam,Broken Grid,city_street_pattern,44.0,0.047
+hai_duong_h_i_d_ng_vietnam,Sparse,city_street_pattern,13.0,0.014
+huainan_anhui_china,Loops & Lollipops,city_street_pattern,198.0,0.434
+huainan_anhui_china,Regular Grid,city_street_pattern,127.0,0.279
+huainan_anhui_china,Warped Parallel,city_street_pattern,55.0,0.121
+huainan_anhui_china,Irregular Grid,city_street_pattern,53.0,0.116
+huainan_anhui_china,Broken Grid,city_street_pattern,12.0,0.026
+huainan_anhui_china,Sparse,city_street_pattern,11.0,0.024
+jaynagar_bih_r_india,Warped Parallel,city_street_pattern,139.0,0.29
+jaynagar_bih_r_india,Regular Grid,city_street_pattern,134.0,0.28
+jaynagar_bih_r_india,Loops & Lollipops,city_street_pattern,97.0,0.203
+jaynagar_bih_r_india,Irregular Grid,city_street_pattern,72.0,0.15
+jaynagar_bih_r_india,Broken Grid,city_street_pattern,22.0,0.046
+jaynagar_bih_r_india,Sparse,city_street_pattern,15.0,0.031
+kakogawacho_honmachi_hy_go_japan,Irregular Grid,city_street_pattern,390.0,0.663
+kakogawacho_honmachi_hy_go_japan,Loops & Lollipops,city_street_pattern,143.0,0.243
+kakogawacho_honmachi_hy_go_japan,Regular Grid,city_street_pattern,25.0,0.043
+kakogawacho_honmachi_hy_go_japan,Warped Parallel,city_street_pattern,18.0,0.031
+kakogawacho_honmachi_hy_go_japan,Broken Grid,city_street_pattern,10.0,0.017
+kakogawacho_honmachi_hy_go_japan,Sparse,city_street_pattern,2.0,0.003
+kananga_kasa_central_congo_kinshasa,Irregular Grid,city_street_pattern,178.0,0.46
+kananga_kasa_central_congo_kinshasa,Loops & Lollipops,city_street_pattern,112.0,0.289
+kananga_kasa_central_congo_kinshasa,Warped Parallel,city_street_pattern,51.0,0.132
+kananga_kasa_central_congo_kinshasa,Regular Grid,city_street_pattern,24.0,0.062
+kananga_kasa_central_congo_kinshasa,Broken Grid,city_street_pattern,19.0,0.049
+kananga_kasa_central_congo_kinshasa,Sparse,city_street_pattern,3.0,0.008
+maracay_aragua_venezuela,Irregular Grid,city_street_pattern,223.0,0.482
+maracay_aragua_venezuela,Loops & Lollipops,city_street_pattern,155.0,0.335
+maracay_aragua_venezuela,Regular Grid,city_street_pattern,49.0,0.106
+maracay_aragua_venezuela,Warped Parallel,city_street_pattern,24.0,0.052
+maracay_aragua_venezuela,Broken Grid,city_street_pattern,10.0,0.022
+maracay_aragua_venezuela,Sparse,city_street_pattern,2.0,0.004
+montes_claros_minas_gerais_brazil,Irregular Grid,city_street_pattern,248.0,0.494
+montes_claros_minas_gerais_brazil,Loops & Lollipops,city_street_pattern,167.0,0.333
+montes_claros_minas_gerais_brazil,Regular Grid,city_street_pattern,36.0,0.072
+montes_claros_minas_gerais_brazil,Warped Parallel,city_street_pattern,27.0,0.054
+montes_claros_minas_gerais_brazil,Broken Grid,city_street_pattern,24.0,0.048
+montes_claros_minas_gerais_brazil,Sparse,city_street_pattern,0.0,0.0
+naihati_west_bengal_india,Irregular Grid,city_street_pattern,392.0,0.455
+naihati_west_bengal_india,Loops & Lollipops,city_street_pattern,251.0,0.291
+naihati_west_bengal_india,Regular Grid,city_street_pattern,84.0,0.097
+naihati_west_bengal_india,Warped Parallel,city_street_pattern,74.0,0.086
+naihati_west_bengal_india,Broken Grid,city_street_pattern,52.0,0.06
+naihati_west_bengal_india,Sparse,city_street_pattern,9.0,0.01
+narayanganj_dhaka_bangladesh,Loops & Lollipops,city_street_pattern,222.0,0.313
+narayanganj_dhaka_bangladesh,Irregular Grid,city_street_pattern,164.0,0.231
+narayanganj_dhaka_bangladesh,Regular Grid,city_street_pattern,139.0,0.196
+narayanganj_dhaka_bangladesh,Warped Parallel,city_street_pattern,136.0,0.192
+narayanganj_dhaka_bangladesh,Broken Grid,city_street_pattern,36.0,0.051
+narayanganj_dhaka_bangladesh,Sparse,city_street_pattern,12.0,0.017
+nouakchott_nouakchott_ouest_mauritania,Irregular Grid,city_street_pattern,514.0,0.701
+nouakchott_nouakchott_ouest_mauritania,Loops & Lollipops,city_street_pattern,182.0,0.248
+nouakchott_nouakchott_ouest_mauritania,Warped Parallel,city_street_pattern,20.0,0.027
+nouakchott_nouakchott_ouest_mauritania,Broken Grid,city_street_pattern,9.0,0.012
+nouakchott_nouakchott_ouest_mauritania,Regular Grid,city_street_pattern,8.0,0.011
+nouakchott_nouakchott_ouest_mauritania,Sparse,city_street_pattern,0.0,0.0
+spring_valley_nevada_united_states,Loops & Lollipops,city_street_pattern,242.0,0.361
+spring_valley_nevada_united_states,Irregular Grid,city_street_pattern,174.0,0.259
+spring_valley_nevada_united_states,Regular Grid,city_street_pattern,152.0,0.227
+spring_valley_nevada_united_states,Warped Parallel,city_street_pattern,76.0,0.113
+spring_valley_nevada_united_states,Broken Grid,city_street_pattern,21.0,0.031
+spring_valley_nevada_united_states,Sparse,city_street_pattern,6.0,0.009
+temuco_araucan_a_chile,Loops & Lollipops,city_street_pattern,181.0,0.4
+temuco_araucan_a_chile,Irregular Grid,city_street_pattern,157.0,0.347
+temuco_araucan_a_chile,Regular Grid,city_street_pattern,45.0,0.1
+temuco_araucan_a_chile,Warped Parallel,city_street_pattern,44.0,0.097
+temuco_araucan_a_chile,Broken Grid,city_street_pattern,19.0,0.042
+temuco_araucan_a_chile,Sparse,city_street_pattern,6.0,0.013
+vologda_russia,Loops & Lollipops,city_street_pattern,59.0,0.269
+vologda_russia,Irregular Grid,city_street_pattern,49.0,0.224
+vologda_russia,Regular Grid,city_street_pattern,47.0,0.215
+vologda_russia,Warped Parallel,city_street_pattern,41.0,0.187
+vologda_russia,Broken Grid,city_street_pattern,15.0,0.068
+vologda_russia,Sparse,city_street_pattern,8.0,0.037

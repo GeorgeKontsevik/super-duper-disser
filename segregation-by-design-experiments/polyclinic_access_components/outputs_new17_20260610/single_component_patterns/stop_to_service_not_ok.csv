@@ -1,0 +1,7 @@
+pattern_context,pattern_value,n,share
+service,UNKNOWN,2324.0,0.707
+service,Regular Grid,432.0,0.131
+service,Irregular Grid,403.0,0.123
+service,Broken Grid,74.0,0.023
+service,Warped Parallel,44.0,0.013
+service,Loops & Lollipops,9.0,0.003

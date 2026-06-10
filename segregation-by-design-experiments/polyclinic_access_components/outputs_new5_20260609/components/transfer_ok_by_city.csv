@@ -1,0 +1,6 @@
+city,component,n,ok_count,not_ok_count,share_ok
+adelaide_south_australia_australia,transfer_ok,8922.0,6382.0,2540.0,0.715
+amsterdam_netherlands,transfer_ok,54703.0,13968.0,40735.0,0.255
+arequipa_peru,transfer_ok,4782.0,720.0,4062.0,0.151
+delft_netherlands,transfer_ok,112420.0,62184.0,50236.0,0.553
+vologda_russia,transfer_ok,7950.0,4280.0,3670.0,0.538

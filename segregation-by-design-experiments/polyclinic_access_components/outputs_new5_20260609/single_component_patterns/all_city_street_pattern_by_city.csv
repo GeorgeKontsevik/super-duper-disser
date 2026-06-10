@@ -1,0 +1,31 @@
+city,pattern_value,pattern_context,n,share
+adelaide_south_australia_australia,Irregular Grid,city_street_pattern,110.0,0.491
+adelaide_south_australia_australia,Loops & Lollipops,city_street_pattern,74.0,0.33
+adelaide_south_australia_australia,Regular Grid,city_street_pattern,22.0,0.098
+adelaide_south_australia_australia,Warped Parallel,city_street_pattern,15.0,0.067
+adelaide_south_australia_australia,Broken Grid,city_street_pattern,3.0,0.013
+adelaide_south_australia_australia,Sparse,city_street_pattern,0.0,0.0
+amsterdam_netherlands,Irregular Grid,city_street_pattern,109.0,0.616
+amsterdam_netherlands,Loops & Lollipops,city_street_pattern,46.0,0.26
+amsterdam_netherlands,Regular Grid,city_street_pattern,14.0,0.079
+amsterdam_netherlands,Broken Grid,city_street_pattern,5.0,0.028
+amsterdam_netherlands,Warped Parallel,city_street_pattern,3.0,0.017
+amsterdam_netherlands,Sparse,city_street_pattern,0.0,0.0
+arequipa_peru,Irregular Grid,city_street_pattern,170.0,0.578
+arequipa_peru,Loops & Lollipops,city_street_pattern,89.0,0.303
+arequipa_peru,Regular Grid,city_street_pattern,21.0,0.071
+arequipa_peru,Warped Parallel,city_street_pattern,8.0,0.027
+arequipa_peru,Broken Grid,city_street_pattern,4.0,0.014
+arequipa_peru,Sparse,city_street_pattern,2.0,0.007
+delft_netherlands,Irregular Grid,city_street_pattern,53.0,0.582
+delft_netherlands,Loops & Lollipops,city_street_pattern,24.0,0.264
+delft_netherlands,Regular Grid,city_street_pattern,7.0,0.077
+delft_netherlands,Broken Grid,city_street_pattern,3.0,0.033
+delft_netherlands,Warped Parallel,city_street_pattern,3.0,0.033
+delft_netherlands,Sparse,city_street_pattern,1.0,0.011
+vologda_russia,Loops & Lollipops,city_street_pattern,59.0,0.269
+vologda_russia,Irregular Grid,city_street_pattern,49.0,0.224
+vologda_russia,Regular Grid,city_street_pattern,47.0,0.215
+vologda_russia,Warped Parallel,city_street_pattern,41.0,0.187
+vologda_russia,Broken Grid,city_street_pattern,15.0,0.068
+vologda_russia,Sparse,city_street_pattern,8.0,0.037

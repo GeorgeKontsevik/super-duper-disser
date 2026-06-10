@@ -1,0 +1,6 @@
+city,component,n,ok_count,not_ok_count,share_ok
+adelaide_south_australia_australia,in_vehicle_ok,8922.0,4728.0,4194.0,0.53
+amsterdam_netherlands,in_vehicle_ok,54703.0,13429.0,41274.0,0.245
+arequipa_peru,in_vehicle_ok,4782.0,720.0,4062.0,0.151
+delft_netherlands,in_vehicle_ok,112420.0,59101.0,53319.0,0.526
+vologda_russia,in_vehicle_ok,7950.0,4132.0,3818.0,0.52

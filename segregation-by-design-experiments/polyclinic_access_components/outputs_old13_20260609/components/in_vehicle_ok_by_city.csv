@@ -1,0 +1,14 @@
+city,component,n,ok_count,not_ok_count,share_ok
+hai_duong_h_i_d_ng_vietnam,in_vehicle_ok,268.0,268.0,0.0,1.0
+huainan_anhui_china,in_vehicle_ok,787.0,527.0,260.0,0.67
+jaynagar_bih_r_india,in_vehicle_ok,126.0,126.0,0.0,1.0
+kakogawacho_honmachi_hy_go_japan,in_vehicle_ok,12593.0,12593.0,0.0,1.0
+kananga_kasa_central_congo_kinshasa,in_vehicle_ok,316.0,316.0,0.0,1.0
+maracay_aragua_venezuela,in_vehicle_ok,11272.0,11272.0,0.0,1.0
+montes_claros_minas_gerais_brazil,in_vehicle_ok,888.0,888.0,0.0,1.0
+naihati_west_bengal_india,in_vehicle_ok,537.0,537.0,0.0,1.0
+narayanganj_dhaka_bangladesh,in_vehicle_ok,6031.0,6031.0,0.0,1.0
+nouakchott_nouakchott_ouest_mauritania,in_vehicle_ok,18522.0,18502.0,20.0,0.999
+spring_valley_nevada_united_states,in_vehicle_ok,41015.0,26349.0,14666.0,0.642
+temuco_araucan_a_chile,in_vehicle_ok,7316.0,7316.0,0.0,1.0
+vienna_austria,in_vehicle_ok,21672.0,21670.0,2.0,1.0

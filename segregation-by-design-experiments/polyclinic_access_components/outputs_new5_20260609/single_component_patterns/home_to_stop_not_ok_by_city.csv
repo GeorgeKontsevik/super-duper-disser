@@ -1,0 +1,36 @@
+city,pattern_value,pattern_context,n,share
+adelaide_south_australia_australia,Loops & Lollipops,home,1533.0,0.447
+adelaide_south_australia_australia,Irregular Grid,home,1503.0,0.438
+adelaide_south_australia_australia,Regular Grid,home,286.0,0.083
+adelaide_south_australia_australia,Warped Parallel,home,62.0,0.018
+adelaide_south_australia_australia,Broken Grid,home,40.0,0.012
+adelaide_south_australia_australia,UNKNOWN,home,5.0,0.001
+adelaide_south_australia_australia,Sparse,home,0.0,0.0
+amsterdam_netherlands,Loops & Lollipops,home,77.0,0.57
+amsterdam_netherlands,Irregular Grid,home,37.0,0.274
+amsterdam_netherlands,Regular Grid,home,17.0,0.126
+amsterdam_netherlands,UNKNOWN,home,4.0,0.03
+amsterdam_netherlands,Broken Grid,home,0.0,0.0
+amsterdam_netherlands,Sparse,home,0.0,0.0
+amsterdam_netherlands,Warped Parallel,home,0.0,0.0
+arequipa_peru,Irregular Grid,home,417.0,0.586
+arequipa_peru,Loops & Lollipops,home,233.0,0.327
+arequipa_peru,Regular Grid,home,41.0,0.058
+arequipa_peru,Broken Grid,home,9.0,0.013
+arequipa_peru,Sparse,home,8.0,0.011
+arequipa_peru,UNKNOWN,home,4.0,0.006
+arequipa_peru,Warped Parallel,home,0.0,0.0
+delft_netherlands,UNKNOWN,home,15088.0,0.752
+delft_netherlands,Irregular Grid,home,2053.0,0.102
+delft_netherlands,Loops & Lollipops,home,1685.0,0.084
+delft_netherlands,Broken Grid,home,772.0,0.038
+delft_netherlands,Regular Grid,home,473.0,0.024
+delft_netherlands,Sparse,home,0.0,0.0
+delft_netherlands,Warped Parallel,home,0.0,0.0
+vologda_russia,UNKNOWN,home,335.0,0.278
+vologda_russia,Loops & Lollipops,home,307.0,0.255
+vologda_russia,Warped Parallel,home,229.0,0.19
+vologda_russia,Irregular Grid,home,200.0,0.166
+vologda_russia,Regular Grid,home,61.0,0.051
+vologda_russia,Broken Grid,home,58.0,0.048
+vologda_russia,Sparse,home,14.0,0.012

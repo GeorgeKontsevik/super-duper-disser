@@ -1,0 +1,7 @@
+pattern_context,pattern_value,n,share
+city_street_pattern,Irregular Grid,0.406,0.406
+city_street_pattern,Loops & Lollipops,0.313,0.313
+city_street_pattern,Regular Grid,0.131,0.131
+city_street_pattern,Warped Parallel,0.104,0.104
+city_street_pattern,Broken Grid,0.035,0.035
+city_street_pattern,Sparse,0.011,0.011

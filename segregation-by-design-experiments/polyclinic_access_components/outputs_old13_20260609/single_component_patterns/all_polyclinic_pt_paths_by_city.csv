@@ -1,0 +1,79 @@
+city,pattern_value,pattern_context,n,share
+hai_duong_h_i_d_ng_vietnam,Broken Grid,pt_path,0.0,0.0
+hai_duong_h_i_d_ng_vietnam,Irregular Grid,pt_path,0.0,0.0
+hai_duong_h_i_d_ng_vietnam,Loops & Lollipops,pt_path,0.0,0.0
+hai_duong_h_i_d_ng_vietnam,Regular Grid,pt_path,0.0,0.0
+hai_duong_h_i_d_ng_vietnam,Sparse,pt_path,0.0,0.0
+hai_duong_h_i_d_ng_vietnam,Warped Parallel,pt_path,0.0,0.0
+huainan_anhui_china,Loops & Lollipops,pt_path,4317.599,0.881
+huainan_anhui_china,Irregular Grid,pt_path,538.295,0.11
+huainan_anhui_china,Regular Grid,pt_path,43.962,0.009
+huainan_anhui_china,Broken Grid,pt_path,2.392,0.0
+huainan_anhui_china,Sparse,pt_path,0.0,0.0
+huainan_anhui_china,Warped Parallel,pt_path,0.0,0.0
+jaynagar_bih_r_india,Broken Grid,pt_path,0.0,0.0
+jaynagar_bih_r_india,Irregular Grid,pt_path,0.0,0.0
+jaynagar_bih_r_india,Loops & Lollipops,pt_path,0.0,0.0
+jaynagar_bih_r_india,Regular Grid,pt_path,0.0,0.0
+jaynagar_bih_r_india,Sparse,pt_path,0.0,0.0
+jaynagar_bih_r_india,Warped Parallel,pt_path,0.0,0.0
+kakogawacho_honmachi_hy_go_japan,Broken Grid,pt_path,0.0,0.0
+kakogawacho_honmachi_hy_go_japan,Irregular Grid,pt_path,0.0,0.0
+kakogawacho_honmachi_hy_go_japan,Loops & Lollipops,pt_path,0.0,0.0
+kakogawacho_honmachi_hy_go_japan,Regular Grid,pt_path,0.0,0.0
+kakogawacho_honmachi_hy_go_japan,Sparse,pt_path,0.0,0.0
+kakogawacho_honmachi_hy_go_japan,Warped Parallel,pt_path,0.0,0.0
+kananga_kasa_central_congo_kinshasa,Broken Grid,pt_path,0.0,0.0
+kananga_kasa_central_congo_kinshasa,Irregular Grid,pt_path,0.0,0.0
+kananga_kasa_central_congo_kinshasa,Loops & Lollipops,pt_path,0.0,0.0
+kananga_kasa_central_congo_kinshasa,Regular Grid,pt_path,0.0,0.0
+kananga_kasa_central_congo_kinshasa,Sparse,pt_path,0.0,0.0
+kananga_kasa_central_congo_kinshasa,Warped Parallel,pt_path,0.0,0.0
+maracay_aragua_venezuela,Broken Grid,pt_path,0.0,0.0
+maracay_aragua_venezuela,Irregular Grid,pt_path,0.0,0.0
+maracay_aragua_venezuela,Loops & Lollipops,pt_path,0.0,0.0
+maracay_aragua_venezuela,Regular Grid,pt_path,0.0,0.0
+maracay_aragua_venezuela,Sparse,pt_path,0.0,0.0
+maracay_aragua_venezuela,Warped Parallel,pt_path,0.0,0.0
+montes_claros_minas_gerais_brazil,Broken Grid,pt_path,0.0,0.0
+montes_claros_minas_gerais_brazil,Irregular Grid,pt_path,0.0,0.0
+montes_claros_minas_gerais_brazil,Loops & Lollipops,pt_path,0.0,0.0
+montes_claros_minas_gerais_brazil,Regular Grid,pt_path,0.0,0.0
+montes_claros_minas_gerais_brazil,Sparse,pt_path,0.0,0.0
+montes_claros_minas_gerais_brazil,Warped Parallel,pt_path,0.0,0.0
+naihati_west_bengal_india,Broken Grid,pt_path,0.0,0.0
+naihati_west_bengal_india,Irregular Grid,pt_path,0.0,0.0
+naihati_west_bengal_india,Loops & Lollipops,pt_path,0.0,0.0
+naihati_west_bengal_india,Regular Grid,pt_path,0.0,0.0
+naihati_west_bengal_india,Sparse,pt_path,0.0,0.0
+naihati_west_bengal_india,Warped Parallel,pt_path,0.0,0.0
+narayanganj_dhaka_bangladesh,Broken Grid,pt_path,0.0,0.0
+narayanganj_dhaka_bangladesh,Irregular Grid,pt_path,0.0,0.0
+narayanganj_dhaka_bangladesh,Loops & Lollipops,pt_path,0.0,0.0
+narayanganj_dhaka_bangladesh,Regular Grid,pt_path,0.0,0.0
+narayanganj_dhaka_bangladesh,Sparse,pt_path,0.0,0.0
+narayanganj_dhaka_bangladesh,Warped Parallel,pt_path,0.0,0.0
+nouakchott_nouakchott_ouest_mauritania,Irregular Grid,pt_path,7126.513,0.612
+nouakchott_nouakchott_ouest_mauritania,Loops & Lollipops,pt_path,4126.479,0.355
+nouakchott_nouakchott_ouest_mauritania,Regular Grid,pt_path,367.423,0.032
+nouakchott_nouakchott_ouest_mauritania,Warped Parallel,pt_path,17.974,0.002
+nouakchott_nouakchott_ouest_mauritania,Broken Grid,pt_path,0.0,0.0
+nouakchott_nouakchott_ouest_mauritania,Sparse,pt_path,0.0,0.0
+spring_valley_nevada_united_states,Irregular Grid,pt_path,158561.865,0.386
+spring_valley_nevada_united_states,Regular Grid,pt_path,112297.931,0.274
+spring_valley_nevada_united_states,Loops & Lollipops,pt_path,73491.469,0.179
+spring_valley_nevada_united_states,Warped Parallel,pt_path,60785.073,0.148
+spring_valley_nevada_united_states,Broken Grid,pt_path,5274.562,0.013
+spring_valley_nevada_united_states,Sparse,pt_path,28.713,0.0
+temuco_araucan_a_chile,Broken Grid,pt_path,0.0,0.0
+temuco_araucan_a_chile,Irregular Grid,pt_path,0.0,0.0
+temuco_araucan_a_chile,Loops & Lollipops,pt_path,0.0,0.0
+temuco_araucan_a_chile,Regular Grid,pt_path,0.0,0.0
+temuco_araucan_a_chile,Sparse,pt_path,0.0,0.0
+temuco_araucan_a_chile,Warped Parallel,pt_path,0.0,0.0
+vienna_austria,Irregular Grid,pt_path,18288.044,0.496
+vienna_austria,Loops & Lollipops,pt_path,9486.462,0.257
+vienna_austria,Warped Parallel,pt_path,3958.1,0.107
+vienna_austria,Regular Grid,pt_path,3828.177,0.104
+vienna_austria,Broken Grid,pt_path,1301.788,0.035
+vienna_austria,Sparse,pt_path,3.913,0.0

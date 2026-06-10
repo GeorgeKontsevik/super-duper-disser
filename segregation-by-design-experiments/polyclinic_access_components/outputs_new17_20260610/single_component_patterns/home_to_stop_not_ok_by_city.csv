@@ -1,0 +1,120 @@
+city,pattern_value,pattern_context,n,share
+adelaide_south_australia_australia,Loops & Lollipops,home,1533.0,0.447
+adelaide_south_australia_australia,Irregular Grid,home,1503.0,0.438
+adelaide_south_australia_australia,Regular Grid,home,286.0,0.083
+adelaide_south_australia_australia,Warped Parallel,home,62.0,0.018
+adelaide_south_australia_australia,Broken Grid,home,40.0,0.012
+adelaide_south_australia_australia,UNKNOWN,home,5.0,0.001
+adelaide_south_australia_australia,Sparse,home,0.0,0.0
+amsterdam_netherlands,Loops & Lollipops,home,77.0,0.57
+amsterdam_netherlands,Irregular Grid,home,37.0,0.274
+amsterdam_netherlands,Regular Grid,home,17.0,0.126
+amsterdam_netherlands,UNKNOWN,home,4.0,0.03
+amsterdam_netherlands,Broken Grid,home,0.0,0.0
+amsterdam_netherlands,Sparse,home,0.0,0.0
+amsterdam_netherlands,Warped Parallel,home,0.0,0.0
+arequipa_peru,Irregular Grid,home,417.0,0.586
+arequipa_peru,Loops & Lollipops,home,233.0,0.327
+arequipa_peru,Regular Grid,home,41.0,0.058
+arequipa_peru,Broken Grid,home,9.0,0.013
+arequipa_peru,Sparse,home,8.0,0.011
+arequipa_peru,UNKNOWN,home,4.0,0.006
+arequipa_peru,Warped Parallel,home,0.0,0.0
+delft_netherlands,UNKNOWN,home,15088.0,0.752
+delft_netherlands,Irregular Grid,home,2053.0,0.102
+delft_netherlands,Loops & Lollipops,home,1685.0,0.084
+delft_netherlands,Broken Grid,home,772.0,0.038
+delft_netherlands,Regular Grid,home,473.0,0.024
+delft_netherlands,Sparse,home,0.0,0.0
+delft_netherlands,Warped Parallel,home,0.0,0.0
+hai_duong_h_i_d_ng_vietnam,Irregular Grid,home,81.0,0.333
+hai_duong_h_i_d_ng_vietnam,Loops & Lollipops,home,52.0,0.214
+hai_duong_h_i_d_ng_vietnam,Warped Parallel,home,36.0,0.148
+hai_duong_h_i_d_ng_vietnam,Regular Grid,home,33.0,0.136
+hai_duong_h_i_d_ng_vietnam,Sparse,home,27.0,0.111
+hai_duong_h_i_d_ng_vietnam,Broken Grid,home,12.0,0.049
+hai_duong_h_i_d_ng_vietnam,UNKNOWN,home,2.0,0.008
+huainan_anhui_china,Loops & Lollipops,home,273.0,0.648
+huainan_anhui_china,Irregular Grid,home,80.0,0.19
+huainan_anhui_china,Regular Grid,home,42.0,0.1
+huainan_anhui_china,Warped Parallel,home,26.0,0.062
+huainan_anhui_china,Broken Grid,home,0.0,0.0
+huainan_anhui_china,Sparse,home,0.0,0.0
+huainan_anhui_china,UNKNOWN,home,0.0,0.0
+jaynagar_bih_r_india,Loops & Lollipops,home,52.0,0.46
+jaynagar_bih_r_india,Irregular Grid,home,30.0,0.265
+jaynagar_bih_r_india,Warped Parallel,home,13.0,0.115
+jaynagar_bih_r_india,Regular Grid,home,12.0,0.106
+jaynagar_bih_r_india,UNKNOWN,home,6.0,0.053
+jaynagar_bih_r_india,Broken Grid,home,0.0,0.0
+jaynagar_bih_r_india,Sparse,home,0.0,0.0
+kakogawacho_honmachi_hy_go_japan,Irregular Grid,home,2304.0,0.672
+kakogawacho_honmachi_hy_go_japan,Loops & Lollipops,home,944.0,0.275
+kakogawacho_honmachi_hy_go_japan,Warped Parallel,home,125.0,0.036
+kakogawacho_honmachi_hy_go_japan,Regular Grid,home,37.0,0.011
+kakogawacho_honmachi_hy_go_japan,Sparse,home,15.0,0.004
+kakogawacho_honmachi_hy_go_japan,Broken Grid,home,4.0,0.001
+kakogawacho_honmachi_hy_go_japan,UNKNOWN,home,0.0,0.0
+kananga_kasa_central_congo_kinshasa,Irregular Grid,home,142.0,0.599
+kananga_kasa_central_congo_kinshasa,Loops & Lollipops,home,56.0,0.236
+kananga_kasa_central_congo_kinshasa,Regular Grid,home,25.0,0.105
+kananga_kasa_central_congo_kinshasa,Broken Grid,home,10.0,0.042
+kananga_kasa_central_congo_kinshasa,Warped Parallel,home,4.0,0.017
+kananga_kasa_central_congo_kinshasa,Sparse,home,0.0,0.0
+kananga_kasa_central_congo_kinshasa,UNKNOWN,home,0.0,0.0
+maracay_aragua_venezuela,Irregular Grid,home,3027.0,0.525
+maracay_aragua_venezuela,Loops & Lollipops,home,1844.0,0.32
+maracay_aragua_venezuela,Regular Grid,home,667.0,0.116
+maracay_aragua_venezuela,UNKNOWN,home,166.0,0.029
+maracay_aragua_venezuela,Warped Parallel,home,54.0,0.009
+maracay_aragua_venezuela,Broken Grid,home,6.0,0.001
+maracay_aragua_venezuela,Sparse,home,0.0,0.0
+montes_claros_minas_gerais_brazil,Irregular Grid,home,259.0,0.568
+montes_claros_minas_gerais_brazil,Loops & Lollipops,home,125.0,0.274
+montes_claros_minas_gerais_brazil,UNKNOWN,home,38.0,0.083
+montes_claros_minas_gerais_brazil,Warped Parallel,home,30.0,0.066
+montes_claros_minas_gerais_brazil,Regular Grid,home,4.0,0.009
+montes_claros_minas_gerais_brazil,Broken Grid,home,0.0,0.0
+montes_claros_minas_gerais_brazil,Sparse,home,0.0,0.0
+naihati_west_bengal_india,Irregular Grid,home,159.0,0.546
+naihati_west_bengal_india,Loops & Lollipops,home,64.0,0.22
+naihati_west_bengal_india,Regular Grid,home,37.0,0.127
+naihati_west_bengal_india,Warped Parallel,home,29.0,0.1
+naihati_west_bengal_india,UNKNOWN,home,2.0,0.007
+naihati_west_bengal_india,Broken Grid,home,0.0,0.0
+naihati_west_bengal_india,Sparse,home,0.0,0.0
+narayanganj_dhaka_bangladesh,Irregular Grid,home,2074.0,0.354
+narayanganj_dhaka_bangladesh,Loops & Lollipops,home,1678.0,0.286
+narayanganj_dhaka_bangladesh,Warped Parallel,home,1125.0,0.192
+narayanganj_dhaka_bangladesh,Regular Grid,home,811.0,0.138
+narayanganj_dhaka_bangladesh,UNKNOWN,home,78.0,0.013
+narayanganj_dhaka_bangladesh,Sparse,home,47.0,0.008
+narayanganj_dhaka_bangladesh,Broken Grid,home,44.0,0.008
+nouakchott_nouakchott_ouest_mauritania,Irregular Grid,home,9431.0,0.809
+nouakchott_nouakchott_ouest_mauritania,Loops & Lollipops,home,1706.0,0.146
+nouakchott_nouakchott_ouest_mauritania,Warped Parallel,home,392.0,0.034
+nouakchott_nouakchott_ouest_mauritania,Regular Grid,home,93.0,0.008
+nouakchott_nouakchott_ouest_mauritania,Broken Grid,home,21.0,0.002
+nouakchott_nouakchott_ouest_mauritania,UNKNOWN,home,11.0,0.001
+nouakchott_nouakchott_ouest_mauritania,Sparse,home,0.0,0.0
+spring_valley_nevada_united_states,Loops & Lollipops,home,6100.0,0.482
+spring_valley_nevada_united_states,Regular Grid,home,2327.0,0.184
+spring_valley_nevada_united_states,Irregular Grid,home,2149.0,0.17
+spring_valley_nevada_united_states,UNKNOWN,home,1360.0,0.107
+spring_valley_nevada_united_states,Warped Parallel,home,561.0,0.044
+spring_valley_nevada_united_states,Broken Grid,home,107.0,0.008
+spring_valley_nevada_united_states,Sparse,home,51.0,0.004
+temuco_araucan_a_chile,Irregular Grid,home,2231.0,0.525
+temuco_araucan_a_chile,Loops & Lollipops,home,1732.0,0.408
+temuco_araucan_a_chile,Warped Parallel,home,197.0,0.046
+temuco_araucan_a_chile,UNKNOWN,home,49.0,0.012
+temuco_araucan_a_chile,Regular Grid,home,28.0,0.007
+temuco_araucan_a_chile,Broken Grid,home,11.0,0.003
+temuco_araucan_a_chile,Sparse,home,0.0,0.0
+vologda_russia,UNKNOWN,home,335.0,0.278
+vologda_russia,Loops & Lollipops,home,307.0,0.255
+vologda_russia,Warped Parallel,home,229.0,0.19
+vologda_russia,Irregular Grid,home,200.0,0.166
+vologda_russia,Regular Grid,home,61.0,0.051
+vologda_russia,Broken Grid,home,58.0,0.048
+vologda_russia,Sparse,home,14.0,0.012

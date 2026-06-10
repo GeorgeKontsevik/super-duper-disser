@@ -1,0 +1,6 @@
+city,component,n,ok_count,not_ok_count,share_ok
+adelaide_south_australia_australia,access_egress_sum_ok,8922.0,1270.0,7652.0,0.142
+amsterdam_netherlands,access_egress_sum_ok,54703.0,10638.0,44065.0,0.194
+arequipa_peru,access_egress_sum_ok,4782.0,7.0,4775.0,0.001
+delft_netherlands,access_egress_sum_ok,112420.0,35165.0,77255.0,0.313
+vologda_russia,access_egress_sum_ok,7950.0,2176.0,5774.0,0.274

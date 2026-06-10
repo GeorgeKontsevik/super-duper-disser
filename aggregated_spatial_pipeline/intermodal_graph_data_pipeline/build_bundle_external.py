@@ -9,6 +9,7 @@ from pathlib import Path
 
 import geopandas as gpd
 import iduedu
+import osmnx as ox
 from loguru import logger
 
 from aggregated_spatial_pipeline.geodata_io import prepare_geodata_for_parquet, read_geodata
@@ -55,6 +56,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--place", required=True)
     parser.add_argument("--boundary-path", required=True)
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument(
+        "--overpass-date",
+        default=None,
+        help='Optional OSM historical snapshot date, e.g. "2020-12-31T23:59:59Z".',
+    )
+    parser.add_argument("--overpass-url", default=None)
+    parser.add_argument("--osm-timeout-s", type=int, default=240)
     return parser.parse_args()
 
 
@@ -81,23 +89,47 @@ def main() -> None:
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    territory_gdf = read_geodata(boundary_path)
-    if territory_gdf.empty:
-        raise ValueError(f"Intermodal graph territory is empty: {boundary_path}")
+    original_overpass_settings = ox.settings.overpass_settings
+    original_overpass_url = ox.settings.overpass_url
+    original_timeout = getattr(ox.settings, "timeout", None)
+    original_requests_timeout = getattr(ox.settings, "requests_timeout", None)
+    if hasattr(ox.settings, "timeout"):
+        ox.settings.timeout = int(args.osm_timeout_s)
+    if hasattr(ox.settings, "requests_timeout"):
+        ox.settings.requests_timeout = int(args.osm_timeout_s)
+    if args.overpass_url:
+        ox.settings.overpass_url = str(args.overpass_url)
+    if args.overpass_date:
+        ox.settings.overpass_settings = (
+            f'[out:json][timeout:{{timeout}}][date:"{args.overpass_date}"]{{maxsize}}'
+        )
 
-    transport_types = ["tram", "bus", "trolleybus", "subway"]
-    _log(
-        "Building intermodal graph with iduedu 1.2.1 "
-        f"for modes={','.join(transport_types)} (clip_by_territory=True)"
-    )
-    graph = iduedu.get_intermodal_graph(
-        territory=territory_gdf,
-        clip_by_territory=True,
-        pt_kwargs={
-            "transport_types": transport_types,
-            "extra_stop_tags": CONNECTPT_COMPAT_EXTRA_STOP_TAGS,
-        },
-    )
+    try:
+        territory_gdf = read_geodata(boundary_path)
+        if territory_gdf.empty:
+            raise ValueError(f"Intermodal graph territory is empty: {boundary_path}")
+
+        transport_types = ["tram", "bus", "trolleybus", "subway"]
+        _log(
+            "Building intermodal graph with iduedu 1.2.1 "
+            f"for modes={','.join(transport_types)} (clip_by_territory=True, "
+            f"overpass_date={args.overpass_date or 'current'})"
+        )
+        graph = iduedu.get_intermodal_graph(
+            territory=territory_gdf,
+            clip_by_territory=True,
+            pt_kwargs={
+                "transport_types": transport_types,
+                "extra_stop_tags": CONNECTPT_COMPAT_EXTRA_STOP_TAGS,
+            },
+        )
+    finally:
+        ox.settings.overpass_settings = original_overpass_settings
+        ox.settings.overpass_url = original_overpass_url
+        if original_timeout is not None and hasattr(ox.settings, "timeout"):
+            ox.settings.timeout = original_timeout
+        if original_requests_timeout is not None and hasattr(ox.settings, "requests_timeout"):
+            ox.settings.requests_timeout = original_requests_timeout
 
     nodes_gdf = iduedu.graph_to_gdf(graph, nodes=True, edges=False)
     edges_gdf = iduedu.graph_to_gdf(graph, nodes=False, edges=True, restore_edge_geom=True)
@@ -118,6 +150,7 @@ def main() -> None:
         "graph_type": "intermodal",
         "graph_provider": "iduedu",
         "iduedu_version": "1.2.1",
+        "overpass_date": args.overpass_date,
         "clip_by_territory": True,
         "transport_types": transport_types,
         "extra_stop_tags": CONNECTPT_COMPAT_EXTRA_STOP_TAGS,
