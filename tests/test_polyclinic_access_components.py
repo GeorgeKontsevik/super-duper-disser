@@ -4,8 +4,11 @@ import importlib.util
 import unittest
 from pathlib import Path
 
+import geopandas as gpd
 import pandas as pd
 import tempfile
+import json
+from shapely.geometry import Polygon
 
 
 MODULE_PATH = Path(
@@ -15,6 +18,14 @@ SPEC = importlib.util.spec_from_file_location("polyclinic_access_components", MO
 assert SPEC is not None and SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
+
+CITY_LEVEL_MODULE_PATH = Path(
+    "/Users/gk/Code/super-duper-disser/segregation-by-design-experiments/polyclinic_access_components/city_level.py"
+)
+CITY_LEVEL_SPEC = importlib.util.spec_from_file_location("polyclinic_access_city_level", CITY_LEVEL_MODULE_PATH)
+assert CITY_LEVEL_SPEC is not None and CITY_LEVEL_SPEC.loader is not None
+CITY_LEVEL_MODULE = importlib.util.module_from_spec(CITY_LEVEL_SPEC)
+CITY_LEVEL_SPEC.loader.exec_module(CITY_LEVEL_MODULE)
 
 
 class PolyclinicAccessComponentsTests(unittest.TestCase):
@@ -257,6 +268,276 @@ class PolyclinicAccessComponentsTests(unittest.TestCase):
         city_a = completed[completed["city"] == "a"].sort_values("pattern_value").reset_index(drop=True)
         self.assertEqual(city_a["n"].tolist(), [0.0, 0.0])
         self.assertEqual(city_a["share"].tolist(), [0.0, 0.0])
+
+
+class PolyclinicCityLevelRegistryTests(unittest.TestCase):
+    def test_build_default_city_registry_returns_deduped_large_sample(self) -> None:
+        registry = CITY_LEVEL_MODULE.build_default_city_registry()
+
+        self.assertEqual(len(registry), 36)
+        self.assertEqual(registry["city"].nunique(), 36)
+        self.assertIn("vienna_austria", registry["city"].tolist())
+        self.assertIn("amsterdam_netherlands", registry["city"].tolist())
+        self.assertNotIn("nouakchott_nouakchott_ouest_mauritania", registry["city"].tolist())
+        self.assertNotIn("adelaide_south_australia_australia", registry[registry["source"] == "new5"]["city"].tolist())
+
+    def test_build_default_city_registry_uses_expected_source_priority(self) -> None:
+        registry = CITY_LEVEL_MODULE.build_default_city_registry()
+        rows = registry.set_index("city")
+
+        self.assertEqual(rows.loc["bergen_norway", "source"], "active19")
+        self.assertEqual(rows.loc["amsterdam_netherlands", "source"], "new17")
+        self.assertEqual(rows.loc["vienna_austria", "source"], "old23")
+
+    def test_verify_city_registry_bundle_flags_core_artifacts(self) -> None:
+        registry = CITY_LEVEL_MODULE.build_default_city_registry()
+        verified = CITY_LEVEL_MODULE.verify_city_registry_bundle(registry)
+
+        amsterdam = verified[verified["city"] == "amsterdam_netherlands"].iloc[0]
+        bergen = verified[verified["city"] == "bergen_norway"].iloc[0]
+
+        self.assertTrue(bool(bergen["has_street_pattern"]))
+        self.assertTrue(bool(bergen["has_graph"]))
+        self.assertTrue(bool(bergen["has_solver_blocks"]))
+        self.assertTrue(bool(amsterdam["has_street_pattern"]))
+        self.assertTrue(bool(amsterdam["has_graph"]))
+        self.assertTrue(bool(amsterdam["has_solver_blocks"]))
+
+    def test_build_city_level_baseline_coverage_aggregates_by_registry_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            active_path = tmp / "active.parquet"
+            new_path = tmp / "new.parquet"
+
+            pd.DataFrame(
+                {
+                    "city": ["bergen_norway", "bergen_norway", "ignored_city"],
+                    "service_name": ["polyclinic", "polyclinic", "hospital"],
+                    "access_diagnosis_label": ["ok_walk", "failed_access_gt_threshold", "ok_walk"],
+                }
+            ).to_parquet(active_path, index=False)
+            pd.DataFrame(
+                {
+                    "city": ["amsterdam_netherlands", "amsterdam_netherlands", "vienna_austria"],
+                    "service_name": ["polyclinic", "polyclinic", "polyclinic"],
+                    "access_diagnosis_label": ["ok_pt_only", "failed_in_vehicle_gt_threshold", "ok_walk"],
+                }
+            ).to_parquet(new_path, index=False)
+
+            registry = pd.DataFrame(
+                {
+                    "city": ["bergen_norway", "amsterdam_netherlands", "vienna_austria"],
+                    "source": ["active19", "new17", "old23"],
+                    "access_diagnostics_path": [str(active_path), str(new_path), str(new_path)],
+                }
+            )
+
+            baseline = CITY_LEVEL_MODULE.build_city_level_baseline_coverage(registry)
+            rows = baseline.set_index("city")
+
+            self.assertAlmostEqual(float(rows.loc["bergen_norway", "coverage"]), 0.5)
+            self.assertEqual(int(rows.loc["bergen_norway", "n_homes"]), 2)
+            self.assertAlmostEqual(float(rows.loc["amsterdam_netherlands", "coverage"]), 0.5)
+            self.assertAlmostEqual(float(rows.loc["vienna_austria", "coverage"]), 1.0)
+
+    def test_load_solver_summary_fields_reads_gap_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            summary_path = tmp / "summary.json"
+            summary_path.write_text(
+                json.dumps(
+                    {
+                        "demand_total": 100.0,
+                        "demand_without_total": 40.0,
+                        "capacity_total": 200.0,
+                        "provision_total": 0.6,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            row = CITY_LEVEL_MODULE.load_solver_summary_fields(summary_path)
+            self.assertEqual(row["demand_total"], 100.0)
+            self.assertEqual(row["accessibility_gap_total"], 40.0)
+            self.assertEqual(row["capacity_total"], 200.0)
+            self.assertEqual(row["provision_total"], 0.6)
+
+    def test_load_street_pattern_mix_fields_converts_counts_to_shares(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            summary_path = tmp / "summary.json"
+            summary_path.write_text(
+                json.dumps(
+                    {
+                        "num_predictions": 10,
+                        "class_counts": {
+                            "Irregular Grid": 5,
+                            "Loops & Lollipops": 3,
+                            "Regular Grid": 2,
+                            "Warped Parallel": 0,
+                            "Broken Grid": 0,
+                            "Sparse": 0,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            row = CITY_LEVEL_MODULE.load_street_pattern_mix_fields(summary_path)
+            self.assertEqual(row["street_pattern_cells"], 10.0)
+            self.assertAlmostEqual(row["share_irregular_grid"], 0.5)
+            self.assertAlmostEqual(row["share_loops_lollipops"], 0.3)
+            self.assertAlmostEqual(row["share_regular_grid"], 0.2)
+
+    def test_load_pt_descriptor_fields_counts_modalities_routes_and_stops(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            connectpt_osm = tmp / "connectpt_osm"
+            bus = connectpt_osm / "bus"
+            tram = connectpt_osm / "tram"
+            bus.mkdir(parents=True)
+            tram.mkdir(parents=True)
+
+            pd.DataFrame({"route_id": [1, 2]}).to_parquet(bus / "lines.parquet", index=False)
+            pd.DataFrame({"stop_id": [1, 2, 3]}).to_parquet(bus / "aggregated_stops.parquet", index=False)
+            pd.DataFrame({"route_id": [1]}).to_parquet(tram / "lines.parquet", index=False)
+            pd.DataFrame({"stop_id": [1, 2]}).to_parquet(tram / "aggregated_stops.parquet", index=False)
+
+            row = CITY_LEVEL_MODULE.load_pt_descriptor_fields(tmp)
+            self.assertEqual(row["pt_modality_count"], 2.0)
+            self.assertEqual(row["pt_route_count"], 3.0)
+            self.assertEqual(row["pt_stop_count"], 5.0)
+
+    def test_build_city_level_research_dataset_merges_all_layers(self) -> None:
+        registry = pd.DataFrame(
+            {
+                "city": ["a_city"],
+                "source": ["active19"],
+                "source_priority": [0],
+                "city_dir": ["/tmp/city"],
+                "access_diagnostics_path": ["/tmp/access.parquet"],
+            }
+        )
+        baseline = pd.DataFrame(
+            {
+                "city": ["a_city"],
+                "source": ["active19"],
+                "source_priority": [0],
+                "city_dir": ["/tmp/city"],
+                "access_diagnostics_path": ["/tmp/access.parquet"],
+                "n_homes": [100],
+                "ok_count": [70],
+                "not_ok_count": [30],
+                "coverage": [0.7],
+            }
+        )
+        enriched = CITY_LEVEL_MODULE._merge_city_level_layers(
+            registry=registry,
+            baseline=baseline,
+            solver_rows=pd.DataFrame([{"city": "a_city", "demand_total": 100.0, "accessibility_gap_total": 30.0}]),
+            street_rows=pd.DataFrame([{"city": "a_city", "street_pattern_cells": 10.0, "share_irregular_grid": 0.5}]),
+            pt_rows=pd.DataFrame([{"city": "a_city", "pt_modality_count": 2.0, "pt_route_count": 20.0}]),
+        )
+        row = enriched.iloc[0]
+        self.assertAlmostEqual(float(row["coverage"]), 0.7)
+        self.assertAlmostEqual(float(row["accessibility_gap_total"]), 30.0)
+        self.assertAlmostEqual(float(row["share_irregular_grid"]), 0.5)
+        self.assertAlmostEqual(float(row["pt_route_count"]), 20.0)
+        self.assertAlmostEqual(float(row["accessibility_gap_share"]), 0.3)
+
+    def test_build_research_question_association_summary_reports_spearman(self) -> None:
+        df = pd.DataFrame(
+            {
+                "city": ["a", "b", "c", "d"],
+                "coverage": [0.1, 0.2, 0.3, 0.4],
+                "accessibility_gap_share": [0.9, 0.8, 0.7, 0.6],
+                "share_irregular_grid": [0.4, 0.3, 0.2, 0.1],
+                "pt_route_count": [10, 20, 30, 40],
+            }
+        )
+        summary = CITY_LEVEL_MODULE.build_research_question_association_summary(df)
+        coverage_irregular = summary[
+            (summary["outcome"] == "coverage") & (summary["predictor"] == "share_irregular_grid")
+        ].iloc[0]
+        coverage_pt = summary[
+            (summary["outcome"] == "coverage") & (summary["predictor"] == "pt_route_count")
+        ].iloc[0]
+        self.assertAlmostEqual(float(coverage_irregular["spearman_rho"]), -1.0)
+        self.assertAlmostEqual(float(coverage_pt["spearman_rho"]), 1.0)
+
+    def test_scale_unmet_demand_to_target_provision_hits_absolute_target(self) -> None:
+        df = pd.DataFrame(
+            {
+                "demand": [50.0, 50.0],
+                "demand_without": [20.0, 0.0],
+                "demand_left": [10.0, 0.0],
+            }
+        )
+        scaled = CITY_LEVEL_MODULE.scale_unmet_demand_to_target_provision(df, target_provision=0.9)
+        self.assertAlmostEqual(float(scaled["target_unmet_total"]), 20.0)
+        self.assertAlmostEqual(float(scaled["baseline_provision"]), 0.7)
+        self.assertAlmostEqual(float(scaled["target_fraction_of_full_gap"]), 2 / 3)
+        self.assertAlmostEqual(float(scaled["scaled_demand_without"].sum()), 13.333333333333334)
+        self.assertAlmostEqual(float(scaled["scaled_demand_left"].sum()), 6.666666666666667)
+
+    def test_scale_unmet_demand_to_target_provision_returns_zero_if_baseline_already_enough(self) -> None:
+        df = pd.DataFrame(
+            {
+                "demand": [50.0, 50.0],
+                "demand_without": [5.0, 0.0],
+                "demand_left": [0.0, 0.0],
+            }
+        )
+        scaled = CITY_LEVEL_MODULE.scale_unmet_demand_to_target_provision(df, target_provision=0.9)
+        self.assertAlmostEqual(float(scaled["target_unmet_total"]), 0.0)
+        self.assertAlmostEqual(float(scaled["target_fraction_of_full_gap"]), 0.0)
+        self.assertAlmostEqual(float(scaled["scaled_demand_without"].sum()), 0.0)
+
+    def test_build_placement_result_row_combines_summary_with_target_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            summary_path = tmp / "summary_after.json"
+            summary_path.write_text(
+                json.dumps(
+                    {
+                        "new_count": 4,
+                        "expanded_count": 0,
+                        "selected_count": 11,
+                        "demand_without_after_total": 7.0,
+                        "demand_left_after_total": 3.0,
+                        "capacity_added_total": 1200.0,
+                        "files": {"status_preview_png": "/tmp/status.png"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            row = CITY_LEVEL_MODULE.build_placement_result_row(
+                city="a_city",
+                summary_after_path=summary_path,
+                demand_total=100.0,
+                target_provision=0.9,
+                baseline_provision=0.7,
+            )
+            self.assertEqual(row["city"], "a_city")
+            self.assertEqual(row["additional_polyclinics_needed_to_0_9"], 4.0)
+            self.assertAlmostEqual(float(row["achieved_provision_after"]), 0.9)
+            self.assertAlmostEqual(float(row["target_provision"]), 0.9)
+            self.assertEqual(row["status_preview_png"], "/tmp/status.png")
+
+    def test_build_failed_placement_result_row_keeps_error_and_baseline_metrics(self) -> None:
+        row = CITY_LEVEL_MODULE.build_failed_placement_result_row(
+            city="a_city",
+            error="Problem not solved: Infeasible.",
+            demand_total=100.0,
+            full_gap_total=30.0,
+            baseline_provision=0.7,
+            target_provision=0.9,
+            target_unmet_total=20.0,
+            target_fraction_of_full_gap=2 / 3,
+        )
+        self.assertEqual(row["city"], "a_city")
+        self.assertEqual(row["placement_status"], "failed")
+        self.assertIn("Infeasible", row["placement_error"])
+        self.assertAlmostEqual(float(row["baseline_provision"]), 0.7)
+        self.assertTrue(pd.isna(row["additional_polyclinics_needed_to_0_9"]))
 
     def test_aggregate_city_share_mean_averages_city_percentages(self) -> None:
         city_df = pd.DataFrame(
@@ -548,6 +829,92 @@ class PolyclinicAccessComponentsTests(unittest.TestCase):
         self.assertNotEqual(specs[1]["color"], specs[2]["color"])
         self.assertNotEqual(specs[3]["color"], specs[4]["color"])
         self.assertEqual([spec["grid_row"] for spec in specs], [0, 1, 3, 4, 6])
+
+    def test_transfer_street_pattern_cells_to_blocks_assigns_dominant_class(self) -> None:
+        blocks = gpd.GeoDataFrame(
+            {"geometry": [
+                Polygon([(0, 0), (1, 0), (1, 1), (0, 1)]),
+                Polygon([(1, 0), (2, 0), (2, 1), (1, 1)]),
+            ]},
+            geometry="geometry",
+            crs="EPSG:3857",
+        )
+        cells = gpd.GeoDataFrame(
+            {
+                "top1_class_name": ["Regular Grid", "Broken Grid", "Sparse"],
+                "geometry": [
+                    Polygon([(0, 0), (0.75, 0), (0.75, 1), (0, 1)]),
+                    Polygon([(0.75, 0), (1, 0), (1, 1), (0.75, 1)]),
+                    Polygon([(1, 0), (2, 0), (2, 1), (1, 1)]),
+                ],
+            },
+            geometry="geometry",
+            crs="EPSG:3857",
+        )
+
+        transferred = CITY_LEVEL_MODULE.transfer_street_pattern_cells_to_blocks(blocks, cells)
+
+        self.assertEqual(transferred["block_name"].tolist(), ["0", "1"])
+        self.assertEqual(
+            transferred["street_pattern_dominant_class"].tolist(),
+            ["Regular Grid", "Sparse"],
+        )
+
+    def test_build_city_target90_pattern_lift_rows_compares_selected_against_baselines(self) -> None:
+        block_patterns = pd.DataFrame(
+            {
+                "block_name": ["0", "1", "2", "3", "4"],
+                "street_pattern_dominant_class": ["Regular Grid", "Regular Grid", "Regular Grid", "Broken Grid", "Sparse"],
+            }
+        )
+
+        rows = CITY_LEVEL_MODULE.build_city_target90_pattern_lift_rows(
+            city="x",
+            block_patterns=block_patterns,
+            candidate_block_names=["0", "1", "3", "4"],
+            selected_block_names=["3", "4"],
+        )
+
+        broken = rows[rows["street_pattern_dominant_class"] == "Broken Grid"].iloc[0]
+        regular = rows[rows["street_pattern_dominant_class"] == "Regular Grid"].iloc[0]
+        sparse = rows[rows["street_pattern_dominant_class"] == "Sparse"].iloc[0]
+
+        self.assertAlmostEqual(float(broken["selected_share"]), 0.5)
+        self.assertAlmostEqual(float(broken["city_share"]), 0.2)
+        self.assertAlmostEqual(float(broken["candidate_share"]), 0.25)
+        self.assertAlmostEqual(float(broken["placement_lift_vs_city"]), 0.3)
+        self.assertAlmostEqual(float(broken["placement_lift_vs_candidates"]), 0.25)
+        self.assertAlmostEqual(float(broken["placement_ratio_vs_city"]), 2.5)
+        self.assertAlmostEqual(float(broken["placement_ratio_vs_candidates"]), 2.0)
+
+        self.assertAlmostEqual(float(regular["selected_share"]), 0.0)
+        self.assertAlmostEqual(float(regular["placement_lift_vs_city"]), -0.6)
+        self.assertAlmostEqual(float(regular["placement_lift_vs_candidates"]), -0.5)
+
+        self.assertAlmostEqual(float(sparse["selected_share"]), 0.5)
+        self.assertAlmostEqual(float(sparse["placement_lift_vs_city"]), 0.3)
+        self.assertAlmostEqual(float(sparse["placement_lift_vs_candidates"]), 0.25)
+
+    def test_build_overall_target90_pattern_lift_rows_aggregates_counts_before_shares(self) -> None:
+        detail = pd.DataFrame(
+            {
+                "city": ["a", "a", "b", "b"],
+                "street_pattern_dominant_class": ["Regular Grid", "Broken Grid", "Regular Grid", "Broken Grid"],
+                "city_count": [3.0, 1.0, 1.0, 3.0],
+                "candidate_count": [2.0, 1.0, 1.0, 2.0],
+                "selected_count": [0.0, 1.0, 1.0, 1.0],
+            }
+        )
+
+        overall = CITY_LEVEL_MODULE.build_overall_target90_pattern_lift_rows(detail)
+
+        broken = overall[overall["street_pattern_dominant_class"] == "Broken Grid"].iloc[0]
+        regular = overall[overall["street_pattern_dominant_class"] == "Regular Grid"].iloc[0]
+        self.assertAlmostEqual(float(broken["city_share"]), 0.5)
+        self.assertAlmostEqual(float(broken["candidate_share"]), 0.5)
+        self.assertAlmostEqual(float(broken["selected_share"]), 2.0 / 3.0)
+        self.assertAlmostEqual(float(broken["placement_lift_vs_candidates"]), (2.0 / 3.0) - 0.5)
+        self.assertAlmostEqual(float(regular["selected_share"]), 1.0 / 3.0)
 
 
 if __name__ == "__main__":
