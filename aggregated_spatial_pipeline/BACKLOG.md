@@ -1,5 +1,17 @@
 # Aggregated Spatial Pipeline Backlog
 
+## Deferred Polyclinic PT-Improvement Substitution Experiment
+
+- Test whether targeted PT improvements can reduce the number of additional `polyclinic` facilities needed to reach target coverage.
+  - Core thesis: `street pattern` is the diagnostic layer for locating where transport improvement can substitute for part of service placement.
+  - Placement-only target90 is only the baseline counterfactual, not the main experiment.
+  - Current state: city-level pattern diagnostics now compare demand, existing service capacity, PT stops, PT-route length, coverage, unmet demand, first-mile failures, and PT-segment failures by street-pattern context.
+  - Remaining work: connect these diagnostics to solver-selected and near-selected candidate blocks, then test intervention scenarios around those blocks.
+  - Candidate scenarios: speed up selected links/corridors, add a route, replace one route with another, or improve stop connectivity around candidate blocks.
+  - Main outcome: compare `additional_polyclinics_needed` before and after PT intervention under the same target coverage.
+  - Important constraint: do not force route diversity with fallback generation; if route generation returns duplicate or weak alternatives, store and report that result honestly.
+  - Why deferred: this requires an explicit experimental design on top of the current descriptive pattern-system layer and usable target90 candidate/placement outputs.
+
 ## Deferred Architecture Cleanup
 
 - Make `street-pattern` fully parquet-first and remove the temporary `GeoJSON` compatibility export used only for `mask`-based reads.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import json
 from pathlib import Path
@@ -508,6 +509,199 @@ def build_overall_target90_pattern_lift_rows(detail: pd.DataFrame) -> pd.DataFra
     return grouped.sort_values(["sort_key", "street_pattern_dominant_class"]).drop(columns=["sort_key"]).reset_index(drop=True)
 
 
+def _safe_share(numerator: pd.Series | float, denominator: float) -> pd.Series | float:
+    if float(denominator) <= 0.0:
+        if isinstance(numerator, pd.Series):
+            return pd.Series(0.0, index=numerator.index)
+        return 0.0
+    return numerator / float(denominator)
+
+
+def build_pattern_demand_supply_rows(city: str, solver_blocks: pd.DataFrame) -> pd.DataFrame:
+    class_col = "street_pattern_dominant_class" if "street_pattern_dominant_class" in solver_blocks.columns else "street_pattern_top1_class"
+    if class_col not in solver_blocks.columns:
+        class_col = "street_pattern_dominant_class"
+        solver_blocks = solver_blocks.copy()
+        solver_blocks[class_col] = "unknown"
+
+    prepared = pd.DataFrame(
+        {
+            "street_pattern_dominant_class": solver_blocks[class_col].fillna("unknown").astype(str),
+            "demand": pd.to_numeric(solver_blocks.get("demand", 0.0), errors="coerce").fillna(0.0),
+            "capacity": pd.to_numeric(solver_blocks.get("capacity", 0.0), errors="coerce").fillna(0.0),
+            "provision": pd.to_numeric(solver_blocks.get("provision", 0.0), errors="coerce").fillna(0.0),
+            "demand_without": pd.to_numeric(solver_blocks.get("demand_without", 0.0), errors="coerce").fillna(0.0),
+            "demand_left": pd.to_numeric(solver_blocks.get("demand_left", 0.0), errors="coerce").fillna(0.0),
+        }
+    )
+    prepared["unmet_demand"] = prepared["demand_without"] + prepared["demand_left"]
+
+    grouped = (
+        prepared.groupby("street_pattern_dominant_class", as_index=False)
+        .agg(
+            block_count=("street_pattern_dominant_class", "size"),
+            demand=("demand", "sum"),
+            capacity=("capacity", "sum"),
+            provision=("provision", "sum"),
+            unmet_demand=("unmet_demand", "sum"),
+        )
+    )
+    demand_total = float(grouped["demand"].sum())
+    capacity_total = float(grouped["capacity"].sum())
+    provision_total = float(grouped["provision"].sum())
+    unmet_total = float(grouped["unmet_demand"].sum())
+
+    grouped["demand_share"] = _safe_share(grouped["demand"], demand_total)
+    grouped["capacity_share"] = _safe_share(grouped["capacity"], capacity_total)
+    grouped["provision_share"] = _safe_share(grouped["provision"], provision_total)
+    grouped["unmet_share"] = _safe_share(grouped["unmet_demand"], unmet_total)
+    grouped["coverage_proxy"] = np.where(
+        grouped["demand"] > 0.0,
+        (grouped["demand"] - grouped["unmet_demand"]) / grouped["demand"],
+        0.0,
+    )
+    grouped["capacity_per_1000_demand"] = np.where(
+        grouped["demand"] > 0.0,
+        grouped["capacity"] / grouped["demand"] * 1000.0,
+        np.nan,
+    )
+    grouped["supply_demand_share_gap"] = grouped["capacity_share"] - grouped["demand_share"]
+    grouped["unmet_demand_share_gap"] = grouped["unmet_share"] - grouped["demand_share"]
+    grouped["city"] = city
+    order_map = {label: idx for idx, label in enumerate(_ordered_street_pattern_classes(grouped["street_pattern_dominant_class"]))}
+    grouped["sort_key"] = grouped["street_pattern_dominant_class"].map(order_map)
+    return grouped.sort_values(["sort_key", "street_pattern_dominant_class"]).drop(columns=["sort_key"]).reset_index(drop=True)
+
+
+def build_overall_pattern_demand_supply_rows(detail: pd.DataFrame) -> pd.DataFrame:
+    if detail.empty:
+        return pd.DataFrame(
+            columns=[
+                "street_pattern_dominant_class",
+                "block_count",
+                "demand",
+                "capacity",
+                "provision",
+                "unmet_demand",
+                "demand_share",
+                "capacity_share",
+                "provision_share",
+                "unmet_share",
+                "coverage_proxy",
+                "capacity_per_1000_demand",
+                "supply_demand_share_gap",
+                "unmet_demand_share_gap",
+            ]
+        )
+    grouped = (
+        detail.groupby("street_pattern_dominant_class", as_index=False)[
+            ["block_count", "demand", "capacity", "provision", "unmet_demand"]
+        ]
+        .sum()
+    )
+    demand_total = float(grouped["demand"].sum())
+    capacity_total = float(grouped["capacity"].sum())
+    provision_total = float(grouped["provision"].sum())
+    unmet_total = float(grouped["unmet_demand"].sum())
+    grouped["demand_share"] = _safe_share(grouped["demand"], demand_total)
+    grouped["capacity_share"] = _safe_share(grouped["capacity"], capacity_total)
+    grouped["provision_share"] = _safe_share(grouped["provision"], provision_total)
+    grouped["unmet_share"] = _safe_share(grouped["unmet_demand"], unmet_total)
+    grouped["coverage_proxy"] = np.where(
+        grouped["demand"] > 0.0,
+        (grouped["demand"] - grouped["unmet_demand"]) / grouped["demand"],
+        0.0,
+    )
+    grouped["capacity_per_1000_demand"] = np.where(
+        grouped["demand"] > 0.0,
+        grouped["capacity"] / grouped["demand"] * 1000.0,
+        np.nan,
+    )
+    grouped["supply_demand_share_gap"] = grouped["capacity_share"] - grouped["demand_share"]
+    grouped["unmet_demand_share_gap"] = grouped["unmet_share"] - grouped["demand_share"]
+    order_map = {label: idx for idx, label in enumerate(_ordered_street_pattern_classes(grouped["street_pattern_dominant_class"]))}
+    grouped["sort_key"] = grouped["street_pattern_dominant_class"].map(order_map)
+    return grouped.sort_values(["sort_key", "street_pattern_dominant_class"]).drop(columns=["sort_key"]).reset_index(drop=True)
+
+
+def build_pattern_access_failure_rows(city: str, diagnostics: pd.DataFrame) -> pd.DataFrame:
+    if diagnostics.empty:
+        return pd.DataFrame(columns=["city", "street_pattern_dominant_class", "home_count", "ok_count", "not_ok_count", "coverage"])
+    class_col = "home_street_pattern_class"
+    prepared = diagnostics.copy()
+    prepared["street_pattern_dominant_class"] = prepared.get(class_col, "unknown")
+    prepared["street_pattern_dominant_class"] = prepared["street_pattern_dominant_class"].fillna("unknown").astype(str)
+    prepared["is_ok"] = prepared["access_diagnosis_label"].isin(OK_LABELS)
+    grouped = (
+        prepared.groupby("street_pattern_dominant_class", as_index=False)
+        .agg(
+            home_count=("access_diagnosis_label", "size"),
+            ok_count=("is_ok", "sum"),
+        )
+    )
+    grouped["not_ok_count"] = grouped["home_count"] - grouped["ok_count"]
+    grouped["coverage"] = np.where(grouped["home_count"] > 0, grouped["ok_count"] / grouped["home_count"], 0.0)
+    for label in sorted(prepared["access_diagnosis_label"].dropna().astype(str).unique()):
+        col = f"share_{label}"
+        counts = prepared[prepared["access_diagnosis_label"].astype(str) == label].groupby("street_pattern_dominant_class").size()
+        grouped[col] = grouped["street_pattern_dominant_class"].map(counts).fillna(0.0) / grouped["home_count"]
+    grouped["city"] = city
+    order_map = {label: idx for idx, label in enumerate(_ordered_street_pattern_classes(grouped["street_pattern_dominant_class"]))}
+    grouped["sort_key"] = grouped["street_pattern_dominant_class"].map(order_map)
+    return grouped.sort_values(["sort_key", "street_pattern_dominant_class"]).drop(columns=["sort_key"]).reset_index(drop=True)
+
+
+def build_overall_pattern_access_failure_rows(detail: pd.DataFrame) -> pd.DataFrame:
+    if detail.empty:
+        return pd.DataFrame(columns=["street_pattern_dominant_class", "home_count", "ok_count", "not_ok_count", "coverage"])
+    share_cols = [col for col in detail.columns if col.startswith("share_")]
+    work = detail.copy()
+    for col in share_cols:
+        work[f"count_{col[6:]}"] = pd.to_numeric(work[col], errors="coerce").fillna(0.0) * pd.to_numeric(work["home_count"], errors="coerce").fillna(0.0)
+    count_cols = [f"count_{col[6:]}" for col in share_cols]
+    grouped = (
+        work.groupby("street_pattern_dominant_class", as_index=False)[["home_count", "ok_count", "not_ok_count", *count_cols]]
+        .sum()
+    )
+    grouped["coverage"] = np.where(grouped["home_count"] > 0, grouped["ok_count"] / grouped["home_count"], 0.0)
+    for share_col in share_cols:
+        count_col = f"count_{share_col[6:]}"
+        grouped[share_col] = np.where(grouped["home_count"] > 0, grouped[count_col] / grouped["home_count"], 0.0)
+    grouped = grouped.drop(columns=count_cols)
+    order_map = {label: idx for idx, label in enumerate(_ordered_street_pattern_classes(grouped["street_pattern_dominant_class"]))}
+    grouped["sort_key"] = grouped["street_pattern_dominant_class"].map(order_map)
+    return grouped.sort_values(["sort_key", "street_pattern_dominant_class"]).drop(columns=["sort_key"]).reset_index(drop=True)
+
+
+def build_pattern_pt_route_rows(city: str, route_class_length: pd.DataFrame) -> pd.DataFrame:
+    if route_class_length.empty:
+        return pd.DataFrame(columns=["city", "street_pattern_dominant_class", "route_pattern_records", "pt_length_m", "pt_length_share"])
+    prepared = route_class_length.copy()
+    prepared["street_pattern_dominant_class"] = prepared["street_pattern_class"].fillna("unknown").astype(str)
+    prepared["pt_length_m"] = pd.to_numeric(prepared.get("pt_length_m", 0.0), errors="coerce").fillna(0.0)
+    grouped = (
+        prepared.groupby("street_pattern_dominant_class", as_index=False)
+        .agg(route_pattern_records=("street_pattern_dominant_class", "size"), pt_length_m=("pt_length_m", "sum"))
+    )
+    total = float(grouped["pt_length_m"].sum())
+    grouped["pt_length_share"] = _safe_share(grouped["pt_length_m"], total)
+    grouped["city"] = city
+    order_map = {label: idx for idx, label in enumerate(_ordered_street_pattern_classes(grouped["street_pattern_dominant_class"]))}
+    grouped["sort_key"] = grouped["street_pattern_dominant_class"].map(order_map)
+    return grouped.sort_values(["sort_key", "street_pattern_dominant_class"]).drop(columns=["sort_key"]).reset_index(drop=True)
+
+
+def build_overall_pattern_pt_route_rows(detail: pd.DataFrame) -> pd.DataFrame:
+    if detail.empty:
+        return pd.DataFrame(columns=["street_pattern_dominant_class", "route_pattern_records", "pt_length_m", "pt_length_share"])
+    grouped = detail.groupby("street_pattern_dominant_class", as_index=False)[["route_pattern_records", "pt_length_m"]].sum()
+    total = float(grouped["pt_length_m"].sum())
+    grouped["pt_length_share"] = _safe_share(grouped["pt_length_m"], total)
+    order_map = {label: idx for idx, label in enumerate(_ordered_street_pattern_classes(grouped["street_pattern_dominant_class"]))}
+    grouped["sort_key"] = grouped["street_pattern_dominant_class"].map(order_map)
+    return grouped.sort_values(["sort_key", "street_pattern_dominant_class"]).drop(columns=["sort_key"]).reset_index(drop=True)
+
+
 def scale_unmet_demand_to_target_provision(
     solver_blocks: pd.DataFrame,
     *,
@@ -626,6 +820,30 @@ def sort_registry_for_targeted_placement(registry: pd.DataFrame) -> pd.DataFrame
     return out.sort_values(["placement_blocks_count", "placement_demand_total", "city"]).reset_index(drop=True)
 
 
+def select_registry_subset_for_tiered_run(
+    registry: pd.DataFrame,
+    *,
+    max_cities: int | None = None,
+    cities: list[str] | None = None,
+) -> pd.DataFrame:
+    if {"placement_blocks_count", "placement_demand_total"}.issubset(registry.columns):
+        ordered = registry.copy()
+        ordered["placement_blocks_count"] = pd.to_numeric(ordered["placement_blocks_count"], errors="coerce").fillna(0.0)
+        ordered["placement_demand_total"] = pd.to_numeric(ordered["placement_demand_total"], errors="coerce").fillna(0.0)
+        ordered = ordered.sort_values(["placement_blocks_count", "placement_demand_total", "city"]).reset_index(drop=True)
+    else:
+        ordered = sort_registry_for_targeted_placement(registry)
+
+    if cities:
+        requested = {str(city) for city in cities}
+        ordered = ordered[ordered["city"].astype(str).isin(requested)].copy()
+
+    if max_cities is not None:
+        ordered = ordered.head(int(max_cities)).copy()
+
+    return ordered.reset_index(drop=True)
+
+
 def build_street_pattern_rows(registry: pd.DataFrame) -> pd.DataFrame:
     rows: list[dict[str, object]] = []
     for row in registry.to_dict(orient="records"):
@@ -642,6 +860,72 @@ def build_pt_descriptor_rows(registry: pd.DataFrame) -> pd.DataFrame:
         city_dir = Path(str(row["city_dir"]))
         rows.append({"city": row["city"], **load_pt_descriptor_fields(city_dir)})
     return pd.DataFrame(rows)
+
+
+def load_solver_block_patterns(city_dir: Path, city: str) -> pd.DataFrame:
+    import geopandas as gpd
+
+    blocks_path = Path(city_dir) / "derived_layers/blocks_clipped.parquet"
+    cells_path = Path(city_dir) / "street_pattern" / city / "predicted_cells.geojson"
+    blocks = gpd.read_parquet(blocks_path)
+    cells = gpd.read_file(cells_path)
+    transferred = transfer_street_pattern_cells_to_blocks(blocks, cells)
+    return transferred[["block_name", "street_pattern_dominant_class"]].copy()
+
+
+def build_pattern_system_experiment_tables(registry: pd.DataFrame | None = None) -> dict[str, pd.DataFrame]:
+    if registry is None:
+        registry = build_default_city_registry()
+
+    diagnostics_cache: dict[str, pd.DataFrame] = {}
+    demand_supply_rows: list[pd.DataFrame] = []
+    access_failure_rows: list[pd.DataFrame] = []
+    pt_route_rows: list[pd.DataFrame] = []
+
+    for row in registry.to_dict(orient="records"):
+        city = str(row["city"])
+        city_dir = Path(str(row["city_dir"]))
+
+        solver_blocks_path = city_dir / "pipeline_2/solver_inputs/polyclinic/blocks_solver.parquet"
+        if solver_blocks_path.exists():
+            solver_blocks = pd.read_parquet(solver_blocks_path)
+            try:
+                block_patterns = load_solver_block_patterns(city_dir, city)
+                solver_blocks = solver_blocks.copy()
+                solver_blocks["block_name"] = solver_blocks.get("name", solver_blocks.index.astype(str)).astype(str)
+                block_patterns["block_name"] = block_patterns["block_name"].astype(str)
+                solver_blocks = solver_blocks.merge(block_patterns, on="block_name", how="left")
+            except Exception as exc:  # noqa: BLE001
+                print(f"pattern transfer failed for {city}: {exc}")
+            demand_supply_rows.append(build_pattern_demand_supply_rows(city, solver_blocks))
+
+        diagnostics_path = str(row["access_diagnostics_path"])
+        if diagnostics_path not in diagnostics_cache:
+            diagnostics_cache[diagnostics_path] = pd.read_parquet(
+                diagnostics_path,
+                columns=["city", "service_name", "access_diagnosis_label", "home_street_pattern_class"],
+            )
+        diagnostics = diagnostics_cache[diagnostics_path]
+        city_diagnostics = diagnostics[(diagnostics["city"] == city) & (diagnostics["service_name"] == POLYCLINIC)].copy()
+        access_failure_rows.append(build_pattern_access_failure_rows(city, city_diagnostics))
+
+        route_class_path = city_dir / "pt_street_pattern_dependency/route_class_length.csv"
+        if route_class_path.exists():
+            route_class_length = pd.read_csv(route_class_path)
+            pt_route_rows.append(build_pattern_pt_route_rows(city, route_class_length))
+
+    demand_supply_detail = pd.concat(demand_supply_rows, ignore_index=True) if demand_supply_rows else pd.DataFrame()
+    access_failure_detail = pd.concat(access_failure_rows, ignore_index=True) if access_failure_rows else pd.DataFrame()
+    pt_route_detail = pd.concat(pt_route_rows, ignore_index=True) if pt_route_rows else pd.DataFrame()
+
+    return {
+        "pattern_demand_supply_by_city": demand_supply_detail,
+        "pattern_demand_supply_overall": build_overall_pattern_demand_supply_rows(demand_supply_detail),
+        "pattern_access_failures_by_city": access_failure_detail,
+        "pattern_access_failures_overall": build_overall_pattern_access_failure_rows(access_failure_detail),
+        "pattern_pt_routes_by_city": pt_route_detail,
+        "pattern_pt_routes_overall": build_overall_pattern_pt_route_rows(pt_route_detail),
+    }
 
 
 def run_targeted_placement_for_city(
@@ -837,6 +1121,8 @@ def build_city_level_target90_dataset(
         "full_gap_total",
         "target_unmet_total",
         "target_fraction_of_full_gap",
+        "placement_status",
+        "placement_error",
     ]
     placement = placement[keep_cols].copy()
     out = base.merge(placement, on="city", how="left")
@@ -1074,8 +1360,128 @@ def write_city_level_outputs(output_dir: Path | None = None) -> dict[str, Path]:
     return outputs
 
 
+def write_tiered_target90_outputs(
+    *,
+    output_dir: Path | None = None,
+    max_cities: int | None = None,
+    cities: list[str] | None = None,
+    placement_root_name: str = PLACEMENT_TARGET090_ROOT,
+    target_provision: float = TARGET_PROVISION_090,
+    use_genetic: bool = False,
+) -> dict[str, Path]:
+    output_dir = OUTPUT_DIR if output_dir is None else Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    registry = select_registry_subset_for_tiered_run(
+        build_default_city_registry(),
+        max_cities=max_cities,
+        cities=cities,
+    )
+    verified = verify_city_registry_bundle(registry)
+    target90_dataset = build_city_level_target90_dataset(
+        registry,
+        target_provision=target_provision,
+        placement_root_name=placement_root_name,
+        use_genetic=use_genetic,
+    )
+    target90_associations = build_research_question_association_summary(target90_dataset)
+    target90_pattern_lift_detail = build_target90_pattern_lift_detail(registry)
+    target90_pattern_lift_overall = build_overall_target90_pattern_lift_rows(target90_pattern_lift_detail)
+
+    outputs = {
+        "tiered_registry": output_dir / "city_target90_tiered_registry.csv",
+        "tiered_registry_verified": output_dir / "city_target90_tiered_registry_verified.csv",
+        "tiered_dataset": output_dir / "city_target90_tiered_dataset.csv",
+        "tiered_association_summary": output_dir / "city_target90_tiered_association_summary.csv",
+        "tiered_overview_png": output_dir / "city_target90_tiered_overview.png",
+        "tiered_pattern_lift_detail": output_dir / "city_target90_tiered_pattern_lift_detail.csv",
+        "tiered_pattern_lift_overall": output_dir / "city_target90_tiered_pattern_lift_overall.csv",
+        "tiered_pattern_lift_png": output_dir / "city_target90_tiered_pattern_lift.png",
+    }
+    registry.to_csv(outputs["tiered_registry"], index=False)
+    verified.to_csv(outputs["tiered_registry_verified"], index=False)
+    target90_dataset.to_csv(outputs["tiered_dataset"], index=False)
+    target90_associations.to_csv(outputs["tiered_association_summary"], index=False)
+    render_target90_overview_png(target90_dataset, target90_associations, outputs["tiered_overview_png"])
+    target90_pattern_lift_detail.to_csv(outputs["tiered_pattern_lift_detail"], index=False)
+    target90_pattern_lift_overall.to_csv(outputs["tiered_pattern_lift_overall"], index=False)
+    render_target90_pattern_lift_png(
+        target90_pattern_lift_detail,
+        target90_pattern_lift_overall,
+        outputs["tiered_pattern_lift_png"],
+    )
+    return outputs
+
+
+def write_integrated_pattern_system_outputs(output_dir: Path | None = None) -> dict[str, Path]:
+    output_dir = OUTPUT_DIR if output_dir is None else Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    tables = build_pattern_system_experiment_tables()
+    outputs = {
+        "pattern_demand_supply_by_city": output_dir / "pattern_system_demand_supply_by_city.csv",
+        "pattern_demand_supply_overall": output_dir / "pattern_system_demand_supply_overall.csv",
+        "pattern_access_failures_by_city": output_dir / "pattern_system_access_failures_by_city.csv",
+        "pattern_access_failures_overall": output_dir / "pattern_system_access_failures_overall.csv",
+        "pattern_pt_routes_by_city": output_dir / "pattern_system_pt_routes_by_city.csv",
+        "pattern_pt_routes_overall": output_dir / "pattern_system_pt_routes_overall.csv",
+    }
+    for key, path in outputs.items():
+        tables[key].to_csv(path, index=False)
+    return outputs
+
+
 def main() -> None:
-    outputs = write_city_level_outputs()
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Directory for city-level output CSV/PNG files.",
+    )
+    parser.add_argument(
+        "--pattern-system-only",
+        action="store_true",
+        help="Write integrated road/PT/demand/supply/coverage pattern-system tables without running target90 placement.",
+    )
+    parser.add_argument(
+        "--tiered-target90",
+        action="store_true",
+        help="Run target90 placement only for an explicitly bounded city subset ordered from small to large.",
+    )
+    parser.add_argument(
+        "--max-cities",
+        type=int,
+        default=None,
+        help="Maximum number of smallest cities to include in --tiered-target90.",
+    )
+    parser.add_argument(
+        "--cities",
+        type=str,
+        default=None,
+        help="Comma-separated city ids to include in --tiered-target90 after size ordering.",
+    )
+    parser.add_argument(
+        "--placement-root-name",
+        type=str,
+        default=PLACEMENT_TARGET090_ROOT,
+        help="Per-city pipeline_2 placement output directory name.",
+    )
+    args = parser.parse_args()
+
+    cities = [city.strip() for city in str(args.cities).split(",") if city.strip()] if args.cities else None
+
+    if args.pattern_system_only:
+        outputs = write_integrated_pattern_system_outputs(output_dir=args.output_dir)
+    elif args.tiered_target90:
+        outputs = write_tiered_target90_outputs(
+            output_dir=args.output_dir,
+            max_cities=args.max_cities,
+            cities=cities,
+            placement_root_name=args.placement_root_name,
+        )
+    else:
+        outputs = write_city_level_outputs(output_dir=args.output_dir)
     for name, path in outputs.items():
         print(f"{name}: {path}")
 

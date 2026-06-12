@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import geopandas as gpd
 import numpy as np
@@ -27,6 +28,12 @@ from aggregated_spatial_pipeline.visualization import apply_preview_canvas, foot
 
 QUARTER_EDGE_COLOR = "#8a8378"
 QUARTER_EDGE_WIDTH = 0.16
+LOOPS_PATTERN_LABEL = "Loops & Lollipops"
+STREET_PATTERN_COLUMNS = (
+    "street_pattern_top1_class",
+    "street_pattern_dominant_class",
+    "home_street_pattern_class",
+)
 
 
 def _configure_logging() -> None:
@@ -105,6 +112,29 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--generate-routes", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument(
+        "--build-service-target-od",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Build and save the service-target OD for the selected route-target strategy even when routes are not generated.",
+    )
+    parser.add_argument(
+        "--route-target-strategy",
+        choices=(
+            "placement_assignment",
+            "existing_service",
+            "candidate_service",
+            "candidate_or_existing_service",
+            "general_connectivity",
+        ),
+        default=None,
+        help=(
+            "How to build the service-aware OD passed to ConnectPT. Defaults to placement_assignment "
+            "when --use-placement-outputs is enabled, otherwise existing_service."
+        ),
+    )
+    parser.add_argument("--candidate-target-top-k", type=int, default=10)
+    parser.add_argument("--candidate-target-max-destinations-per-client", type=int, default=1)
+    parser.add_argument(
         "--align-route-len-to-existing-mean-max",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -131,6 +161,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--route-time-weight", type=float, default=0.3)
     parser.add_argument("--median-connectivity-weight", type=float, default=0.3)
     parser.add_argument("--street-pattern-weight", type=float, default=0.0)
+    parser.add_argument(
+        "--street-pattern-aware-route-target",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Filter service-target OD links before ConnectPT generation using block street pattern and "
+            "nearest-stop distance. This keeps Loops & Lollipops only when first/last-mile stop access "
+            "is not the likely bottleneck."
+        ),
+    )
+    parser.add_argument(
+        "--loops-stop-distance-threshold-m",
+        type=float,
+        default=800.0,
+        help="Maximum nearest-stop distance for keeping Loops & Lollipops route-target endpoints.",
+    )
+    parser.add_argument(
+        "--loops-route-target-multiplier",
+        type=float,
+        default=1.0,
+        help="Optional weight multiplier for kept route-target links touching Loops & Lollipops.",
+    )
     return parser.parse_args()
 
 
@@ -148,6 +200,10 @@ def _service_placement_blocks_path(city_dir: Path, service: str, placement_root_
 
 def _service_placement_assignment_links_path(city_dir: Path, service: str, placement_root_name: str) -> Path:
     return city_dir / "pipeline_2" / placement_root_name / service / "assignment_links_after.csv"
+
+
+def _service_solver_matrix_path(city_dir: Path, service: str) -> Path:
+    return city_dir / "pipeline_2" / "solver_inputs" / service / "adj_matrix_time_min.parquet"
 
 
 def _default_route_summary_path(city_dir: Path, modality: str) -> Path:
@@ -532,7 +588,7 @@ def _build_stop_points_from_connectpt_graph(city_dir: Path, modality: str, crs) 
     return gpd.GeoDataFrame(records, geometry="geometry", crs=crs)
 
 
-def _map_blocks_to_stop_indices(blocks_gdf: gpd.GeoDataFrame, stop_points: gpd.GeoDataFrame) -> dict[str, int]:
+def _map_blocks_to_stop_info(blocks_gdf: gpd.GeoDataFrame, stop_points: gpd.GeoDataFrame) -> dict[str, dict[str, float | int]]:
     work = _normalize_block_id_index(blocks_gdf)
     points = work[["geometry"]].copy()
     points["geometry"] = points.geometry.representative_point()
@@ -542,12 +598,202 @@ def _map_blocks_to_stop_indices(blocks_gdf: gpd.GeoDataFrame, stop_points: gpd.G
     if points.crs is not None and stop_points.crs is not None and points.crs != stop_points.crs:
         points = points.to_crs(stop_points.crs)
     joined = points.sjoin_nearest(stop_points[["stop_idx", "geometry"]], how="left", distance_col="distance_to_stop")
-    mapping: dict[str, int] = {}
+    mapping: dict[str, dict[str, float | int]] = {}
     for block_id, row in joined.iterrows():
         if pd.isna(row.get("stop_idx")):
             continue
-        mapping[str(block_id)] = int(row["stop_idx"])
+        distance = row.get("distance_to_stop")
+        mapping[str(block_id)] = {
+            "stop_idx": int(row["stop_idx"]),
+            "distance_to_stop": float(distance) if pd.notna(distance) else np.nan,
+        }
     return mapping
+
+
+def _map_blocks_to_stop_indices(blocks_gdf: gpd.GeoDataFrame, stop_points: gpd.GeoDataFrame) -> dict[str, int]:
+    stop_info = _map_blocks_to_stop_info(blocks_gdf, stop_points)
+    return {block_id: int(info["stop_idx"]) for block_id, info in stop_info.items()}
+
+
+def _extract_block_pattern(blocks: pd.DataFrame, block_id: str) -> str | None:
+    if block_id not in blocks.index:
+        return None
+    for column in STREET_PATTERN_COLUMNS:
+        if column not in blocks.columns:
+            continue
+        value = blocks.at[block_id, column]
+        if pd.notna(value) and str(value).strip():
+            return str(value).strip()
+    return None
+
+
+def _street_pattern_route_target_policy(
+    *,
+    client_pattern: str | None,
+    facility_pattern: str | None,
+    client_distance_to_stop: float | None,
+    facility_distance_to_stop: float | None,
+    loops_stop_distance_threshold_m: float,
+    loops_route_target_multiplier: float,
+) -> dict[str, Any]:
+    threshold = float(loops_stop_distance_threshold_m)
+    if threshold < 0:
+        raise ValueError("loops_stop_distance_threshold_m must be non-negative")
+    multiplier = max(0.0, float(loops_route_target_multiplier))
+
+    endpoint_specs = (
+        ("client", client_pattern, client_distance_to_stop),
+        ("facility", facility_pattern, facility_distance_to_stop),
+    )
+    loops_endpoints: list[str] = []
+    for endpoint, pattern, distance in endpoint_specs:
+        if pattern != LOOPS_PATTERN_LABEL:
+            continue
+        loops_endpoints.append(endpoint)
+        if distance is None or pd.isna(distance):
+            return {
+                "keep": False,
+                "status": "excluded",
+                "reason": f"{endpoint}_loops_missing_stop_distance",
+                "weight_multiplier": 0.0,
+            }
+        if float(distance) > threshold:
+            return {
+                "keep": False,
+                "status": "excluded",
+                "reason": f"{endpoint}_loops_stop_distance_gt_threshold",
+                "weight_multiplier": 0.0,
+            }
+
+    if loops_endpoints:
+        return {
+            "keep": True,
+            "status": "kept",
+            "reason": "loops_endpoint_stop_access_ok",
+            "weight_multiplier": multiplier,
+        }
+    return {
+        "keep": True,
+        "status": "kept",
+        "reason": "non_loops_endpoint",
+        "weight_multiplier": 1.0,
+    }
+
+
+def _build_candidate_service_target_links(
+    blocks: pd.DataFrame,
+    accessibility_matrix: pd.DataFrame,
+    *,
+    top_k_candidates: int,
+    max_destinations_per_client: int,
+    demand_col: str = "demand_without",
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    work = _normalize_block_id_index(blocks)
+    matrix = accessibility_matrix.copy()
+    matrix.index = matrix.index.map(str)
+    matrix.columns = matrix.columns.map(str)
+    common_ids = [str(idx) for idx in work.index if str(idx) in matrix.index and str(idx) in matrix.columns]
+    if not common_ids:
+        empty_links = pd.DataFrame(columns=["source", "target", "value"])
+        empty_candidates = pd.DataFrame(columns=["candidate_id", "candidate_catchment_demand"])
+        return empty_links, empty_candidates
+
+    work = work.loc[common_ids].copy()
+    matrix = matrix.loc[common_ids, common_ids].apply(pd.to_numeric, errors="coerce")
+    demand = pd.to_numeric(work.get(demand_col, 0.0), errors="coerce").fillna(0.0)
+    capacity = pd.to_numeric(work.get("capacity", 0.0), errors="coerce").fillna(0.0)
+    radius = float(pd.to_numeric(work.get("service_radius_min", pd.Series([15.0])), errors="coerce").dropna().iloc[0])
+
+    candidate_ids = [block_id for block_id in common_ids if float(capacity.get(block_id, 0.0)) <= 0.0]
+    candidate_rows: list[dict[str, object]] = []
+    for candidate_id in candidate_ids:
+        times_to_candidate = pd.to_numeric(matrix[candidate_id], errors="coerce")
+        reachable = times_to_candidate <= radius
+        catchment = float(demand.where(reachable, 0.0).sum())
+        candidate_rows.append(
+            {
+                "candidate_id": str(candidate_id),
+                "candidate_catchment_demand": catchment,
+            }
+        )
+    candidates = pd.DataFrame(candidate_rows)
+    if candidates.empty:
+        return pd.DataFrame(columns=["source", "target", "value"]), candidates
+    candidates = candidates.sort_values(
+        ["candidate_catchment_demand", "candidate_id"],
+        ascending=[False, True],
+    ).head(max(0, int(top_k_candidates)))
+
+    top_candidate_ids = candidates["candidate_id"].astype(str).tolist()
+    link_rows: list[dict[str, object]] = []
+    for source_id, source_demand in demand[demand > 0.0].items():
+        candidate_times = pd.to_numeric(matrix.loc[str(source_id), top_candidate_ids], errors="coerce")
+        candidate_times = candidate_times[np.isfinite(candidate_times)]
+        if candidate_times.empty:
+            continue
+        selected = candidate_times.sort_values().head(max(1, int(max_destinations_per_client))).index.astype(str).tolist()
+        weight = float(source_demand) / float(len(selected))
+        for target_id in selected:
+            link_rows.append({"source": str(source_id), "target": str(target_id), "value": weight})
+
+    links = pd.DataFrame(link_rows, columns=["source", "target", "value"])
+    return links, candidates.reset_index(drop=True)
+
+
+def _build_candidate_or_existing_target_links(
+    blocks: pd.DataFrame,
+    accessibility_matrix: pd.DataFrame,
+    *,
+    top_k_candidates: int,
+    max_destinations_per_client: int,
+    demand_col: str = "demand_without",
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    candidate_links, candidates = _build_candidate_service_target_links(
+        blocks,
+        accessibility_matrix,
+        top_k_candidates=top_k_candidates,
+        max_destinations_per_client=max_destinations_per_client,
+        demand_col=demand_col,
+    )
+    work = _normalize_block_id_index(blocks)
+    matrix = accessibility_matrix.copy()
+    matrix.index = matrix.index.map(str)
+    matrix.columns = matrix.columns.map(str)
+    demand = pd.to_numeric(work.get(demand_col, 0.0), errors="coerce").fillna(0.0)
+    capacity = pd.to_numeric(work.get("capacity", 0.0), errors="coerce").fillna(0.0)
+    candidate_ids = set(candidates.get("candidate_id", pd.Series(dtype=str)).astype(str).tolist())
+    existing_ids = {str(idx) for idx in work.index[capacity > 0.0] if str(idx) in matrix.columns}
+    destination_ids = sorted(candidate_ids | existing_ids)
+    destination_rows = [
+        {
+            "destination_id": dest_id,
+            "destination_type": (
+                "candidate_and_existing"
+                if dest_id in candidate_ids and dest_id in existing_ids
+                else ("candidate" if dest_id in candidate_ids else "existing")
+            ),
+        }
+        for dest_id in destination_ids
+    ]
+    destinations = pd.DataFrame(destination_rows)
+    if not destination_ids:
+        return candidate_links.iloc[0:0].copy(), destinations
+
+    link_rows: list[dict[str, object]] = []
+    for source_id, source_demand in demand[demand > 0.0].items():
+        source_key = str(source_id)
+        if source_key not in matrix.index:
+            continue
+        candidate_times = pd.to_numeric(matrix.loc[source_key, destination_ids], errors="coerce")
+        candidate_times = candidate_times[np.isfinite(candidate_times)]
+        if candidate_times.empty:
+            continue
+        selected = candidate_times.sort_values().head(max(1, int(max_destinations_per_client))).index.astype(str).tolist()
+        weight = float(source_demand) / float(len(selected))
+        for target_id in selected:
+            link_rows.append({"source": source_key, "target": str(target_id), "value": weight})
+
+    return pd.DataFrame(link_rows, columns=["source", "target", "value"]), destinations
 
 
 def _build_service_target_od_from_placement(
@@ -558,6 +804,9 @@ def _build_service_target_od_from_placement(
     placement_root_name: str,
     output_root: Path,
     service_blocks: dict[str, gpd.GeoDataFrame],
+    street_pattern_aware_route_target: bool = False,
+    loops_stop_distance_threshold_m: float = 800.0,
+    loops_route_target_multiplier: float = 1.0,
 ) -> dict | None:
     if not services:
         return None
@@ -573,6 +822,7 @@ def _build_service_target_od_from_placement(
         dtype=float,
     )
     summary_rows: list[dict] = []
+    link_audit_rows: list[dict] = []
     total_weight = 0.0
 
     for service in services:
@@ -588,13 +838,15 @@ def _build_service_target_od_from_placement(
 
         unresolved = _extract_gap_series(blocks_after, "demand_without_after", "demand_without")
         unresolved.index = unresolved.index.astype(str)
-        stop_by_block = _map_blocks_to_stop_indices(blocks_after, stop_points)
+        stop_info_by_block = _map_blocks_to_stop_info(blocks_after, stop_points)
         client_counts = assignment_links["client_id"].astype(str).value_counts().to_dict()
 
         service_weight = 0.0
         used_links = 0
         skipped_missing_stops = 0
         skipped_zero_gap = 0
+        skipped_street_pattern_policy = 0
+        policy_counts: dict[str, int] = {}
         for row in assignment_links.itertuples(index=False):
             client_id = str(getattr(row, "client_id"))
             facility_id = str(getattr(row, "facility_id"))
@@ -602,13 +854,56 @@ def _build_service_target_od_from_placement(
             if remaining_gap <= 0.0:
                 skipped_zero_gap += 1
                 continue
-            origin_stop = stop_by_block.get(client_id)
-            destination_stop = stop_by_block.get(facility_id)
-            if origin_stop is None or destination_stop is None:
+            origin_stop_info = stop_info_by_block.get(client_id)
+            destination_stop_info = stop_info_by_block.get(facility_id)
+            if origin_stop_info is None or destination_stop_info is None:
                 skipped_missing_stops += 1
                 continue
+            origin_stop = int(origin_stop_info["stop_idx"])
+            destination_stop = int(destination_stop_info["stop_idx"])
             divisor = max(1, int(client_counts.get(client_id, 1)))
-            weight = remaining_gap / float(divisor)
+            raw_weight = remaining_gap / float(divisor)
+            client_pattern = _extract_block_pattern(blocks_after, client_id)
+            facility_pattern = _extract_block_pattern(blocks_after, facility_id)
+            policy = {
+                "keep": True,
+                "status": "kept",
+                "reason": "street_pattern_policy_disabled",
+                "weight_multiplier": 1.0,
+            }
+            if street_pattern_aware_route_target:
+                policy = _street_pattern_route_target_policy(
+                    client_pattern=client_pattern,
+                    facility_pattern=facility_pattern,
+                    client_distance_to_stop=float(origin_stop_info["distance_to_stop"]),
+                    facility_distance_to_stop=float(destination_stop_info["distance_to_stop"]),
+                    loops_stop_distance_threshold_m=loops_stop_distance_threshold_m,
+                    loops_route_target_multiplier=loops_route_target_multiplier,
+                )
+            policy_key = f"{policy['status']}:{policy['reason']}"
+            policy_counts[policy_key] = int(policy_counts.get(policy_key, 0)) + 1
+            adjusted_weight = raw_weight * float(policy["weight_multiplier"])
+            link_audit_rows.append(
+                {
+                    "service": service,
+                    "client_id": client_id,
+                    "facility_id": facility_id,
+                    "origin_stop": origin_stop,
+                    "destination_stop": destination_stop,
+                    "client_street_pattern": client_pattern,
+                    "facility_street_pattern": facility_pattern,
+                    "client_distance_to_stop": float(origin_stop_info["distance_to_stop"]),
+                    "facility_distance_to_stop": float(destination_stop_info["distance_to_stop"]),
+                    "raw_weight": float(raw_weight),
+                    "adjusted_weight": float(adjusted_weight) if bool(policy["keep"]) else 0.0,
+                    "route_target_policy_status": str(policy["status"]),
+                    "route_target_policy_reason": str(policy["reason"]),
+                }
+            )
+            if not bool(policy["keep"]) or adjusted_weight <= 0.0:
+                skipped_street_pattern_policy += 1
+                continue
+            weight = adjusted_weight
             od.loc[origin_stop, destination_stop] += weight
             service_weight += weight
             used_links += 1
@@ -621,6 +916,8 @@ def _build_service_target_od_from_placement(
                 "used_links": int(used_links),
                 "skipped_zero_gap": int(skipped_zero_gap),
                 "skipped_missing_stops": int(skipped_missing_stops),
+                "skipped_street_pattern_policy": int(skipped_street_pattern_policy),
+                "route_target_policy_counts": policy_counts,
                 "target_weight_total": float(service_weight),
             }
         )
@@ -629,14 +926,23 @@ def _build_service_target_od_from_placement(
     od_dir.mkdir(parents=True, exist_ok=True)
     od_path = od_dir / f"{modality}_service_target_od.csv"
     od.to_csv(od_path)
+    links_audit_path = od_dir / f"{modality}_service_target_od_links.csv"
+    pd.DataFrame(link_audit_rows).to_csv(links_audit_path, index=False)
     summary = {
         "placement_root_name": placement_root_name,
         "modality": modality,
+        "street_pattern_policy": {
+            "enabled": bool(street_pattern_aware_route_target),
+            "loops_pattern_label": LOOPS_PATTERN_LABEL,
+            "loops_stop_distance_threshold_m": float(loops_stop_distance_threshold_m),
+            "loops_route_target_multiplier": float(loops_route_target_multiplier),
+        },
         "stop_count": int(len(stop_points)),
         "positive_pairs": int((od.to_numpy() > 0.0).sum()),
         "target_weight_total": float(total_weight),
         "files": {
             "od_matrix_csv": str(od_path),
+            "links_audit_csv": str(links_audit_path),
         },
         "services": summary_rows,
     }
@@ -648,7 +954,8 @@ def _build_service_target_od_from_placement(
             f"{row['service']}: weight={row['target_weight_total']:.1f}, "
             f"used_links={row['used_links']}, "
             f"zero_gap={row['skipped_zero_gap']}, "
-            f"missing_stops={row['skipped_missing_stops']}"
+            f"missing_stops={row['skipped_missing_stops']}, "
+            f"street_policy={row['skipped_street_pattern_policy']}"
         )
         for row in summary_rows
     )
@@ -780,6 +1087,82 @@ def _build_service_target_od_from_links(
         + (f", per_service=({service_logs})" if service_logs else "")
     )
     return summary
+
+
+def _build_candidate_service_links_files(
+    *,
+    city_dir: Path,
+    services: list[str],
+    output_root: Path,
+    service_blocks: dict[str, gpd.GeoDataFrame],
+    top_k_candidates: int,
+    max_destinations_per_client: int,
+) -> dict[str, Path]:
+    links_dir = output_root / "service_target_links" / "candidate_service"
+    links_dir.mkdir(parents=True, exist_ok=True)
+    out: dict[str, Path] = {}
+    for service in services:
+        matrix_path = _service_solver_matrix_path(city_dir, service)
+        if not matrix_path.exists():
+            _log(f"Candidate target matrix is missing for service [{service}]: {matrix_path}")
+            continue
+        matrix = pd.read_parquet(matrix_path)
+        links, candidates = _build_candidate_service_target_links(
+            service_blocks[service],
+            matrix,
+            top_k_candidates=int(top_k_candidates),
+            max_destinations_per_client=int(max_destinations_per_client),
+            demand_col="demand_without",
+        )
+        links_path = links_dir / f"{service}_candidate_service_links.csv"
+        candidates_path = links_dir / f"{service}_candidate_service_candidates.csv"
+        links.to_csv(links_path, index=False)
+        candidates.to_csv(candidates_path, index=False)
+        weight_total = float(pd.to_numeric(links.get("value", pd.Series(dtype=float)), errors="coerce").fillna(0.0).sum())
+        _log(
+            f"Candidate-service target links [{service}]: "
+            f"candidates={len(candidates)}, links={len(links)}, weight={weight_total:.1f}"
+        )
+        out[service] = links_path
+    return out
+
+
+def _build_candidate_or_existing_links_files(
+    *,
+    city_dir: Path,
+    services: list[str],
+    output_root: Path,
+    service_blocks: dict[str, gpd.GeoDataFrame],
+    top_k_candidates: int,
+    max_destinations_per_client: int,
+) -> dict[str, Path]:
+    links_dir = output_root / "service_target_links" / "candidate_or_existing_service"
+    links_dir.mkdir(parents=True, exist_ok=True)
+    out: dict[str, Path] = {}
+    for service in services:
+        matrix_path = _service_solver_matrix_path(city_dir, service)
+        if not matrix_path.exists():
+            _log(f"Candidate/existing target matrix is missing for service [{service}]: {matrix_path}")
+            continue
+        matrix = pd.read_parquet(matrix_path)
+        links, destinations = _build_candidate_or_existing_target_links(
+            service_blocks[service],
+            matrix,
+            top_k_candidates=int(top_k_candidates),
+            max_destinations_per_client=int(max_destinations_per_client),
+            demand_col="demand_without",
+        )
+        links_path = links_dir / f"{service}_candidate_or_existing_links.csv"
+        destinations_path = links_dir / f"{service}_candidate_or_existing_destinations.csv"
+        links.to_csv(links_path, index=False)
+        destinations.to_csv(destinations_path, index=False)
+        weight_total = float(pd.to_numeric(links.get("value", pd.Series(dtype=float)), errors="coerce").fillna(0.0).sum())
+        _log(
+            f"Candidate-or-existing target links [{service}]: "
+            f"destinations={len(destinations)}, links={len(links)}, weight={weight_total:.1f}"
+        )
+        out[service] = links_path
+    return out
 
 
 def _compute_existing_route_stop_stats(city_dir: Path, modality: str) -> dict | None:
@@ -1035,12 +1418,21 @@ def main() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     output_root = city_dir / "pipeline_2" / "accessibility_first"
     output_root.mkdir(parents=True, exist_ok=True)
+    route_target_strategy = (
+        str(args.route_target_strategy)
+        if args.route_target_strategy
+        else ("placement_assignment" if bool(args.use_placement_outputs) else "existing_service")
+    )
+    use_placement_blocks = route_target_strategy == "placement_assignment"
 
-    _log(f"Starting accessibility-first step: city={city_dir.name}, services={services}")
+    _log(
+        f"Starting accessibility-first step: city={city_dir.name}, services={services}, "
+        f"route_target_strategy={route_target_strategy}"
+    )
     baseline_blocks, service_block_paths, resolved_placement_root = _load_solver_blocks(
         city_dir,
         services,
-        use_placement_outputs=bool(args.use_placement_outputs),
+        use_placement_outputs=use_placement_blocks,
         placement_root_name=args.placement_root_name,
     )
     suffering_baseline = _build_suffering_frame(baseline_blocks)
@@ -1084,8 +1476,9 @@ def main() -> None:
                 "Provision recompute is skipped."
             )
 
-    if args.generate_routes:
-        if args.use_placement_outputs:
+    should_build_target_od = bool(args.generate_routes) or bool(args.build_service_target_od)
+    if should_build_target_od:
+        if route_target_strategy == "placement_assignment":
             if resolved_placement_root is None:
                 raise RuntimeError("Placement outputs were requested but no placement root was resolved.")
             service_target_summary = _build_service_target_od_from_placement(
@@ -1095,6 +1488,9 @@ def main() -> None:
                 placement_root_name=resolved_placement_root,
                 output_root=output_root,
                 service_blocks=baseline_blocks,
+                street_pattern_aware_route_target=bool(args.street_pattern_aware_route_target),
+                loops_stop_distance_threshold_m=float(args.loops_stop_distance_threshold_m),
+                loops_route_target_multiplier=float(args.loops_route_target_multiplier),
             )
             if service_target_summary is not None:
                 service_target_od_path = Path(service_target_summary["files"]["od_matrix_csv"])
@@ -1105,7 +1501,7 @@ def main() -> None:
                         "reason": "zero_service_target_od",
                         "service_target_od": service_target_summary,
                     }
-        else:
+        elif route_target_strategy == "existing_service":
             links_path_by_service = {
                 service: _service_solver_provision_links_path(city_dir, service)
                 for service in services
@@ -1129,8 +1525,77 @@ def main() -> None:
                         "reason": "zero_service_target_od",
                         "service_target_od": service_target_summary,
                     }
+        elif route_target_strategy == "candidate_service":
+            links_path_by_service = _build_candidate_service_links_files(
+                city_dir=city_dir,
+                services=services,
+                output_root=output_root,
+                service_blocks=baseline_blocks,
+                top_k_candidates=int(args.candidate_target_top_k),
+                max_destinations_per_client=int(args.candidate_target_max_destinations_per_client),
+            )
+            service_target_summary = _build_service_target_od_from_links(
+                city_dir=city_dir,
+                services=services,
+                modality=str(args.modality),
+                output_root=output_root,
+                service_blocks=baseline_blocks,
+                links_path_by_service=links_path_by_service,
+                unresolved_gap_cols=("demand_without",),
+                source_label="candidate_service_links",
+            )
+            if service_target_summary is not None:
+                service_target_od_path = Path(service_target_summary["files"]["od_matrix_csv"])
+                if float(service_target_summary.get("target_weight_total", 0.0)) <= 0.0:
+                    _log("Candidate-service target OD has zero total weight. Route generation is skipped.")
+                    route_summary = {
+                        "skipped": True,
+                        "reason": "zero_service_target_od",
+                        "service_target_od": service_target_summary,
+                    }
+        elif route_target_strategy == "candidate_or_existing_service":
+            links_path_by_service = _build_candidate_or_existing_links_files(
+                city_dir=city_dir,
+                services=services,
+                output_root=output_root,
+                service_blocks=baseline_blocks,
+                top_k_candidates=int(args.candidate_target_top_k),
+                max_destinations_per_client=int(args.candidate_target_max_destinations_per_client),
+            )
+            service_target_summary = _build_service_target_od_from_links(
+                city_dir=city_dir,
+                services=services,
+                modality=str(args.modality),
+                output_root=output_root,
+                service_blocks=baseline_blocks,
+                links_path_by_service=links_path_by_service,
+                unresolved_gap_cols=("demand_without",),
+                source_label="candidate_or_existing_service_links",
+            )
+            if service_target_summary is not None:
+                service_target_od_path = Path(service_target_summary["files"]["od_matrix_csv"])
+                if float(service_target_summary.get("target_weight_total", 0.0)) <= 0.0:
+                    _log("Candidate-or-existing target OD has zero total weight. Route generation is skipped.")
+                    route_summary = {
+                        "skipped": True,
+                        "reason": "zero_service_target_od",
+                        "service_target_od": service_target_summary,
+                    }
+        elif route_target_strategy == "general_connectivity":
+            service_target_summary = {
+                "source_label": "general_connectivity",
+                "modality": str(args.modality),
+                "target_weight_total": None,
+                "positive_pairs": None,
+                "files": {},
+                "services": [],
+                "note": "No service-aware OD matrix was passed to ConnectPT; route generation uses its default city connectivity objective.",
+            }
+            service_target_od_path = None
+        else:
+            raise ValueError(f"Unsupported route_target_strategy: {route_target_strategy}")
 
-        if route_summary is None:
+        if bool(args.generate_routes) and route_summary is None:
             route_summary = _run_route_generator(
                 repo_root=repo_root,
                 city_dir=city_dir,
@@ -1198,7 +1663,8 @@ def main() -> None:
         "provision_engine": PROVISION_ENGINE_NAME,
         "connectpt_modality": str(args.modality),
         "connectpt_n_routes": int(args.n_routes),
-        "service_block_source": ("placement_after" if args.use_placement_outputs else "baseline_solver_inputs"),
+        "route_target_strategy": route_target_strategy,
+        "service_block_source": ("placement_after" if use_placement_blocks else "baseline_solver_inputs"),
         "service_block_paths": {service: str(path) for service, path in service_block_paths.items()},
         "placement_root_name": resolved_placement_root,
         "recompute_provision_only_access_problem_services": bool(args.recompute_provision_only_access_problem_services),

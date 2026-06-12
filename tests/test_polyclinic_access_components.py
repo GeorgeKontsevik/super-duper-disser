@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 import unittest
 from pathlib import Path
 
@@ -10,6 +11,10 @@ import tempfile
 import json
 from shapely.geometry import Polygon
 
+
+REPO_ROOT = Path("/Users/gk/Code/super-duper-disser")
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 MODULE_PATH = Path(
     "/Users/gk/Code/super-duper-disser/segregation-by-design-experiments/polyclinic_access_components/run_experiments.py"
@@ -26,6 +31,14 @@ CITY_LEVEL_SPEC = importlib.util.spec_from_file_location("polyclinic_access_city
 assert CITY_LEVEL_SPEC is not None and CITY_LEVEL_SPEC.loader is not None
 CITY_LEVEL_MODULE = importlib.util.module_from_spec(CITY_LEVEL_SPEC)
 CITY_LEVEL_SPEC.loader.exec_module(CITY_LEVEL_MODULE)
+
+ACCESS_FIRST_MODULE_PATH = Path(
+    "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/pipeline/run_pipeline2_accessibility_first.py"
+)
+ACCESS_FIRST_SPEC = importlib.util.spec_from_file_location("pipeline2_accessibility_first", ACCESS_FIRST_MODULE_PATH)
+assert ACCESS_FIRST_SPEC is not None and ACCESS_FIRST_SPEC.loader is not None
+ACCESS_FIRST_MODULE = importlib.util.module_from_spec(ACCESS_FIRST_SPEC)
+ACCESS_FIRST_SPEC.loader.exec_module(ACCESS_FIRST_MODULE)
 
 
 class PolyclinicAccessComponentsTests(unittest.TestCase):
@@ -289,6 +302,38 @@ class PolyclinicCityLevelRegistryTests(unittest.TestCase):
         self.assertEqual(rows.loc["amsterdam_netherlands", "source"], "new17")
         self.assertEqual(rows.loc["vienna_austria", "source"], "old23")
 
+    def test_select_registry_subset_orders_by_placement_size_and_limit(self) -> None:
+        registry = pd.DataFrame(
+            {
+                "city": ["large_city", "small_city", "medium_city"],
+                "source": ["active19", "active19", "active19"],
+                "source_priority": [0, 0, 0],
+                "city_dir": ["/tmp/large", "/tmp/small", "/tmp/medium"],
+                "placement_blocks_count": [300.0, 10.0, 100.0],
+                "placement_demand_total": [3000.0, 100.0, 1000.0],
+            }
+        )
+
+        subset = CITY_LEVEL_MODULE.select_registry_subset_for_tiered_run(registry, max_cities=2)
+
+        self.assertEqual(subset["city"].tolist(), ["small_city", "medium_city"])
+
+    def test_select_registry_subset_filters_explicit_city_list_after_sorting(self) -> None:
+        registry = pd.DataFrame(
+            {
+                "city": ["large_city", "small_city", "medium_city"],
+                "source": ["active19", "active19", "active19"],
+                "source_priority": [0, 0, 0],
+                "city_dir": ["/tmp/large", "/tmp/small", "/tmp/medium"],
+                "placement_blocks_count": [300.0, 10.0, 100.0],
+                "placement_demand_total": [3000.0, 100.0, 1000.0],
+            }
+        )
+
+        subset = CITY_LEVEL_MODULE.select_registry_subset_for_tiered_run(registry, cities=["medium_city", "large_city"])
+
+        self.assertEqual(subset["city"].tolist(), ["medium_city", "large_city"])
+
     def test_verify_city_registry_bundle_flags_core_artifacts(self) -> None:
         registry = CITY_LEVEL_MODULE.build_default_city_registry()
         verified = CITY_LEVEL_MODULE.verify_city_registry_bundle(registry)
@@ -462,6 +507,55 @@ class PolyclinicCityLevelRegistryTests(unittest.TestCase):
         ].iloc[0]
         self.assertAlmostEqual(float(coverage_irregular["spearman_rho"]), -1.0)
         self.assertAlmostEqual(float(coverage_pt["spearman_rho"]), 1.0)
+
+    def test_build_city_level_target90_dataset_preserves_placement_failure_status(self) -> None:
+        registry = pd.DataFrame(
+            {
+                "city": ["a_city"],
+                "source": ["active19"],
+                "source_priority": [0],
+                "city_dir": ["/tmp/city"],
+                "access_diagnostics_path": ["/tmp/access.parquet"],
+            }
+        )
+        base = pd.DataFrame({"city": ["a_city"], "coverage": [0.2]})
+        placement = pd.DataFrame(
+            {
+                "city": ["a_city"],
+                "target_provision": [0.9],
+                "baseline_provision": [0.1],
+                "achieved_provision_after": [float("nan")],
+                "additional_polyclinics_needed_to_0_9": [float("nan")],
+                "selected_count_after": [float("nan")],
+                "expanded_count_after": [float("nan")],
+                "capacity_added_total": [float("nan")],
+                "demand_without_after_total": [float("nan")],
+                "demand_left_after_total": [float("nan")],
+                "summary_after_path": [None],
+                "status_preview_png": [None],
+                "after_preview_png": [None],
+                "demand_total": [100.0],
+                "full_gap_total": [90.0],
+                "target_unmet_total": [80.0],
+                "target_fraction_of_full_gap": [0.888],
+                "placement_status": ["failed"],
+                "placement_error": ["solver failed"],
+            }
+        )
+        original_base = CITY_LEVEL_MODULE.build_city_level_research_dataset
+        original_placement = CITY_LEVEL_MODULE.build_targeted_placement_rows
+        try:
+            CITY_LEVEL_MODULE.build_city_level_research_dataset = lambda _registry: base
+            CITY_LEVEL_MODULE.build_targeted_placement_rows = lambda *args, **kwargs: placement
+
+            dataset = CITY_LEVEL_MODULE.build_city_level_target90_dataset(registry)
+        finally:
+            CITY_LEVEL_MODULE.build_city_level_research_dataset = original_base
+            CITY_LEVEL_MODULE.build_targeted_placement_rows = original_placement
+
+        row = dataset.iloc[0]
+        self.assertEqual(row["placement_status"], "failed")
+        self.assertEqual(row["placement_error"], "solver failed")
 
     def test_scale_unmet_demand_to_target_provision_hits_absolute_target(self) -> None:
         df = pd.DataFrame(
@@ -915,6 +1009,201 @@ class PolyclinicCityLevelRegistryTests(unittest.TestCase):
         self.assertAlmostEqual(float(broken["selected_share"]), 2.0 / 3.0)
         self.assertAlmostEqual(float(broken["placement_lift_vs_candidates"]), (2.0 / 3.0) - 0.5)
         self.assertAlmostEqual(float(regular["selected_share"]), 1.0 / 3.0)
+
+    def test_build_pattern_demand_supply_rows_summarizes_city_blocks(self) -> None:
+        blocks = pd.DataFrame(
+            {
+                "street_pattern_top1_class": ["Regular Grid", "Regular Grid", "Broken Grid"],
+                "demand": [10.0, 30.0, 60.0],
+                "capacity": [5.0, 15.0, 10.0],
+                "provision": [4.0, 10.0, 20.0],
+                "demand_without": [1.0, 5.0, 20.0],
+                "demand_left": [2.0, 5.0, 10.0],
+            }
+        )
+
+        rows = CITY_LEVEL_MODULE.build_pattern_demand_supply_rows("x", blocks)
+
+        regular = rows[rows["street_pattern_dominant_class"] == "Regular Grid"].iloc[0]
+        broken = rows[rows["street_pattern_dominant_class"] == "Broken Grid"].iloc[0]
+        self.assertEqual(int(regular["block_count"]), 2)
+        self.assertAlmostEqual(float(regular["demand"]), 40.0)
+        self.assertAlmostEqual(float(regular["demand_share"]), 0.4)
+        self.assertAlmostEqual(float(regular["capacity_share"]), 20.0 / 30.0)
+        self.assertAlmostEqual(float(regular["unmet_demand"]), 13.0)
+        self.assertAlmostEqual(float(regular["coverage_proxy"]), (40.0 - 13.0) / 40.0)
+        self.assertAlmostEqual(float(broken["unmet_share"]), 30.0 / 43.0)
+
+    def test_build_overall_pattern_demand_supply_rows_aggregates_counts_before_shares(self) -> None:
+        detail = pd.DataFrame(
+            {
+                "city": ["a", "a", "b", "b"],
+                "street_pattern_dominant_class": ["Regular Grid", "Broken Grid", "Regular Grid", "Broken Grid"],
+                "block_count": [1, 1, 3, 1],
+                "demand": [10.0, 30.0, 30.0, 30.0],
+                "capacity": [5.0, 10.0, 15.0, 0.0],
+                "provision": [5.0, 10.0, 20.0, 0.0],
+                "unmet_demand": [5.0, 20.0, 10.0, 30.0],
+            }
+        )
+
+        overall = CITY_LEVEL_MODULE.build_overall_pattern_demand_supply_rows(detail)
+
+        regular = overall[overall["street_pattern_dominant_class"] == "Regular Grid"].iloc[0]
+        broken = overall[overall["street_pattern_dominant_class"] == "Broken Grid"].iloc[0]
+        self.assertAlmostEqual(float(regular["demand_share"]), 0.4)
+        self.assertAlmostEqual(float(regular["coverage_proxy"]), (40.0 - 15.0) / 40.0)
+        self.assertAlmostEqual(float(broken["unmet_share"]), 50.0 / 65.0)
+
+    def test_street_pattern_route_target_policy_keeps_non_loops(self) -> None:
+        policy = ACCESS_FIRST_MODULE._street_pattern_route_target_policy(
+            client_pattern="Regular Grid",
+            facility_pattern="Irregular Grid",
+            client_distance_to_stop=1500.0,
+            facility_distance_to_stop=1200.0,
+            loops_stop_distance_threshold_m=800.0,
+            loops_route_target_multiplier=0.5,
+        )
+
+        self.assertTrue(policy["keep"])
+        self.assertEqual(policy["reason"], "non_loops_endpoint")
+        self.assertAlmostEqual(float(policy["weight_multiplier"]), 1.0)
+
+    def test_street_pattern_route_target_policy_excludes_loops_with_bad_stop_access(self) -> None:
+        policy = ACCESS_FIRST_MODULE._street_pattern_route_target_policy(
+            client_pattern="Loops & Lollipops",
+            facility_pattern="Regular Grid",
+            client_distance_to_stop=900.0,
+            facility_distance_to_stop=100.0,
+            loops_stop_distance_threshold_m=800.0,
+            loops_route_target_multiplier=1.0,
+        )
+
+        self.assertFalse(policy["keep"])
+        self.assertEqual(policy["status"], "excluded")
+        self.assertEqual(policy["reason"], "client_loops_stop_distance_gt_threshold")
+
+    def test_street_pattern_route_target_policy_keeps_loops_when_stop_access_ok(self) -> None:
+        policy = ACCESS_FIRST_MODULE._street_pattern_route_target_policy(
+            client_pattern="Loops & Lollipops",
+            facility_pattern="Regular Grid",
+            client_distance_to_stop=300.0,
+            facility_distance_to_stop=100.0,
+            loops_stop_distance_threshold_m=800.0,
+            loops_route_target_multiplier=0.25,
+        )
+
+        self.assertTrue(policy["keep"])
+        self.assertEqual(policy["reason"], "loops_endpoint_stop_access_ok")
+        self.assertAlmostEqual(float(policy["weight_multiplier"]), 0.25)
+
+    def test_extract_block_pattern_prefers_solver_top1_class(self) -> None:
+        blocks = pd.DataFrame(
+            {
+                "street_pattern_top1_class": ["Regular Grid"],
+                "street_pattern_dominant_class": ["Sparse"],
+            },
+            index=["42"],
+        )
+
+        self.assertEqual(ACCESS_FIRST_MODULE._extract_block_pattern(blocks, "42"), "Regular Grid")
+        self.assertIsNone(ACCESS_FIRST_MODULE._extract_block_pattern(blocks, "missing"))
+
+    def test_build_candidate_service_target_links_uses_highest_catchment_candidates(self) -> None:
+        blocks = pd.DataFrame(
+            {
+                "demand_without": [10.0, 20.0, 5.0, 0.0],
+                "capacity": [0.0, 0.0, 0.0, 100.0],
+                "service_radius_min": [15.0, 15.0, 15.0, 15.0],
+            },
+            index=["a", "b", "c", "existing"],
+        )
+        matrix = pd.DataFrame(
+            {
+                "a": [0.0, 4.0, 20.0, 6.0],
+                "b": [4.0, 0.0, 9.0, 8.0],
+                "c": [20.0, 9.0, 0.0, 8.0],
+                "existing": [6.0, 8.0, 8.0, 0.0],
+            },
+            index=["a", "b", "c", "existing"],
+        )
+
+        links, candidates = ACCESS_FIRST_MODULE._build_candidate_service_target_links(
+            blocks,
+            matrix,
+            top_k_candidates=1,
+            max_destinations_per_client=1,
+            demand_col="demand_without",
+        )
+
+        self.assertEqual(candidates["candidate_id"].tolist(), ["b"])
+        self.assertAlmostEqual(float(candidates.iloc[0]["candidate_catchment_demand"]), 35.0)
+        self.assertEqual(set(links["target"].astype(str)), {"b"})
+        self.assertEqual(set(links["source"].astype(str)), {"a", "b", "c"})
+        self.assertAlmostEqual(float(links["value"].sum()), 35.0)
+
+    def test_build_candidate_service_target_links_splits_weight_between_destinations(self) -> None:
+        blocks = pd.DataFrame(
+            {
+                "demand_without": [12.0, 0.0, 0.0],
+                "capacity": [0.0, 0.0, 0.0],
+                "service_radius_min": [15.0, 15.0, 15.0],
+            },
+            index=["origin", "cand1", "cand2"],
+        )
+        matrix = pd.DataFrame(
+            {
+                "origin": [0.0, 3.0, 4.0],
+                "cand1": [3.0, 0.0, 1.0],
+                "cand2": [4.0, 1.0, 0.0],
+            },
+            index=["origin", "cand1", "cand2"],
+        )
+
+        links, _candidates = ACCESS_FIRST_MODULE._build_candidate_service_target_links(
+            blocks,
+            matrix,
+            top_k_candidates=2,
+            max_destinations_per_client=2,
+            demand_col="demand_without",
+        )
+
+        origin_links = links[links["source"] == "origin"].sort_values("target")
+        self.assertEqual(origin_links["target"].tolist(), ["cand1", "cand2"])
+        self.assertEqual(origin_links["value"].tolist(), [6.0, 6.0])
+
+    def test_build_candidate_or_existing_target_links_uses_union_destinations(self) -> None:
+        blocks = pd.DataFrame(
+            {
+                "demand_without": [10.0, 20.0, 0.0, 0.0],
+                "capacity": [0.0, 0.0, 0.0, 100.0],
+                "service_radius_min": [15.0, 15.0, 15.0, 15.0],
+            },
+            index=["a", "b", "candidate", "existing"],
+        )
+        matrix = pd.DataFrame(
+            {
+                "a": [0.0, 20.0, 8.0, 2.0],
+                "b": [20.0, 0.0, 3.0, 9.0],
+                "candidate": [8.0, 3.0, 0.0, 7.0],
+                "existing": [2.0, 9.0, 7.0, 0.0],
+            },
+            index=["a", "b", "candidate", "existing"],
+        )
+
+        links, destinations = ACCESS_FIRST_MODULE._build_candidate_or_existing_target_links(
+            blocks,
+            matrix,
+            top_k_candidates=1,
+            max_destinations_per_client=1,
+            demand_col="demand_without",
+        )
+
+        self.assertEqual(set(destinations["destination_type"]), {"candidate", "existing"})
+        by_source = dict(zip(links["source"], links["target"]))
+        self.assertEqual(by_source["a"], "existing")
+        self.assertEqual(by_source["b"], "candidate")
+        self.assertAlmostEqual(float(links["value"].sum()), 30.0)
 
 
 if __name__ == "__main__":

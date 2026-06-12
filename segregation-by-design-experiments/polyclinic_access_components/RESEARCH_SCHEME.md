@@ -13,6 +13,53 @@ Outcome:
 - не только `ok / not ok`
 - а `type of failure`
 
+## Main Research Thesis
+
+Главная мысль, которую нельзя терять:
+
+- `street pattern` нужен как способ найти, где транспортное улучшение может заменить часть нового размещения сервисов
+- это не ranking паттернов и не доказательство, что один pattern универсально лучше другого
+- placement-only solver output не является финальным экспериментом; это baseline, относительно которого проверяется эффект route intervention
+
+Основная гипотеза:
+
+- если в нужных местах немного улучшить PT accessibility, то для достижения того же coverage может понадобиться меньше новых `polyclinic`
+- улучшение может быть задано как speed-up corridor/link, добавление маршрута или замена одного маршрута другим
+- `street pattern` должен подсказать, где такие intervention candidates искать:
+  - вокруг кварталов, которые solver выбирает для новых объектов
+  - вокруг high-probability / near-selected candidate blocks
+  - в местах, где спрос, сервисы, PT stops/routes и observed failures расходятся между собой
+
+### Why Route Interventions, Not Road Rebuilding
+
+В задаче изменения городской сети этот подпроект намеренно моделирует intervention через `PT routes`, а не через перестройку дорожной сети.
+
+Причина:
+- изменение road network обычно является тяжелым, медленным и капиталоемким вмешательством
+- часть предыдущей литературы обсуждает network improvement именно как изменение roads / street links / morphology
+- для реального planning experiment это часто слишком жесткий counterfactual
+
+Маршруты ОТ являются более pragmatic / agile intervention:
+- их можно добавить, перенаправить, усилить или заменить быстрее, чем перестроить улицу
+- они ближе к реально управляемому инструменту транспортного планирования
+- они позволяют тестировать targeted connectivity improvement вокруг solver-selected или high-probability candidate blocks
+- они напрямую проверяют тезис `transport improvement can substitute for part of new service placement`
+
+Поэтому route-generation experiment здесь не является технической деталью.
+Это содержательный выбор: мы проверяем, может ли более гибкое изменение PT network дать тот же planning effect, который в более жестких постановках пытались бы получить через изменение street/road network.
+
+Ремарка для writing:
+- этот аргумент надо связать с логикой `demand-supply change`
+- см. статью с Васей: изменение доступности надо интерпретировать не только как network engineering, но и как перераспределение отношения спроса и предложения
+- route intervention меняет effective supply catchment существующих / потенциальных `polyclinic`
+- поэтому результат `меньше новых объектов при том же target coverage` следует описывать как эффект изменения связности между demand blocks и service supply, а не просто как улучшение маршрутов само по себе
+
+Поэтому descriptive layers ниже нужны не сами по себе.
+Они должны вести к вопросу:
+
+- `где именно PT/walk network improvement может снизить additional polyclinics needed`
+- `какие selected / near-selected blocks лучше не закрывать новым объектом, а подключать новым или замененным маршрутом`
+
 ## Current Priority
 
 ### Primary Priority 1
@@ -189,6 +236,26 @@ Outcome:
 Статус:
 - primary interpretation principle
 
+### Take 6. Street pattern as PT-improvement substitution guide
+
+Главное planning use-case:
+
+- найти места, где targeted PT improvement может снизить `additional polyclinics needed`
+
+Смысл:
+
+- solver-selected или near-selected кварталы показывают, где сервисное размещение пытается закрыть deficit
+- street-pattern + PT diagnostics должны показать, что именно ограничивает доступность вокруг этих кварталов
+- если limiter транспортный, то надо тестировать не только новый объект, но и PT intervention:
+  - ускорить corridor
+  - добавить маршрут
+  - заменить маршрут
+  - улучшить связность с остановками
+
+Рабочая формулировка:
+
+`Street pattern is used to identify where targeted PT improvements can substitute for part of the required new service placement.`
+
 ### Main Planning Takeaway
 
 Для повышения `PT-based accessibility to polyclinics` нужно не просто размещать сервисы, а различать:
@@ -196,6 +263,7 @@ Outcome:
 - места, где ограничитель — local pedestrian access to stops
 - места, где ограничитель — morphology of the PT path
 - места, где размещение сервиса само по себе не решает проблему without connectivity improvements
+- места, где транспортное улучшение может уменьшить число новых объектов, нужных для target coverage
 
 ## Current Interpretation
 

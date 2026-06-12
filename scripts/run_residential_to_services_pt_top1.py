@@ -192,10 +192,12 @@ def _compute_city(
     services: list[str],
     min_walk_min: float | None,
     max_walk_min_exclusive: float | None,
+    intermodal_dir: Path | None,
+    intermodal_dir_name: str,
 ) -> list[dict]:
     city = city_dir.name
     derived = city_dir / "derived_layers"
-    intermodal = city_dir / "intermodal_graph_iduedu"
+    intermodal = intermodal_dir if intermodal_dir is not None else city_dir / intermodal_dir_name
     services_root = city_dir / "pipeline_2" / "services_raw"
     street_cells = city_dir / "street_pattern" / city / "predicted_cells.geojson"
 
@@ -392,6 +394,7 @@ def _compute_city(
                 "walk_filter_max_exclusive": (
                     float(max_walk_min_exclusive) if max_walk_min_exclusive is not None else None
                 ),
+                "intermodal_dir": str(intermodal),
                 "status": "ok",
             }
         )
@@ -432,6 +435,17 @@ def main() -> None:
     parser.add_argument("--services", nargs="*", default=DEFAULT_SERVICES)
     parser.add_argument("--min-walk-min", type=float, default=DEFAULT_MIN_WALK_MIN)
     parser.add_argument("--max-walk-min-exclusive", type=float, default=None)
+    parser.add_argument(
+        "--intermodal-dir-name",
+        default="intermodal_graph_iduedu",
+        help="Intermodal graph directory name under each city dir.",
+    )
+    parser.add_argument(
+        "--intermodal-dir",
+        type=Path,
+        default=None,
+        help="Explicit intermodal graph directory for a single-city run.",
+    )
     args = parser.parse_args()
 
     city_dirs = _city_dirs(args.joint_inputs_root)
@@ -449,6 +463,8 @@ def main() -> None:
                 list(args.services),
                 float(args.min_walk_min) if args.min_walk_min is not None else None,
                 float(args.max_walk_min_exclusive) if args.max_walk_min_exclusive is not None else None,
+                args.intermodal_dir,
+                str(args.intermodal_dir_name),
             )
         except Exception as exc:  # pragma: no cover
             city_results = [{"city": city_dir.name, "service_name": "*", "status": "error", "error": str(exc)}]

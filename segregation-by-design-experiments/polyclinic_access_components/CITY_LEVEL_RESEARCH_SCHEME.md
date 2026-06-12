@@ -7,13 +7,56 @@
 - как то, как устроена городская сеть, связано с текущей `PT + walk` доступностью `polyclinic`
 - и насколько легко или трудно эту доступность улучшить
 
-Главная мера трудности улучшения:
+Placement-only baseline:
 
 - `additional polyclinics needed`
 
-Вторичная мера:
+Это не финальный ответ на research question.
+Это counterfactual:
+
+- сколько объектов нужно, если транспорт не менять
+
+Главная проверяемая мера для гипотезы:
 
 - `additional PT routes needed` или route-level PT improvement
+- изменение `additional polyclinics needed` после route-level PT intervention
+
+## Main Thesis To Preserve
+
+Главная исследовательская мысль этого track:
+
+- `street pattern` нужен не для ранжирования паттернов как хороших или плохих
+- он нужен как diagnostic layer, который помогает понять, где targeted transport improvement может заменить часть нового service placement
+- центральный эксперимент не `добавить поликлиники`, а `может ли добавление / замена маршрута или ускорение коридора уменьшить число нужных новых поликлиник`
+
+Рабочая гипотеза:
+
+- если доступность `polyclinic` можно улучшить за счет небольшого изменения PT в конкретных местах, то это должно проявляться не только в city-wide coverage
+- это должно проявляться в сочетании:
+  - где живет спрос
+  - где уже стоят сервисы
+  - где solver выбирает или почти выбирает новые кварталы для размещения
+  - какие `street-pattern contexts` вокруг этих кварталов
+  - как эти contexts связаны с PT stops, PT routes, first-mile failures и PT-segment failures
+
+То есть главный вопрос не `какой street pattern лучше`.
+
+Главный вопрос:
+
+- в каких морфологических и транспортных условиях можно поднять `PT + walk` accessibility не только добавлением новых `polyclinic`, но и targeted PT intervention:
+  - ускорить существующий link / corridor
+  - добавить маршрут
+  - заменить один маршрут другим
+  - улучшить связность вокруг solver-selected или high-probability candidate blocks
+
+Проверяемая planning idea:
+
+- если targeted PT improvement вокруг выбранных / вероятных кварталов поднимает coverage до target с меньшим числом новых объектов, то street-pattern layer дает практический ответ:
+  `где транспортное улучшение может быть substitute for service placement`
+- placement-only target90 нужен только как baseline для сравнения:
+  `до route intervention` vs `после route intervention`
+
+Эту мысль надо держать выше descriptive results про отдельные pattern shares, lifts и correlations.
 
 ## Core Outcome
 

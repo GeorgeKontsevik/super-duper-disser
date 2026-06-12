@@ -215,6 +215,15 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--placement-fixed-new-capacity",
+        type=float,
+        default=None,
+        help=(
+            "Explicit capacity for every newly opened facility. Overrides --placement-capacity-mode "
+            "for placement experiments such as sensitivity runs with 600 or 800."
+        ),
+    )
+    parser.add_argument(
         "--placement-genetic-population-size",
         type=int,
         default=50,
@@ -1608,6 +1617,7 @@ def _run_exact_placement_for_service(
     prefer_existing: bool = False,
     allow_existing_expansion: bool = False,
     capacity_mode: str = "fixed_mean",
+    fixed_new_capacity_override: float | None = None,
     genetic_population_size: int = 50,
     genetic_generations: int = 20,
     genetic_mutation_rate: float = 0.7,
@@ -1623,7 +1633,12 @@ def _run_exact_placement_for_service(
     cached_summary = _try_load_json(summary_after_path) if summary_after_path.exists() else {}
     min_new_capacity = float(_service_min_new_capacity(service))
     fixed_new_capacity = None
-    if capacity_mode == "fixed_mean":
+    effective_capacity_mode = str(capacity_mode)
+    if fixed_new_capacity_override is not None:
+        fixed_new_capacity = float(fixed_new_capacity_override)
+        min_new_capacity = float(fixed_new_capacity)
+        effective_capacity_mode = "fixed_override"
+    elif capacity_mode == "fixed_mean":
         fixed_new_capacity = float(_service_fixed_mean_capacity(service, solver_blocks))
         min_new_capacity = float(fixed_new_capacity)
 
@@ -1632,7 +1647,7 @@ def _run_exact_placement_for_service(
         and bool(cached_summary.get("use_genetic", False)) == bool(use_genetic)
         and bool(cached_summary.get("prefer_existing", False)) == bool(prefer_existing)
         and bool(cached_summary.get("allow_existing_expansion", False)) == bool(allow_existing_expansion)
-        and str(cached_summary.get("capacity_mode", "service_min")) == str(capacity_mode)
+        and str(cached_summary.get("capacity_mode", "service_min")) == str(effective_capacity_mode)
         and float(cached_summary.get("min_new_capacity", -1.0)) == float(min_new_capacity)
         and int(cached_summary.get("genetic_population_size", 50)) == int(genetic_population_size)
         and int(cached_summary.get("genetic_generations", 20)) == int(genetic_generations)
@@ -1710,7 +1725,7 @@ def _run_exact_placement_for_service(
     _log(
         f"Exact placement [{service}]: blocks={len(work)}, demand_column={demand_column}, "
         f"demand_sum={float(pd.to_numeric(work[demand_column], errors='coerce').fillna(0.0).sum()):.1f}, "
-        f"use_genetic={bool(use_genetic)}, capacity_mode={capacity_mode}, "
+        f"use_genetic={bool(use_genetic)}, capacity_mode={effective_capacity_mode}, "
         f"fixed_new_capacity={fixed_new_capacity if fixed_new_capacity is not None else 'none'}, "
         f"genetic(pop={int(genetic_population_size)}, gen={int(genetic_generations)})"
     )
@@ -1828,7 +1843,7 @@ def _run_exact_placement_for_service(
         "use_genetic": bool(use_genetic),
         "prefer_existing": bool(prefer_existing),
         "allow_existing_expansion": bool(allow_existing_expansion),
-        "capacity_mode": str(capacity_mode),
+        "capacity_mode": str(effective_capacity_mode),
         "genetic_population_size": int(genetic_population_size),
         "genetic_generations": int(genetic_generations),
         "genetic_mutation_rate": float(genetic_mutation_rate),
@@ -2299,6 +2314,7 @@ def main() -> None:
                             prefer_existing=bool(args.placement_prefer_existing),
                             allow_existing_expansion=bool(args.placement_allow_existing_expansion),
                             capacity_mode=str(args.placement_capacity_mode),
+                            fixed_new_capacity_override=args.placement_fixed_new_capacity,
                             genetic_population_size=int(args.placement_genetic_population_size),
                             genetic_generations=int(args.placement_genetic_generations),
                             genetic_mutation_rate=float(args.placement_genetic_mutation_rate),
@@ -2445,6 +2461,7 @@ def main() -> None:
                     prefer_existing=bool(args.placement_prefer_existing),
                     allow_existing_expansion=bool(args.placement_allow_existing_expansion),
                     capacity_mode=str(args.placement_capacity_mode),
+                    fixed_new_capacity_override=args.placement_fixed_new_capacity,
                     genetic_population_size=int(args.placement_genetic_population_size),
                     genetic_generations=int(args.placement_genetic_generations),
                     genetic_mutation_rate=float(args.placement_genetic_mutation_rate),
@@ -2492,6 +2509,11 @@ def main() -> None:
             "prefer_existing": bool(args.placement_prefer_existing),
             "allow_existing_expansion": bool(args.placement_allow_existing_expansion),
             "capacity_mode": str(args.placement_capacity_mode),
+            "fixed_new_capacity_override": (
+                float(args.placement_fixed_new_capacity)
+                if args.placement_fixed_new_capacity is not None
+                else None
+            ),
             "genetic_population_size": int(args.placement_genetic_population_size),
             "genetic_generations": int(args.placement_genetic_generations),
             "genetic_mutation_rate": float(args.placement_genetic_mutation_rate),
