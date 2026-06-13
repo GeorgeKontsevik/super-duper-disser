@@ -9,6 +9,37 @@ import subprocess
 import sys
 from pathlib import Path
 
+
+def _configure_thread_env(max_threads: int = 4) -> int:
+    max_threads = max(1, int(max_threads))
+    thread_env_vars = (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    )
+    requested = os.environ.get("CONNECTPT_MAX_THREADS")
+    if requested:
+        try:
+            max_threads = max(1, min(max_threads, int(requested)))
+        except ValueError:
+            pass
+    for name in thread_env_vars:
+        value = os.environ.get(name)
+        if value:
+            try:
+                max_threads = max(1, min(max_threads, int(value)))
+            except ValueError:
+                pass
+    for name in thread_env_vars:
+        os.environ[name] = str(max_threads)
+    os.environ["CONNECTPT_MAX_THREADS"] = str(max_threads)
+    return max_threads
+
+
+CONNECTPT_MAX_THREADS = _configure_thread_env(4)
+
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
@@ -42,6 +73,12 @@ from connectpt.routes_generator.eval_route_generator import eval_model  # noqa: 
 from connectpt.routes_generator.torch_utils import dump_routes  # noqa: E402
 from connectpt.routes_generator.utils import get_eval_cfg  # noqa: E402
 import connectpt.routes_generator.utils as lrnu  # noqa: E402
+
+torch.set_num_threads(CONNECTPT_MAX_THREADS)
+try:
+    torch.set_num_interop_threads(1)
+except RuntimeError:
+    pass
 
 
 LAND_USE_SHARE_COLUMNS = [

@@ -1,0 +1,15 @@
+{
+  "visual_city_context": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_oktyabrskaya_large/experiment_report/visual_city_context.png",
+  "visual_intervention_layers": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_oktyabrskaya_large/experiment_report/visual_intervention_layers.png",
+  "visual_services_and_placement": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_oktyabrskaya_large/experiment_report/visual_services_and_placement.png",
+  "visual_storyboard": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_oktyabrskaya_large/experiment_report/visual_storyboard.png",
+  "layers": {
+    "city_boundary": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_oktyabrskaya_large/experiment_report/spb_boundary_context.parquet",
+    "territory": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_oktyabrskaya_large/baseline_bundle/analysis_territory/buffer.parquet",
+    "planned_road": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_oktyabrskaya_large/planned_road_transport_mixed_bundle/scenario_planned_road/planned_road_alignment_approx.parquet",
+    "generated_transport_graph": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_oktyabrskaya_large/planned_road_transport_mixed_bundle/intermodal_graph_iduedu/graph.pkl",
+    "services_raw": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_oktyabrskaya_large/baseline_bundle/pipeline_2/services_raw/polyclinic.parquet",
+    "final_placement": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_oktyabrskaya_large/planned_road_transport_mixed_bundle/pipeline_2/placement_exact/polyclinic/blocks_solver_after.parquet",
+    "mixed_use_quarters": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_oktyabrskaya_large/baseline_bundle/scenario_sm_imputation/mixed_use_industrial_229_polyclinic/quarters.parquet"
+  }
+}

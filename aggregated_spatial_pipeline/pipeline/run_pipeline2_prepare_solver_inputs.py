@@ -2032,7 +2032,12 @@ def main() -> None:
             units_all[residential_col] = blocks[residential_col].reindex(units_all.index)
 
     for cap_col, series in capacity_columns.items():
-        units_all[cap_col] = series.reindex(units_all.index).fillna(0.0).astype(float)
+        raw_capacity = series.reindex(units_all.index).fillna(0.0).astype(float)
+        if cap_col in blocks.columns:
+            scenario_capacity = pd.to_numeric(blocks[cap_col], errors="coerce").reindex(units_all.index).fillna(0.0)
+            units_all[cap_col] = (raw_capacity + scenario_capacity).astype(float)
+        else:
+            units_all[cap_col] = raw_capacity
 
     # Strict rule: blocks without population are excluded from all pipeline_2 calculations.
     units_mask = units_all["population"] > 0

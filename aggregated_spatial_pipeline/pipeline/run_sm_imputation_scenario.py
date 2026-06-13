@@ -45,6 +45,27 @@ def _slugify(value: str) -> str:
     return slug or "city"
 
 
+def _parse_land_use_mix(value: str) -> dict[str, float]:
+    parts = [part.strip() for part in str(value).split(",") if part.strip()]
+    if not parts:
+        raise ValueError("Land-use mix must contain at least one name=value pair.")
+    parsed = {col: 0.0 for col in ADDITIONAL_COLUMNS}
+    for part in parts:
+        if "=" not in part:
+            raise ValueError(f"Invalid land-use mix item {part!r}; expected name=value.")
+        name, raw_weight = [item.strip() for item in part.split("=", 1)]
+        if name not in parsed:
+            raise ValueError(f"Unsupported land-use in mix: {name!r}. Supported: {', '.join(ADDITIONAL_COLUMNS)}")
+        weight = float(raw_weight)
+        if not np.isfinite(weight) or weight < 0:
+            raise ValueError(f"Invalid land-use weight for {name!r}: {raw_weight!r}.")
+        parsed[name] = weight
+    total = float(sum(parsed.values()))
+    if total <= 0:
+        raise ValueError("Land-use mix weights must sum to a positive value.")
+    return {name: weight / total for name, weight in parsed.items()}
+
+
 def _resolve_city_dir(place: str | None, joint_input_dir: str | None) -> Path:
     if joint_input_dir:
         return Path(joint_input_dir).resolve()
@@ -60,7 +81,10 @@ def _resolve_city_dir(place: str | None, joint_input_dir: str | None) -> Path:
 
 
 def _base_quarters_path(city_dir: Path) -> Path:
-    return city_dir / "derived_layers" / "quarters_clipped.parquet"
+    quarters_path = city_dir / "derived_layers" / "quarters_clipped.parquet"
+    if quarters_path.exists():
+        return quarters_path
+    return city_dir / "derived_layers" / "blocks_clipped.parquet"
 
 
 def _model_bundle_dir(city_dir: Path) -> Path:
@@ -123,7 +147,16 @@ def parse_args() -> argparse.Namespace:
     apply.add_argument("--place", default=None)
     apply.add_argument("--scenario-name", required=True)
     apply.add_argument("--quarter-index", required=True, help="Quarter row index to modify.")
-    apply.add_argument("--target-land-use", required=True, choices=[*list(ADDITIONAL_COLUMNS), "probable_other"])
+    apply.add_argument("--target-land-use", default=None, choices=[*list(ADDITIONAL_COLUMNS), "probable_other"])
+    apply.add_argument(
+        "--target-land-use-mix",
+        default=None,
+        help=(
+            "Optional comma-separated land-use mix, e.g. "
+            "residential=0.58,business=0.18,recreation=0.10,transport=0.08,special=0.06. "
+            "When provided, it overrides --target-land-use and is normalized to sum to 1."
+        ),
+    )
     apply.add_argument("--add-service", default=None, choices=list(SUPPORTED_SERVICES))
     apply.add_argument(
         "--service-capacity",
@@ -701,9 +734,15 @@ def _apply_command(args: argparse.Namespace) -> None:
     gsi_before = float(pd.to_numeric(prepared_before.loc[quarter_idx].get("gsi"), errors="coerce"))
     site_area_value = float(pd.to_numeric(site_area_before.loc[quarter_idx], errors="coerce"))
     source_land_use = str(after.loc[quarter_idx].get("land_use")) if pd.notna(after.loc[quarter_idx].get("land_use")) else None
-    resolved_target_land_use = str(args.target_land_use)
+    target_mix = _parse_land_use_mix(args.target_land_use_mix) if args.target_land_use_mix else None
+    resolved_target_land_use = str(args.target_land_use or "")
+    if target_mix is None and not resolved_target_land_use:
+        raise ValueError("Provide either --target-land-use or --target-land-use-mix.")
+    if target_mix is not None:
+        ranked_mix = sorted(target_mix.items(), key=lambda item: item[1], reverse=True)
+        resolved_target_land_use = "+".join(name for name, weight in ranked_mix if weight > 0)
     probable_other_ranked: list[dict[str, float]] = []
-    if args.target_land_use == "probable_other":
+    if target_mix is None and args.target_land_use == "probable_other":
         resolved_target_land_use, probable_other_ranked = _select_probable_other_land_use(
             classifier=classifier,
             classifier_cols=classifier_cols,
@@ -714,9 +753,13 @@ def _apply_command(args: argparse.Namespace) -> None:
         )
 
     for col in ADDITIONAL_COLUMNS:
-        after.loc[quarter_idx, col] = float(1.0 if col == resolved_target_land_use else 0.0)
+        after.loc[quarter_idx, col] = (
+            float(target_mix.get(col, 0.0))
+            if target_mix is not None
+            else float(1.0 if col == resolved_target_land_use else 0.0)
+        )
     after.loc[quarter_idx, "land_use"] = str(resolved_target_land_use)
-    after.loc[quarter_idx, "share"] = float(1.0)
+    after.loc[quarter_idx, "share"] = float(max((target_mix or {resolved_target_land_use: 1.0}).values()))
 
     prepared_after, _site_area_after, _fsi_base, _gsi_base = _prepare_sm_input(after)
     row = prepared_after.loc[[quarter_idx]].copy()
@@ -806,6 +849,7 @@ def _apply_command(args: argparse.Namespace) -> None:
         "source_land_use": source_land_use,
         "target_land_use_requested": str(args.target_land_use),
         "target_land_use": str(resolved_target_land_use),
+        "target_land_use_mix": target_mix,
         "probable_other_ranked_candidates": probable_other_ranked,
         "top_cluster": top_cluster,
         "top_cluster_probability": top_prob,

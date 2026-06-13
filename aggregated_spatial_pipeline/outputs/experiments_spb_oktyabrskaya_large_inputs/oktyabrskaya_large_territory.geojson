@@ -1,0 +1,24 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "SPB Oktyabrskaya planned-road enlarged local territory",
+        "description": "Enlarged local experiment territory around the planned Dalnevostochny Prospect to Oktyabrskaya Embankment road corridor, including surrounding redevelopment and industrial blocks."
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [30.440, 59.878],
+            [30.535, 59.878],
+            [30.535, 59.922],
+            [30.440, 59.922],
+            [30.440, 59.878]
+          ]
+        ]
+      }
+    }
+  ]
+}

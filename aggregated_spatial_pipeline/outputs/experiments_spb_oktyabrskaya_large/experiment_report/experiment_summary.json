@@ -1,0 +1,176 @@
+{
+  "territory": "Enlarged Oktyabrskaya Embankment / Dalnevostochny Prospect local polygon, Saint Petersburg",
+  "territory_geojson": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_oktyabrskaya_large_inputs/oktyabrskaya_large_territory.geojson",
+  "service": "polyclinic",
+  "new_service_capacity": 800,
+  "rows": [
+    {
+      "scenario": "baseline",
+      "demand_total": 11019.0,
+      "capacity_total_before_placement": 16800.0,
+      "demand_without_before_placement": 2609.0,
+      "provision_before_placement": 0.7632271530991923,
+      "active_blocks": 68,
+      "capacity_blocks": 18,
+      "new_count": 14,
+      "selected_count": 32,
+      "existing_count": 18,
+      "capacity_added_total": 11200.0,
+      "demand_without_after_placement": 82.0,
+      "demand_left_after_placement": 0.0,
+      "provision_after_placement": 0.9925583083764407,
+      "summary_after": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_oktyabrskaya_large/baseline_bundle/pipeline_2/placement_exact/polyclinic/summary_after.json"
+    },
+    {
+      "scenario": "planned_road",
+      "demand_total": 11019.0,
+      "capacity_total_before_placement": 16800.0,
+      "demand_without_before_placement": 2174.0,
+      "provision_before_placement": 0.8027044196388057,
+      "active_blocks": 68,
+      "capacity_blocks": 18,
+      "new_count": 13,
+      "selected_count": 31,
+      "existing_count": 18,
+      "capacity_added_total": 10400.0,
+      "demand_without_after_placement": 122.0,
+      "demand_left_after_placement": 0.0,
+      "provision_after_placement": 0.9889282149015337,
+      "summary_after": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_oktyabrskaya_large/planned_road_bundle/pipeline_2/placement_exact/polyclinic/summary_after.json"
+    },
+    {
+      "scenario": "planned_road_plus_mixed_use",
+      "demand_total": 11094.0,
+      "capacity_total_before_placement": 17600.0,
+      "demand_without_before_placement": 2171.0,
+      "provision_before_placement": 0.8043086352983595,
+      "active_blocks": 69,
+      "capacity_blocks": 19,
+      "new_count": 13,
+      "selected_count": 32,
+      "existing_count": 19,
+      "capacity_added_total": 10400.0,
+      "demand_without_after_placement": 122.0,
+      "demand_left_after_placement": 0.0,
+      "provision_after_placement": 0.9890030647196683,
+      "summary_after": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_oktyabrskaya_large/planned_road_mixed_bundle/pipeline_2/placement_exact/polyclinic/summary_after.json"
+    }
+  ],
+  "road_landuse_services_sequence": [
+    "baseline",
+    "planned_road",
+    "planned_road_plus_mixed_use"
+  ],
+  "planned_road_context": {
+    "scenario": "planned_road_dalnevostochny_to_oktyabrskaya",
+    "bundle": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_oktyabrskaya_large/planned_road_bundle",
+    "coords_wgs84": [
+      [
+        30.4639,
+        59.8892
+      ],
+      [
+        30.4745,
+        59.8937
+      ],
+      [
+        30.4878,
+        59.8985
+      ],
+      [
+        30.5035,
+        59.9027
+      ]
+    ],
+    "planned_road_basis": "Published planned four-lane road from Dalnevostochny Prospect to Oktyabrskaya Embankment.",
+    "source_url": "https://peterburg.center/news/ot-dalnevostochnogo-prospekta-do-oktyabrskoy-naberezhnoy-vozvedut-4-polosnaya-dorogu",
+    "source_original_government_url": "https://www.gov.spb.ru/press/governor/262156/",
+    "modeling_note": "Approximate graph alignment of the planned intervention, not cadastral/project documentation geometry.",
+    "planned_line_length_meter": 2688.5661188920435,
+    "attachment_buffer_m": 220.0,
+    "attachment_existing_nodes": 35,
+    "new_road_nodes": 35,
+    "added_graph_edges": 134,
+    "added_road_edges": 64,
+    "added_connector_edges": 70,
+    "graph_nodes": 19229,
+    "graph_edges": 53153
+  },
+  "mixed_use_context": {
+    "city_dir": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_oktyabrskaya_large/baseline_bundle",
+    "source_quarters_path": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_oktyabrskaya_large/baseline_bundle/derived_layers/blocks_clipped.parquet",
+    "output_quarters_path": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_oktyabrskaya_large/baseline_bundle/scenario_sm_imputation/mixed_use_industrial_229_polyclinic/quarters.parquet",
+    "scenario_name": "mixed_use_industrial_229_polyclinic",
+    "quarter_index": "229",
+    "source_land_use": "industrial",
+    "target_land_use_requested": "None",
+    "target_land_use": "residential+business+recreation+transport+special",
+    "target_land_use_mix": {
+      "residential": 0.58,
+      "business": 0.18,
+      "recreation": 0.1,
+      "industrial": 0.0,
+      "transport": 0.08,
+      "special": 0.06,
+      "agriculture": 0.0
+    },
+    "probable_other_ranked_candidates": [],
+    "top_cluster": 5,
+    "top_cluster_probability": 0.8479831479744798,
+    "top_cluster_candidates": [
+      {
+        "cluster": 5,
+        "probability": 0.8479831479744798
+      },
+      {
+        "cluster": 1,
+        "probability": 0.0951327739840401
+      },
+      {
+        "cluster": 0,
+        "probability": 0.01912415777176562
+      },
+      {
+        "cluster": 3,
+        "probability": 0.01828477190309829
+      },
+      {
+        "cluster": 2,
+        "probability": 0.01206830336272605
+      }
+    ],
+    "site_area_m2": 149734.12977068324,
+    "fsi_before": 0.08901771379262834,
+    "fsi_after": 1.3178006159298317,
+    "gsi_before": 0.08901771379262834,
+    "gsi_after": 0.16179239636627146,
+    "build_floor_area_before": 13328.989908914951,
+    "build_floor_area_after": 197319.7284375237,
+    "footprint_area_before": 13328.989908914951,
+    "footprint_area_after": 24225.843673417112,
+    "living_area_after": 114445.44249376374,
+    "population_proxy_before": 0.0,
+    "population_proxy_after": 5722.2721246881865,
+    "added_service": "polyclinic",
+    "added_service_capacity": 800.0,
+    "service_capacity_total_before": 0.0,
+    "service_capacity_total_after": 800.0,
+    "preview_outputs": {
+      "status": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_oktyabrskaya_large/baseline_bundle/scenario_sm_imputation/mixed_use_industrial_229_polyclinic/preview_png/sm_scenario_changed_quarter_status.png",
+      "sm_scenario_build_floor_area_delta.png": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_oktyabrskaya_large/baseline_bundle/scenario_sm_imputation/mixed_use_industrial_229_polyclinic/preview_png/sm_scenario_build_floor_area_delta.png",
+      "sm_scenario_footprint_area_delta.png": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_oktyabrskaya_large/baseline_bundle/scenario_sm_imputation/mixed_use_industrial_229_polyclinic/preview_png/sm_scenario_footprint_area_delta.png"
+    }
+  },
+  "checks": {
+    "planned_road_reduces_new_services_baseline": true,
+    "planned_road_reduces_unmet_baseline": true,
+    "landuse_change_after_road_changes_demand_total": true,
+    "mixed_use_keeps_service_need_nonzero": true
+  },
+  "report_pngs": {
+    "sequence": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_oktyabrskaya_large/experiment_report/road_landuse_services_sequence.png",
+    "planned_road": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_oktyabrskaya_large/experiment_report/planned_road_added_road.png",
+    "planned_road_mixed_placement": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_oktyabrskaya_large/experiment_report/planned_road_mixed_lp_placement_changes.png"
+  },
+  "full_intervention_grid_summary": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_oktyabrskaya_large/experiment_report/experiment_summary_full.json"
+}

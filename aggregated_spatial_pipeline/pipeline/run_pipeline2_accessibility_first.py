@@ -72,6 +72,35 @@ def _ensure_services(services: list[str]) -> list[str]:
     return normalized
 
 
+def _cap_thread_env(env: dict[str, str], max_threads: int) -> dict[str, str]:
+    capped = dict(env)
+    max_threads = max(1, int(max_threads))
+    thread_env_vars = (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    )
+    requested = capped.get("CONNECTPT_MAX_THREADS")
+    if requested:
+        try:
+            max_threads = max(1, min(max_threads, int(requested)))
+        except ValueError:
+            pass
+    for name in thread_env_vars:
+        value = capped.get(name)
+        if value:
+            try:
+                max_threads = max(1, min(max_threads, int(value)))
+            except ValueError:
+                pass
+    for name in thread_env_vars:
+        capped[name] = str(max_threads)
+    capped["CONNECTPT_MAX_THREADS"] = str(max_threads)
+    return capped
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -161,6 +190,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--route-time-weight", type=float, default=0.3)
     parser.add_argument("--median-connectivity-weight", type=float, default=0.3)
     parser.add_argument("--street-pattern-weight", type=float, default=0.0)
+    parser.add_argument(
+        "--connectpt-max-threads",
+        type=int,
+        default=4,
+        help="Maximum CPU threads for ConnectPT/Torch/BLAS subprocesses.",
+    )
     parser.add_argument(
         "--street-pattern-aware-route-target",
         action=argparse.BooleanOptionalAction,
@@ -552,12 +587,12 @@ def _run_route_generator(
     if args.recompute_accessibility:
         cmd.append("--recompute-accessibility")
 
-    env = dict(os.environ)
+    env = _cap_thread_env(os.environ, int(args.connectpt_max_threads))
     env["PYTHONPATH"] = os.pathsep.join([str(repo_root), str(repo_root / "connectpt")])
     env["MPLCONFIGDIR"] = repo_mplconfigdir("mpl-pipeline2-access-first", root=repo_root)
     _log(
         f"Running ConnectPT route generator: modality={args.modality}, "
-        f"n_routes={args.n_routes}, runtime={python_path}"
+        f"n_routes={args.n_routes}, max_threads={env['CONNECTPT_MAX_THREADS']}, runtime={python_path}"
     )
     subprocess.run(cmd, check=True, cwd=str(repo_root), env=env)
 
