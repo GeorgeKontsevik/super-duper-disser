@@ -30,4 +30,4 @@
 	url = https://github.com/GeorgeKontsevik/equatorial.git
 [submodule "itmo-phd-thesis-template-en"]
 	path = itmo-phd-thesis-template-en
-	url = https://github.com/toftul/itmo-phd-thesis-template-en.git
+	url = https://github.com/GeorgeKontsevik/itmo-phd-thesis-template-en.git
