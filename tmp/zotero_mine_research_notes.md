@@ -6,15 +6,15 @@ Read from local Zotero PDFs on 2026-06-15. These are working notes, not disserta
 
 ## Inventory
 
-| Priority | Part | Title | Year/date | PDF text |
-| --- | --- | --- | --- | --- |
-| important | 1.1 | Environment-framed networks: seasonal reconfiguration of service accessibility in Arctic transport systems | 2026-03-28 | `tmp/pdfs/mine/4PTTGNGK_environment_framed_networks_2026.txt` |
-| important | 1.2 | Assessment of Transport Networks Stability in the context of Climate Stressors on Urban Agriculture Supply Chain in Equatorial regions | no date | `tmp/pdfs/mine/5WD98ACA_PDF.txt` |
-| important | 2.1 | Enhancing Urban Planning Through Improved Connectivity: A Genetic Algorithm Approach for Optimal Service Placement | 2024 | `tmp/pdfs/mine/QFRQYCVM_PDF.txt` |
-| medium | 2.2 | One Rule to Bring Them All: Investigating Transport Connectivity in Public Transport Route Generation for Equitable Access | no Zotero date | `tmp/pdfs/mine/AZRJ34Q6_AAAI_one_rule_to_bring_them_all.txt` |
-| low support | support for 2.1 | Spatial-Morphological Modeling for Multi-Attribute Imputation of Urban Blocks | no Zotero date | `tmp/pdfs/mine/F6Y4XNCZ_AAAI_spatial_morphological_modelling.txt` |
-| minimal | background only | Assessing the transport connectivity of urban territories, based on intermodal transport accessibility | 2023-06-15 | `tmp/pdfs/mine/HET2Z28V_PDF.txt` |
-| minimal | background only | Assessment of Spatial Inequality in Agglomeration Planning | 2023 | `tmp/pdfs/mine/YH5F68C6_PDF.txt` |
+| Priority | Part | Title | Year/date | PDF text | Linked thread |
+| --- | --- | --- | --- | --- | --- |
+| important | 1.1 | Environment-framed networks: seasonal reconfiguration of service accessibility in Arctic transport systems | 2026-03-28 | `tmp/pdfs/mine/4PTTGNGK_environment_framed_networks_2026.txt` |  |
+| important | 1.2 | Assessment of Transport Networks Stability in the context of Climate Stressors on Urban Agriculture Supply Chain in Equatorial regions | no date | `tmp/pdfs/mine/5WD98ACA_PDF.txt` | `Equatorial: paper figures rain-delay` (`019e9344-277a-7a11-9029-b684573b7ece`) |
+| important | 2.1 | Enhancing Urban Planning Through Improved Connectivity: A Genetic Algorithm Approach for Optimal Service Placement | 2024 | `tmp/pdfs/mine/QFRQYCVM_PDF.txt` | `Поликлиники: route strategy batch` (`019eb76c-c47a-7a11-9a47-78c80a3f2baa`) |
+| medium | 2.2 | One Rule to Bring Them All: Investigating Transport Connectivity in Public Transport Route Generation for Equitable Access | no Zotero date | `tmp/pdfs/mine/AZRJ34Q6_AAAI_one_rule_to_bring_them_all.txt` |  |
+| low support | support for 2.1 | Spatial-Morphological Modeling for Multi-Attribute Imputation of Urban Blocks | no Zotero date | `tmp/pdfs/mine/F6Y4XNCZ_AAAI_spatial_morphological_modelling.txt` | `SPB: land-use imputation road experiment` (`019ec22c-02ff-7751-97c5-c720f47c857d`) |
+| minimal | background only | Assessing the transport connectivity of urban territories, based on intermodal transport accessibility | 2023-06-15 | `tmp/pdfs/mine/HET2Z28V_PDF.txt` |  |
+| minimal | background only | Assessment of Spatial Inequality in Agglomeration Planning | 2023 | `tmp/pdfs/mine/YH5F68C6_PDF.txt` | `Поликлиники: route strategy batch` (`019eb76c-c47a-7a11-9a47-78c80a3f2baa`) |
 
 ## Part 1.1: Environment-Framed Networks
 
@@ -71,6 +71,8 @@ Limitations to mention briefly:
 
 Source: draft `XXDCGSDI`.
 
+Linked pinned thread: `Equatorial: paper figures rain-delay` (`019e9344-277a-7a11-9029-b684573b7ece`).
+
 This is the main source for Part 1.2. It transfers the environment-framed/network-state idea from Arctic service accessibility to equatorial urban agriculture supply chains.
 
 Core contribution:
@@ -115,6 +117,7 @@ Use in dissertation:
 - as the applied equatorial-region counterpart to EFN;
 - as support for a branch like `Road networks -> link quality / climate stressors / supply-chain vulnerability`;
 - as the place where `highway`, `surface`, flood depth, rainfall intensity, heat, and imperviousness become network parameters.
+- use the linked equatorial thread for experiment/figure context, especially rain-threshold travel-time penalty and annual severe accessibility delay.
 
 Current caution:
 - this is a draft, not a published source;
@@ -221,15 +224,20 @@ Limitations:
 - paper itself notes ambiguity of applying network generation to real data;
 - use as an extension/supporting direction, not the main empirical anchor.
 
-## Support For Part 2.1: Spatial-Morphological Imputation
+## Support For Part 2.1: Demand Growth Via Spatial-Morphological Imputation
 
 Source: top-level PDF `F6Y4XNCZ`, anonymous submission.
 
-This is significantly less important. Use it as one applied take for demand-side scenario modeling.
+This is significantly less important. Use it as the demand-growth mechanism for scenario modeling.
+
+Linked dissertation note: `itmo-phd-thesis-template-en/Dissertation/melkote_daskin_2001_timeline.md`.
+
+Linked pinned thread: `SPB: land-use imputation road experiment` (`019ec22c-02ff-7751-97c5-c720f47c857d`).
 
 Single useful take:
+- imputation here is the way to model demand growth;
 - using the model developed in this paper, it is possible to estimate how an urban block may change under a given land-use type in a given city;
-- for this dissertation, the important consequence is not morphology itself, but demand: how much population/service demand may be added when land-use assumptions change.
+- for this dissertation, the important output is how much population/service demand may be added when land-use assumptions change.
 
 Method in one line, only if needed:
 - land-use composition and site area are used to infer likely block morphology (`FSI`, `GSI`), which can then be translated into expected capacity/population change.
@@ -238,6 +246,8 @@ Use in experiments:
 - can define a demand-growth scenario for selected blocks;
 - this scenario can be compared with transport-side interventions, such as adding roads or improving public transport;
 - useful question: if land-use change increases demand in a block, is it better to add/expand facilities, add roads, or improve transport accessibility?
+- SPB thread compares adding a road/edge and its effect on the minimum additional number of services across several slices;
+- main take: under demand change, one added road does not solve the problem reliably because its effect is time-limited and spatially constrained.
 
 Do not expand:
 - do not present this as a main facility-location or network-design source;
@@ -281,8 +291,12 @@ Avoid expanding:
 2. Part 1.2: `XXDCGSDI` applies the same logic to equatorial road networks, climate stressors, and urban agriculture supply chains.
 3. Part 2.1: `N39YX5BF` turns accessibility/cost matrix into a decision variable in facility placement.
 4. Part 2.2: `AZRJ34Q6` extends the network-design side toward accessibility-aware TNDP.
-5. `F6Y4XNCZ` gives one demand-growth scenario mechanism for Part 2.1 experiments.
+5. `F6Y4XNCZ` gives the demand-growth scenario mechanism for Part 2.1 experiments.
 6. `VDI4QPKV` and `R89G28XS` remain minimal historical/methodological background.
+
+Part 2 full-pipeline context: `Поликлиники: route strategy batch`.
+
+Support for 2.1 / road-edge experiment context: `SPB: land-use imputation road experiment`, linked to `itmo-phd-thesis-template-en/Dissertation/melkote_daskin_2001_timeline.md`.
 
 ## Concepts To Reuse
 
