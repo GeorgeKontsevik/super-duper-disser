@@ -1,0 +1,529 @@
+ Enhancing Urban Planning through Improved
+Connectivity: A Genetic Algorithm Approach for
+          Optimal Service Placement
+
+Georgii Kontsevik1[0009−0009−0889−9683] , Valeria Tikhevich1[0009−0002−5419−2100] ,
+                  and Sergey Mityagin1[0000−0001−9877−1687]
+
+          ITMO University, Birzhevaya line, 14, Saint Petersburg, Russia
+                            kontsevik@niuitmo.ru
+
+
+
+      Abstract. In this paper, a review of existing methods for optimal service
+      placement to meet demand has been conducted. A problematic issue
+      was identified in the form of insufficient flexibility of existing solutions
+      for urban planning and development tasks in terms of optimal coverage
+      location problem. The hypothesis that small improvements in connectivity
+      between neighborhoods can significantly reduce the number of optimally
+      placed services was confirmed. A sub-optimal solution was obtained
+      using a genetic algorithm. As a result, recommendations were proposed
+      to improve the transport connectivity between specific neighborhoods
+      for the calculated time interval, which will reduce needed amount of
+      additional facilities to fulfill the demand. The main contribution of this
+      paper is to apply connectivity optimization and optimal service location
+      algorithms together, resulting in a reduction in the number of services
+      required.
+
+      Keywords: Heuristic optimization, Location coverage problem, Spatial
+      inequality, Spatial analysis.
+
+
+1   Introduction
+
+In modern society, characterized by the rapid pace of urban development and
+the growth of industrial enterprises, the issue of improving the quality of life of
+industrial workers becomes more than relevant. Given the continuous variability
+of the city’s infrastructure, the constant need to provide city dwellers with basic
+services, as well as the desire to improve the overall level of well-being, the
+development of a method for optimal placement of urban services is of particular
+importance.
+    The concept of well-being is an important aspect of assessing the quality
+of life of an individual and society as a whole. It includes many factors that
+together determine the level of comfort and satisfaction with life [1]. The concept
+of well-being has been studying for decades, but there is still no consensus on
+its definition or how it should be measured [2]. Thus, the article [3] reveals
+the concept of well-being through a person’s social behavior, his interaction
+2       G. Kontsevik et al.
+
+with other people and his interpersonal relationships; article [4] refers to other
+main characteristics of well-being reflecting its understanding through spatial
+dimensions. Such components include:
+    1) all types of security (financial, physical, environmental and others);
+    2) participation and involvement in nearby social activities;
+    3) economic affordability of housing for all segments of the population with
+different income levels;
+    4) spatial accessibility to all services necessary for living;
+    5) a sense of identity with the human environment.
+    A high level of employee well-being is a key resource for increasing productivity
+and competitiveness of the country’s economy as a whole. In the context of
+the modern world, where technological progress and automation are of great
+importance, ensuring the most comfortable working conditions and improving
+the well-being of employees in industrial industries is a strategic step towards
+sustainable development and prosperity of the country.
+    Satisfied and motivated employees demonstrate higher quality of labor, which
+leads to increased quantitative performance of the entire enterprise. Such em-
+ployees may face special working conditions, safety requirements and specific
+professional skills. A distinctive feature of industrial workers is their close con-
+nection to production activities, which are often located outside the central city
+districts, where the density of urban services is higher than on the outskirts. This
+can create additional challenges for these employees as they have to commute to
+work from other neighborhoods. A solution to this problem may lie in providing
+better public transportation infrastructure or affordable housing near businesses.
+Therefore, the pursuit of employee well-being in enterprises requires a holistic
+approach that includes not only a comfortable working environment, but also
+accessibility to housing, transportation and a variety of services.
+    Spatial inequality manifests itself in the uneven distribution of resources
+and opportunities in different neighborhoods. For example, according to [5], the
+spatial mismatch between housing and work depends on the level of wages and
+prices for rent / purchase of housing. Thus, articles [6,7] shows that middle-class
+residents pays more than comfortable amount of money for rent half of the time.
+    According to [8] the factors influencing the use of urban services are proximity
+to residence, affordability and usability. In addressing spatial inequality, at least
+one of these aspects can be improved, which in turn will lead to an increase in
+overall well-being.
+    It can be seen that there are three main factors that affect spatial inequality:
+affordable housing, quality of transit options and connectivity to certain facilities.
+    The main contribution of this paper is to combine changes in both connectivity
+and additional services placement, since they used to be considered separately.
+    The following paper structures as follows: section 2 presents related work on
+optimal location coverage algorithms, section 3 presents the developed method in
+detail, section 4 presents the application of developed method on specific urban
+area.
+                                                    2. RELATED WORKS               3
+
+2    Related works
+
+The problem of optimal service placement usually lies in the notion of business
+and emergency facility locations. The problem is well studied and includes variety
+of algorithms for many specific tasks. However, in recent years it gained more
+attention since new technologies appeared in the field. The main trend in this
+sphere is to solve the problem of optimal service placement, including more
+scenarios, variables, agents and constraints.
+    In [9], the p-median problem is considered in detail, which is to choose the
+optimal location of facilities in the number of p units to serve the demand or
+cover the area with minimum cost. This problem is also considered in [10], which
+developed a location model for medical centers after analyzing their location,
+demand for medical services and road network in Jeddah city, Saudi Arabia.
+The study under review aims to optimize the network of medical services and
+provide location recommendations to maximize service coverage. The study [11]
+considers the p-median problem. However, in it, the object can serve any number
+of demand points, i.e., the problem is "uncapacitated P-Median".
+    The study [12] considers a problem, "the maximum coverage location problem"
+(MCLP), which is also one of the classical problems in resource allocation and
+facility location decision making. In contrast to the p-median problem, the MCLP
+considers a situation where a certain number of locations must be selected in
+order to maximize the total coverage of an area that is characterized by a set of
+customers or facilities. To solve that problem, a metaheuristic algorithm, AILS-
+PR, was proposed in [13]. Initially, there was an iterative local search (ILS). In
+ILS, the initial benchmark solution is iteratively refined by a local search followed
+by a perturbation phase. The perturbation phase aims to identify solutions that
+are "close" to the reference solution, but with a better local optimum within its
+neighborhood.
+    Optimal placement of various health care facilities is important for providing
+effective and timely medical care to the population. Therefore, it is their placement
+that is most often encountered in scientific articles. Thus, in [14] the above
+mentioned MCLP problem is considered to find the optimal placement of special
+health care facilities. For its solution, the proposed modified Particle Swarm
+Optimization (PSO) algorithm is used, which was compared with the results
+of the GAMS algorithm, where the former showed better results. PSO is a
+population-based stochastic optimization methodology (search algorithm). It
+simulates the social behavior of a flock of birds, where each particle represents a
+potential solution to the problem, i.e., a set of object locations.
+    However, not only the location of medical facilities is considered in scientific
+papers. For example, paper [15] presents a three-stage strategy to solve the cab
+stand location problem (TSLP). First, points with high cab demand are extracted
+from massive GPS cab data using a GIS platform, and the optimal area for cab
+parking locations is determined in the next steps. Then, the spatial interaction
+between cab demand and cab parking lots is investigated. Next, a cab stand
+location model (TSLM) is developed to minimize the total cost, which includes
+4       G. Kontsevik et al.
+
+passenger access cost and construction cost of cab stands. A program based on
+genetic algorithm is written to optimize the TSLM.
+    The application of the genetic algorithm for solving the MCLP problem is also
+discussed in the source [16]. However, in this paper, in addition to this algorithm,
+the implementation of a heuristic algorithm is presented, as well as a comparison
+of these methods with the software package "CPLEX". The proposed algorithms
+showed results both in terms of time and quality better than the considered
+solver. In turn, the heuristic method has superiority over the genetic method.
+    In [17], another problem is considered, namely the capacitated location-routing
+problem (CLRP), which is a combination of a facility location problem and a
+transportation routing problem. The problem consists of determining the location
+of warehouses, assigning each customer to one of the warehouses and determining
+the routes. The approach proposed by the authors consists of 3 phases. In the first
+phase, customers are clustered near warehouses based on distance and demand
+using the developed two-level CSOM teacherless learning method. In the second
+phase, the transportation routing problem for each cluster is solved by the Clarke
+and Wright algorithm. In the third phase, the routes are improved by exchanging
+clients between different routes using the "Or-Opt" method. The computational
+results show better performance of the proposed approach and demonstrate its
+effectiveness in solving large size problems.
+    Another example of a problem combining facility location and transportation
+assignment/routing issues is [18], which deals with an optimization approach
+in firefighting. They present a robust optimization problem formulation, the so-
+called Facility Location and Equipment Emplacement Technique with Expected
+Coverage (FLEET-EXC) model, which maximizes the demand with respect to
+vehicle utilization. The approach proposed by the authors iteratively improves
+the solution of the fire station location and transportation assignment problem.
+Testing was performed on a dataset provided by the national association of
+firefighters of Chile. The results show that the considered method gave a more
+accurate representation of the accident process than those commonly used in the
+literature.
+    The article [19] questions the concept of urban development where all necessary
+services for living are within walking distance. Such a development vector has an
+increased attention due to its advantages in health, economy and environmental
+sustainability. A mixed integer linear programming (MILP) model, a constraint
+programming (CP) model, and a greedy algorithm were used for optimization. The
+authors tested their solutions on data describing disadvantaged neighborhoods in
+the city of Toronto, Canada. As a result, MILP finds the best solutions in most
+scenarios, but scales poorly with network size. The greedy algorithm scales well
+and finds near-optimal solutions.
+    Despite the fact that there are many studies on the optimal location of
+facilities, the distance between the facilities that provide the service and those
+facilities that provide the demand for the service is considered to be constant.
+However, in the context of urban management, public transport routes and roads
+are changing due to urban development and transportation reforms.
+                                                              3. METHOD           5
+
+    The contribution of this paper is to apply heuristic optimization to improve
+the transport accessibility time between blocks to enhance the solution of the
+location coverage problem. The result of the algorithm is recommendations for
+improving the connectivity between specified neighborhoods. In this paper, this
+problem is an applied task and the selected blocks are those where workers could
+live in the potential location of a new enterprise.
+
+
+3     Method
+
+3.1   Hypothesis
+
+The following hypothesis was investigated in this paper: improving connectivity
+between neighborhoods by no more than 40% can reduce the minimum number
+of optimally placed new polyclinics.
+
+
+3.2   Location coverage problem setting
+
+In this paper, the quality of life of a person will be considered as an average
+assessment relative to the assessments of provision with various services and the
+assessment of spatial mismatch between housing and work. For experimental
+purposes, we will consider the service "Polyclinic", the location of which we will
+optimize. As it was shown in the part with the review of existing solutions, the
+MCLP algorithm provides solutions to maximize the demand coverage (provision
+of all people living in a given area). In this paper we will use an improved version
+of the MCLP algorithm - "CLSCP-SO" (Capacitated Location Set Covering
+Problem-System Optimal), which takes into account the demand and capacity of
+services. However, this algorithm works with the cost matrix as a constant. In this
+case, the cost matrix is the availability matrix between the selected neighborhoods,
+which will be optimized in this solution with respect to the number of located
+clinics.
+
+
+3.3   Genetic algorithm adoptation
+
+This paper considers changing the cost matrix values (availability time between
+selected blocks) in order to reduce the required number of services to cover the
+unsatisfied demand. As an example, the Polyclinic service was considered as one
+of the vital services directly affecting the quality of life of residents. There are
+accessibility standards for different services that provide basic services. In this
+case, for the polyclinic service this standard is 15 minutes. Consequently, if a
+service does not fall within the accessibility zone of a residential building, its
+residents are considered unserved.
+    In order to improve the provision of the necessary service to the residents,
+it is necessary to make it accessible: improve accessibility to existing services
+and or add new services. Since this paper considers accessibility to service by
+public transportation (which city managers can improve through reforms), it is
+6       G. Kontsevik et al.
+
+proposed to slightly improve transportation accessibility between the selected
+neighborhoods.
+
+    Since the norm for the selected Polyclinic service is 15 minutes and the
+selected limit for improving accessibility is up to 40 percent, it is necessary
+to consider those connections between neighborhoods that are greater than
+the established norm (>15 minutes), but with improved connectivity could fall
+within the specified norm. Thus, it is necessary to consider connections between
+neighborhoods whose value does not exceed more than 25 minutes. (25*0.6=15)
+
+    Sample of cost matrix:
+
+    Colored cells indicate considered values to be optimized.
+
+
+
+
+            block id 0        1   2    3    4    5     6    7    8    9
+                0      0.0 11.3 21.0 25.0 27.6 26.5 34.6 32.4 26.1 25.0
+                1     11.3 0.0 24.5 27.3 29.9 28.8 36.9 34.7 28.4 27.3
+                2     17.3 20.4 0.0 13.8 22.8 21.8 29.9 27.7 21.3 20.2
+                3     25.9 29.0 13.8 0.0 17.2 29.0 37.3 35.1 20.3 19.2
+                4     26.3 29.4 26.6 18.6 0.0 21.2 35.6 33.4 25.8 24.4
+
+
+
+
+    In this case, the genetic algorithm is its standard implementation. It works
+by simulating the process of natural selection to optimize solutions to complex
+problems [20]. At its core, a genetic algorithm starts with a set of potential
+solutions presented as an initial population. These solutions are then evaluated
+based on their fitness function, which determines how well they do the task.
+Through the process of selection, crossover and mutation, the algorithm iteratively
+develops the population, contributing to the reproduction of individuals with
+higher fitness [21]. For several generations, the population has been striving for
+optimal or almost optimal solutions, which makes genetic algorithms especially
+effective in solving optimization problems in various fields, including urban studies.
+Figure 1 shows the block diagram of the algorithm.
+                                                                3. METHOD        7
+
+
+
+
+                Fig. 1. The block diagram of the genetic algorithm
+
+
+
+
+   However, it is important to note how exactly the initial population and fitness
+function are specified.
+   Population initialization:
+    Matrices with modified considering values will be chosen as the initial popu-
+lation.
+
+
+
+                 Mi ∈ Rn×n     for i = 1, 2, . . . , population_size
+
+
+
+   Mi,ij = random_uniform(0.6, 1) × cost_matrixij , if (i, j) ∈ selected cells
+
+
+   Fitness function:
+    In this case, the result of the optimal service placement algorithm (number of
+services placed) will be used as a fitness function.
+
+
+
+                       F (M ) = count(clscpso.fac2cli[M ])
+
+
+    As a result, the algorithm selects the best solution that contains a minimum
+of new services to be placed.
+   The scheme representation of implemented genetic algorithm optimization is
+shown in Figure 2.
+8      G. Kontsevik et al.
+
+
+
+
+               Fig. 2. Scheme of Genetic Algorithm implementation
+
+
+
+
+4     Experiments
+
+
+4.1   Study area
+
+
+This paper considers the scenario of new industrial enterprise location in the
+city within the development of priority industrial sectors according to the socio-
+economic development strategy of the city. This paper considers the location
+of an industrial enterprise in the port-industrial district of St. Petersburg. The
+placed enterprise and selected city blocks are presented in Figure 3.
+
+
+
+
+                             Fig. 3. Selected territory
+
+
+
+
+   The neighborhoods to be considered were chosen as follows: according to
+the hypothesis of jobs-housing mismatch, a balance between employee salary,
+potential average rent, and distance from work is needed. The wages of potential
+employees were taken as the average for skilled industrial workers in the city.
+                                                        4. EXPERIMENTS             9
+
+4.2   Data
+
+
+
+
+All necessary data for services location, public transport networks, and residential
+building parameters (to calculate estimated population) were gathered from
+OpenStreetMap.
+
+
+
+
+4.3   Method implementation
+
+
+
+
+The current estimation of availability "at the considered moment of time" was
+made with the help of the BlocksNet library [22]. The intermodal graph for the
+selected territory is presented in Figure 4a. Estimation of availability of residents
+of the selected neighborhoods for the service "Polyclinic" is presented in Figure
+4b. Each service has its own standard of availability according to GOST (National
+Standard). For polyclinic the normative of accessibility is 15 minutes.
+    In this paper, all new polyclinics have a fixed (average) capacity of 400 people.
+It should be noted that a necessary but insufficient condition to consider a
+neighborhood as service-enabled is that it must fall within the service accessibility
+zone. The accessibility was calculated between neighborhoods on an intermodal
+graph built on OpenStreetMap public data.
+
+
+
+
+(a) Geolayer with intermodal graph of pub- (b) Covered and not covered blocks by the
+lic transport                              service
+
+                                 Fig. 4. Input data
+10      G. Kontsevik et al.
+
+
+
+
+(a) Fitness progression in genetic algorithm (b) Distribution of required accessibility
+                                             improvements (in minutes)
+
+                         Fig. 5. Results of genetic algorithm
+
+
+
+
+    Since the number of possible combinations in this case is large, a genetic
+algorithm was chosen as a tool to select a sub-optimal solution. The genetic
+algorithm receives a connectivity matrix as input and changes the values only in
+the specified cells (i.e., neighborhoods that do not fit the condition for optimization
+do not change the connectivity among themselves). As a result, the CLSCP-SO
+algorithm calculates the optimal number of new clinics needed to meet demand.
+The results of the algorithm are presented in Figure 5a and 5b.
+
+
+   Figure 5a shows that by optimizing the accessibility time between blocks,
+the required number of new services was reduced from 13 to 9. The results of
+the distribution of the delta of connectivity change between quarters are shown
+in Figure 5a. Figure 5b shows that the average time to improve transportation
+connectivity is 10 minutes
+
+
+    Figure 6 shows the blocks in which the service should be placed (the service
+is represented by a green marker), the blocks in which the service has already
+been previously (marked with red marker), and the uncovered blocks before
+optimization and placement of additional services (marked in red). Figure 7 shows
+reduce of travel time between blocks (lines, with gradient coloring depending on
+the required value of change).
+                                          4. EXPERIMENTS   11
+
+
+
+
+Fig. 6. The location of existing and additional services
+12      G. Kontsevik et al.
+
+
+
+
+Fig. 7. Distribution of change in transportation connectivity between neighborhoods in
+a given area
+
+
+
+    It can be noted that in some cases the new service is placed in neighborhoods
+where the service already exists. This indicates that there is a need to expand
+or optimize the existing service. It can also be observed that due to the nature
+of the routes and road network, in some cases. Only a slight improvement in
+connectivity between distant neighborhoods is needed (2 to 4 minutes) and
+conversely, between spatially close neighborhoods a reduction in accessibility
+time may be required (10 to 13 minutes).
+
+
+5    Conclusion
+Through the application of heuristic optimization, it was found that by improving
+transportation connectivity between blocks by applying optimal service placement
+algorithms, it is possible to reduce the required number of services. However, it
+should be noted that in order to fully solve the task, it is necessary to tackle
+the problem considering the entire city’s data. In this case, the loads on services,
+including new ones, will be redistributed between all the neighborhoods both in
+case of adding new services and in case of changing the connectivity only on a
+given territory and on the whole city area. The further work in this direction
+may include multi-criteria optimization of transportation and landuse types of
+urban blocks to consider changes in the scale of the whole city.
+                                                              5. CONCLUSION             13
+
+References
+
+ 1. Mouratidis, K.: Urban planning and quality of life: A review of pathways linking
+    the built environment to subjective well-being. Cities 115, 103229 (2021)
+ 2. Park, C.L., Kubzansky, L.D., Chafouleas, S.M., Davidson, R.J., Keltner, D., Parsa-
+    far, P., Conwell, Y., Martin, M.Y., Hanmer, J., Wang, K.H.: Emotional well-being:
+    What it is and why it matters. Affective Science 4(1), 10–20 (2023)
+ 3. Regan, A., Radoić, N., Lyubomirsky, S.: Experimental effects of social behav-
+    ior on well-being. Trends in Cognitive Sciences 26, 987–998 (2022), https://api.
+    semanticscholar.org/CorpusID:252188192
+ 4. Shekhar, H., Schmidt, A.J., Wehling, H.W.: Exploring wellbeing in human
+    settlements-a spatial planning perspective. Habitat International 87, 66–74 (2019)
+ 5. Blumenberg, E., Siddiq, F.: Commute distance and jobs-housing fit. Transportation
+    50(3), 869–891 (2023)
+ 6. Xiao, W., Wei, Y.D., Li, H.: Spatial inequality of job accessibility in shanghai: A
+    geographical skills mismatch perspective. Habitat international 115, 102401 (2021)
+ 7. Zhang, L., Zhang, X., Huang, H., Zhang, L., Li, H.: Spatial accessibility of multiple
+    facilities for affordable housing neighborhoods in harbin, china. Land 11(11), 1940
+    (2022)
+ 8. Tuhkanen, H., Cinderby, S., De Bruin, A., Wikman, A., Adelina, C., Archer, D.,
+    Muhoza, C.: Health and wellbeing in cities-cultural contributions from urban form
+    in the global south context. Wellbeing, Space and Society 3, 100071 (2022)
+ 9. Bernábe-Loranca, M., González-Velázquez, R., Granillo-Martinez, E., Romero-
+    Montoya, M., Barrera-Cámara, R.A.: P-median problem: A real case application.
+    In: Intelligent Systems Design and Applications: 19th International Conference on
+    Intelligent Systems Design and Applications (ISDA 2019) held December 3-5, 2019
+    19. pp. 182–192. Springer (2021)
+10. Murad, A., Faruque, F., Naji, A., Tiwari, A.: Using the location-allocation p-median
+    model for optimising locations for health care centres in the city of jeddah city,
+    saudi arabia. Geospatial health 16(2) (2021)
+11. Wang, C., Han, C., Guo, T., Ding, M.: Solving uncapacitated p-median problem with
+    reinforcement learning assisted by graph attention networks. Applied Intelligence
+    53(2), 2010–2025 (2023)
+12. Yu, M., Fu, Y., Liu, W.: An optimization method for equalizing the spatial ac-
+    cessibility of medical services in guangzhou. ISPRS International Journal of Geo-
+    Information 12(7) (2023), https://www.mdpi.com/2220-9964/12/7/292
+13. Máximo, V.R., Cordeau, J.F., Nascimento, M.C.: A hybrid adaptive iterated
+    local search heuristic for the maximal covering location problem. International
+    Transactions in Operational Research (2023)
+14. ElKady, S.K., Abdelsalam, H.M.: A modified particle swarm optimization algorithm
+    for solving capacitated maximal covering location problem in healthcare systems.
+    Applications of intelligent optimization in Biology and Medicine: current trends
+    and open problems pp. 117–133 (2016)
+15. Qu, Z., Wang, X., Song, X., Pan, Z., Li, H.: Location optimization for urban taxi
+    stands based on taxi gps trajectory big data. Ieee Access 7, 62273–62283 (2019)
+16. Gazani, M., Niaki, S.: The capacitated maximal covering location problem with
+    heterogeneous facilities and vehicles and different setup costs: An effective heuristic
+    approach. International Journal of Industrial Engineering Computations 12(1),
+    79–90 (2021)
+14      G. Kontsevik et al.
+
+17. Oudouar, F., Lazaar, M., El Miloud, Z.: A novel approach based on heuristics
+    and a neural network to solve a capacitated location routing problem. Simulation
+    Modelling Practice and Theory 100, 102064 (2020)
+18. Rodriguez, S.A., Rodrigo, A., Aguayo, M.M.: A simulation-optimization approach
+    for the facility location and vehicle assignment problem for firefighters using a
+    loosely coupled spatio-temporal arrival process. Computers & Industrial Engineering
+    157, 107242 (2021)
+19. Huang, W., Khalil, E.B.: Walkability optimization: formulations, algorithms, and
+    a case study of toronto. In: Proceedings of the AAAI Conference on Artificial
+    Intelligence. vol. 37, pp. 14249–14258 (2023)
+20. Lambora, A., Gupta, K., Chopra, K.: Genetic algorithm-a literature review. In:
+    2019 international conference on machine learning, big data, cloud and parallel
+    computing (COMITCon). pp. 380–384. IEEE (2019)
+21. Mirjalili, S., Mirjalili, S.: Genetic algorithm. Evolutionary algorithms and neural
+    networks: Theory and applications pp. 43–55 (2019)
+22. Blocksnet – open library with tools for generation the city model and optimal
+    requirements for future development with specified target parameters, https://
+    github.com/aimclub/blocksnet
+

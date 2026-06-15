@@ -1,0 +1,547 @@
+                                                                                                                     TYPE Original Research
+                                                                                                                     PUBLISHED 15 June 2023
+                                                                                                                     DOI 10.3389/fbuil.2023.1148708
+
+
+
+
+                                             Assessing the transport
+OPEN ACCESS                                  connectivity of urban territories,
+EDITED BY
+Firas Alrawi,
+University of Baghdad, Iraq
+                                             based on intermodal transport
+REVIEWED BY
+Sui Yu Yau,
+                                             accessibility
+Hong Kong Metropolitan University,
+China
+Seema Alfaris,
+                                             Aleksandr S. Morozov 1*, Georgii I. Kontsevik 1, Irina A. Shmeleva 1,
+Tishk International University (TIU), Iraq   Lasse Schneider 1, Nikita Zakharenko 2, Semen Budenny 2,3 and
+*CORRESPONDENCE                              Sergey A. Mityagin 1
+Aleksandr S. Morozov,
+  alexandermorozzov@gmail.com                1
+                                               Institute of Design and Urban Studies, ITMO University, Saint-Petersburg, Russia, 2Sber AI Lab, Moscow,
+                                             Russia, 3Artiﬁcial Intelligence Research Institute, Moscow, Russia
+RECEIVED 20 January 2023
+ACCEPTED 22 May 2023
+PUBLISHED 15 June 2023
+
+CITATION
+Morozov AS, Kontsevik GI, Shmeleva IA,       By 2050, around 70% of people will live in urban areas. According to the 11.2 target
+Schneider L, Zakharenko N, Budenny S
+                                             of UN SDG “Sustainable cities and communities” to provide access to safe,
+and Mityagin SA (2023), Assessing the
+transport connectivity of urban              affordable, accessible, and sustainable transport systems for all, the aim of the
+territories, based on intermodal             paper presented was to investigate accessibility and connectivity of urban
+transport accessibility.
+                                             territories by public transport systems. The main emphasis of the research was
+Front. Built Environ. 9:1148708.
+doi: 10.3389/fbuil.2023.1148708              directed at transport infrastructure, which can be seen as sustainable, including
+                                             public transport. The quality of life in a large city is determined by the ability to get
+COPYRIGHT
+© 2023 Morozov, Kontsevik, Shmeleva,         from one destination to another quickly and efﬁciently. To implement this task a
+Schneider, Zakharenko, Budenny and           methodology has been developed to assess the connectivity and accessibility of
+Mityagin. This is an open-access article
+                                             urban areas. The method, based on an intermodal transport graph, is presented as
+distributed under the terms of the
+Creative Commons Attribution License         an example of assessing accessibility and connectivity in different districts of Saint
+(CC BY). The use, distribution or            Petersburg (Russia), Helsinki (Finland), Stockholm (Sweden), and Amsterdam
+reproduction in other forums is
+                                             (Netherlands). The results are presented as graphs with clusters of city blocks
+permitted, provided the original author(s)
+and the copyright owner(s) are credited      presented as points. It is indicated that different areas of the city are connected
+and that the original publication in this    through time values differently. The method can be used to make urban planning
+journal is cited, in accordance with
+                                             decisions about the provision of urban infrastructure, allows for ongoing
+accepted academic practice. No use,
+distribution or reproduction is permitted    monitoring of the situation, and ﬁlling in the gaps.
+which does not comply with these terms.
+
+                                             KEYWORDS
+
+                                             environmental-friendly transportation, accessibility, connectivity, urban transport, policy
+                                             models of active transportation
+
+
+                                             1 Introduction
+                                                 Transport connectivity of urban areas is an interdisciplinary concept. In many cases, this
+                                             indicator is very important for assessing the quality of life in cities. Due to the growing
+                                             popularity of the concept of “connectivity” in transport, economic, and geographical
+                                             scientiﬁc works, there is an important question: “What is connected to what?” (ESCAP,
+                                             2019). The United Kingdom National Infrastructure Commission deﬁnes connectivity as
+                                             “the ease with which people can get around within (Intra-urban connectivity), and between
+                                             (Inter-urban connectivity) different places.” (NIC, 2021). However, depending on the
+                                             objectives of measuring connectivity, there are other deﬁnitions of connectivity.
+                                                 In the transportation literature, connectivity is viewed as a measure in which passenger
+                                             and freight ﬂows can reach other nodes from one node either directly or indirectly through
+                                             other nodes (Rodrigue, 2020). In the context of urban transport, the concept of connectivity
+
+
+
+Frontiers in Built Environment                                      01                                                                 frontiersin.org
+Morozov et al.                                                                                                              10.3389/fbuil.2023.1148708
+
+
+
+
+of the street and road network prevails, which is deﬁned as the               the center remains 30 min due to advances in technology and modes
+number of roads and tracks connecting one area to another (ESCAP,             of transportation (Marchetti, 1994). However, in today’s
+2019).                                                                        environment, some studies based on GPS data on the movements
+     There are many concepts and measures of connectivity, that are           of people (Rhee et al., 2011; Jia et al., 2012; Vazquez-Prokopec et al.,
+typically expressed in relation to the transport network topology.            2013; Jin et al., 2022), data from cellular operators (Kung et al., 2014)
+The main objective of any transportation network is to establish              show that in different cities of different sizes with a variety of street
+connectivity, which facilitates the linkage of places that individuals        and road structures, the travel time around the city varies a lot, and it
+intend to travel to and from. The study of transport connectivity is          becomes difﬁcult to determine the ideal “Marchetti’s constant”.
+directly related to the representation of transport networks in graph              In this paper, we consider transport connectivity as the mutual
+form (Rodrigue, 2020). There are measures that evaluate the                   transport accessibility of urban areas. Unlike other works, which
+connectivity of transport networks as dimensionless ratios: Alpha,            evaluate intra-city transport connectivity through topological
+Beta/Inter-connectivity index (Kansky, 1963; Ewing, 1996; Saikia              characteristics of the street and road network in graph form
+and Kar, 2023), Gamma, network diameter, and others (Kansky,                  (Galpern et al., 2018; Scoppa et al., 2019; Scoppa and Anabtawi,
+1963; Saikia and Kar, 2023). New metrics were added to these                  2021), we compare the values of travel time between all city blocks in a
+measures, taking into account the travel time (Lam and Schuler,               straight line (Euclidean distance) and by public transport. In contrast
+1981). Detour index shows the distance/time ratio by a straight line          to the Detour index (Guze, 2019) or PRD (Scoppa et al., 2019), we
+and by road network between two sections (Guze, 2019). Some                   consider the connectivity not of two sections of the street and road
+models combine indicators of demand for correspondence and                    network, but of all city blocks, which in this paper act as a spatial unit
+different types of transfers (Hadas and Ceder, 2010; Kurlov et al.,           of the city. This approach allows us to see which parts of the city are
+2022).                                                                        “cut off” from the rest through the public transportation network.
+     Furthermore, there is also a social component of connectivity.
+Transport networks along with connectivity play an important role
+in enabling the poor to access fundamental needs like employment,             2 Materials and methods
+education, and healthcare (Mattioli et al., 2017). By this transport
+networks can help to reduce poverty (Jiang et al., 2020). However,                In this work, transport connectivity of the city is assessed
+Hernandez and Dávila (2016) found that while connectivity can                 through travel times by Euclidean distances and public transport
+indeed be an important factor in overcoming poverty in physically             routes between blocks. The method is divided into three steps
+marginal areas these areas are often bypassed in the process of               (Figure 1).
+designing connectivity networks due to lack of power and inﬂuence
+of its inhabitants on political decisions.                                    1. Data preparation—preprocess the necessary data to get the
+     In transport studies, connectivity assessment methods combine               geometry of city blocks and the transport graph;
+not only the characteristics of the road network. Some models                 2. Calculating the shortest travel time between city blocks using
+combine indicators of demand for correspondence and different                    Euclidean distances and public transportation via intermodal
+types of transfers (Hadas and Ceder, 2010; Kurlov et al., 2022). Other           graph;
+models require more complex datasets such as demographics,                    3. Clustering based on the resulting time values to get groups of
+demand, transportation zones, centers of attractions, and more.                  blocks and compare them to administrative “belonging”.
+More comprehensive studies can be found in the ﬁeld of
+connectivity of the public transport network, where the social                    Time matrices are obtained between all the blocks. Reduce the
+needs of people, the difference in the accessibility of public                dimensionality of the obtained data using the algorithm t-SNE
+transport depending on the territory, can be taken into account               (t-Distributed Stochastic Neighbor Embedding) (Maaten and
+(Currie, 2010; Bolleter et al., 2021).                                        Hinton, 2008). To cluster the blocks we use the Gaussian
+     The road or public transit network can also form a barrier for           Mixture model (Reynolds et al., 2009). In this paper, the method
+connectivity. The road network obviously connects urban areas with            was applied to four cities: Saint Petersburg (Russia), Helsinki
+each other, but the complex structure of the city and the entire road         (Finland), Stockholm (Sweden), and Amsterdam (Netherlands).
+network leads to some areas may have poorer connections to
+surrounding land uses. Areas with many cul-de-sacs in the road
+network may be poorly connected to downtown or other outlying                 2.1 Pre-processing the necessary data
+parts of the city, as it will take longer to reach them than crow-ﬂy
+from block to block (Litman, 2009; Rodrigue, 2020). The number of                 The ﬁrst stage (Figure 2) is to upload data sets of city boundaries
+connections of the area to the entire street and road network also            and administrative districts, water bodies, street and road networks
+determines the time of travel or commuting (Levinson, 2012).                  to cut the city into blocks. It is necessary to cut the geometries of
+Commute time is the normal time spent by people traveling                     water bodies and roads from the geometry of the city in the
+from home to their work (Sridhar and Nayka, 2022). There is                   administrative boundaries and add the geometries of
+still no single uniﬁed standard for how much time a person on                 administrative districts. It is important to clarify that not all data
+average should spend moving around the city or going to work. This            was obtained from OSM (OSM, 2022) in the right quality, so some
+was ﬁrst mentioned by Marchetti, where he identiﬁed a constant of             data, for example, on water and/or on administrative areas of
+1 h to get from home to work and back (Marchetti, 1994). The city             Helsinki (2022), City of Amsterdam (2022) and Stockholm
+may grow and sprawl, but the travel time from the edge of the city to         (2021) were taken from national spatial data portals.
+
+
+
+Frontiers in Built Environment                                           02                                                              frontiersin.org
+Morozov et al.                                                                10.3389/fbuil.2023.1148708
+
+
+
+
+   FIGURE 1
+   The method for assessing the transport connectivity of urban areas.
+
+
+
+
+   FIGURE 2
+   Data prepossessing algorithm.
+
+
+
+
+   FIGURE 3
+   Travel time calculation algorithm.
+
+
+
+
+Frontiers in Built Environment                                           03               frontiersin.org
+Morozov et al.                                                                                                               10.3389/fbuil.2023.1148708
+
+
+
+
+   FIGURE 4
+   Clustering algorithm.
+
+
+
+
+    Public transport routes and stops were also obtained with                   2.3 Clustering
+OpenStreetMap (OSM, 2022) within the administrative
+boundaries of the city. The intermodal graph is obtained by                          To cluster blocks (Figure 4), it was necessary to reduce the
+combining the walk graph and the graph of public transport in                   dimensionality of the data and choose a clustering algorithm. To
+the vertices corresponding to stops (Mishina et al., 2022). The links           switch from matrix representation to two-dimensional representation,
+in the graph are the pedestrian sections and public transport routes.           the dimensionality reduction algorithm t-SNE (t-Distributed
+The routes of different types of public transport, as well as the               Stochastic Neighbor Embedding) (Maaten and Hinton, 2008) was
+pedestrian graph, were connected in a single network, where the                 used with the following parameters: n_components = 2, perplexity =
+nodes are the connection points of the pedestrian sections and                  100, n_iter = 1000, random state = 7575. The Gaussian Mixture Model
+public transport stops. Each link of the graph is associated with a             (GMM) (Reynolds et al., 2009) is a parametric probability density
+type of vehicle passing through the corresponding segment, and                  function represented as a weighted sum of Gaussian component
+each node is associated with a list of modes of transport stopping at           densities) with the following parameters: random_state = 7575,
+the corresponding point. The weight of the links is the time it takes           covariance_type = ‘diag’, init_params = ‘kmeans’ was chosen for
+to pass them.                                                                   clustering. The distribution of the data after dimensionality reduction,
+                                                                                as well as the necessity not to exclude any point (because each
+                                                                                characterizes a block), made it necessary to choose this method of
+2.2 Travel time calculation                                                     classiﬁcation. The number of clusters was selected using the Silhouette
+                                                                                Score (Rousseeuw, 1987), which provides the selection of the best
+    For each city block a centroid is constructed and the nearest               number of clusters relative to how well each object is clustered with a
+point of the graph is searched from it. In rare cases, the same node            different number of clusters. For each cluster, the median time was
+coincides for two blocks. Between each block (the nearest points of             calculated based on the blocks that fell into it. To compare the clusters
+the graph) we look for the shortest distance from one node to                   with each other, they were sorted by increasing median time, where
+another using Dijkstra’s algorithm (Kwan et al., 2003). We obtained             the ﬁrst cluster was assigned green (the best connectivity) and the last
+a similarity matrix of distances between all blocks. Knowing the                cluster was assigned red (the worst connectivity). Thus, the following
+distances between all blocks, we calculated the minimum time to                 values were obtained for the following cities: Saint Petersburg
+travel by public transportation (using the intermodal graph                     (Russia), Helsinki (Finland), Stockholm (Sweden), and Amsterdam
+(Mishina et al., 2022)). As a result, we obtained matrices with the             (Netherlands).
+shortest distances and times between all the blocks that can be
+mapped (Figure 3). To get the Euclidean distances between blocks,
+we look at the distance between all blocks in a straight line from              2.4 Experiment
+centroid to centroid.
+    The connection of the same blocks can be different, depending                   The intermodal graph used in this work, for calculating travel
+on the network on which it travels. The entire street and road                  times between blocks, is a ﬂexible and customizable tool for
+network may be used for vehicular travel, except pedestrian paths.              estimating the transportation situation. However, we can also use
+However, the urban structure and layout can be complex: for                     this tool to model potential changes in the public transportation
+example, different parts of the city may be separated by natural                network. For this purpose, we have added to the intermodal graph
+barriers (rivers, forest parks, ravines, and others.), which reduces the        4 subway stations of the Green line, which are still being designed
+possibility of creating an uninterrupted street and road network                (Figure 5). The coordinates of the stops were added manually during
+(Litman, 2009). One part of the city may be connected to another                the collection of the transport graph when combining the subway
+with only one bridge on the street and road network for movement                routes with the OSM into a single graph.
+by car, while by public transport they may be connected not only by                 Next, the calculations were repeated using the proposed method.
+road but also by railroad tracks or the subway network.                         A histogram of the distribution of block accessibility was plotted.
+
+
+
+Frontiers in Built Environment                                             04                                                              frontiersin.org
+Morozov et al.                                                                                                                       10.3389/fbuil.2023.1148708
+
+
+
+
+   FIGURE 5
+   Added subway stations.
+
+
+
+
+   FIGURE 6
+   Distribution of median travel time between blocks.
+
+
+
+
+The results show an improvement in the overall connectivity of                        obtained. The shapes of the clusters are determined by the geographical
+urban blocks (Figure 6).                                                              features of the city districts. Cluster 0 mainly includes such districts as
+                                                                                      Central, Admiralteisky, and part of Petrogradsky. Peripheral districts
+                                                                                      (part of Krasnoselsky, Moskovsky, Frunzensky, Vasileostrovsky) belong
+3 Results                                                                             to clusters 1–3. Clusters of distant from the center districts are scattered
+                                                                                      on the graph and elongated because of their geographical shape. The
+    Figures 7, 8 show the results of clustering St. Petersburg blocks by              Kurortny district is divided into 3 clusters (5, 8, 12). Cluster 12 includes
+travel time in a straight line between all blocks. A total of 13 clusters were        the most distant part of the Kurortny district from the city center.
+
+
+
+
+Frontiers in Built Environment                                                   05                                                                frontiersin.org
+Morozov et al.                                                                                                              10.3389/fbuil.2023.1148708
+
+
+
+
+   FIGURE 7
+   Belonging of clustered blocks to districts of Saint Petersburg (Euclidean distances).
+
+
+
+
+   FIGURE 8
+   Clustering of Saint Petersburg blocks by time by Euclidean distances.
+
+
+
+
+    Figures 9, 10 show the results of clustering St. Petersburg blocks            Clusters 0 and 1, unlike clustering by Euclidean distances, included
+by the value of travel time by public transport from all to all blocks. A         more central districts (Central, Admiralteisky, Petrogradsky,
+total of 13 clusters were obtained according to the given parameters.             Vasileostrovsky). With clustering, we consider the transport
+
+
+
+Frontiers in Built Environment                                               06                                                          frontiersin.org
+Morozov et al.                                                                                                                  10.3389/fbuil.2023.1148708
+
+
+
+
+   FIGURE 9
+   Belonging of clustered blocks to districts of Saint Petersburg (Public transport).
+
+
+
+
+   FIGURE 10
+   Clustering Saint Petersburg blocks by the time between all by public transport.
+
+
+
+
+connectivity of the city as a mutual transport accessibility of urban              possible to see how different blocks are connected to other blocks
+areas, as mentioned above in the Introduction section. Comparing                   through the distance in a straight line and through the routes of public
+with the results of the clustering of blocks by Euclidean distances, it is         transport. For example, blocks in the Pushkin district are better
+
+
+
+
+Frontiers in Built Environment                                                07                                                             frontiersin.org
+Morozov et al.                                                                                                            10.3389/fbuil.2023.1148708
+
+
+
+
+   FIGURE 11
+   Belonging of clustered blocks to districts of Helsinki (Euclidean distances).
+
+
+
+
+   FIGURE 12
+   Clustering of Helsinki blocks by time by Euclidean distances.
+
+
+
+
+connected by a straight line than by public transportation routes. This            longer form one enclave. Despite their geographical closeness,
+may be due to the fact that public transport infrastructure is                     through public transportation, they are less accessible in time
+underdeveloped in this area of the city.                                           relative to each other. Vyborgsky, part of Kalininsky, and
+    The results of the Euclidean distance clustering show that many                Krasnogvardeisky districts form an enclave. Central,
+areas in the center and on the periphery form an enclave of clusters               Admiralteysky districts are connected with Moskovsky and
+0–8 (Figures 7, 8). Such areas share many geographic boundaries                    Nevsky districts. The remote districts form several enclaves at
+and are close to each other. Figures 9, 10 show that these areas no                once: part of the Krasnoselsky and part of the Petrodvortsovy
+
+
+
+Frontiers in Built Environment                                                08                                                      frontiersin.org
+Morozov et al.                                                                                                                 10.3389/fbuil.2023.1148708
+
+
+
+
+   FIGURE 13
+   Belonging of clustered blocks to districts of Helsinki (Public transport).
+
+
+
+
+   FIGURE 14
+   Clustering Helsinki blocks by time between all by public transport.
+
+
+
+
+districts form cluster 9 (Figure 10), and their other parts already                     In terms of travel time by public transport, the blocks
+belong to clusters 8 and 16.                                                         form 6 clusters (Figures 13, 14). Cluster 5 includes
+    Figures 11–14 show the results of the connectivity assessment                    the districts most distant from the downtown of
+for the city of Helsinki (Finland). The result of clustering blocks by               Helsinki   (Östersundominsuurpiiri,        Itäinensuurpiiri   and
+travel time by Euclidean distances (Figures 11, 12) - 2 clusters.                    Pohjoinensuurpiiri).     The     districts      Etalainensuurpiiri,
+Cluster 0 combines 4 city districts such as Eteläinensuurpiiri,                      Lantinensuurpiiri, Keskinensuurpiiri and Pohjoinensuurpiiri are
+Läntinensuurpiiri, Keskinensuurpiiri and Pohjoinensuurpiiri.                         combined into 1 cluster enclave (0–3).
+
+
+
+Frontiers in Built Environment                                                  09                                                         frontiersin.org
+Morozov et al.                                                                                                              10.3389/fbuil.2023.1148708
+
+
+
+
+   FIGURE 15
+   Belonging of clustered blocks to districts of Stockholm (Euclidean distances).
+
+
+
+
+    The results of clustering the travel time values by Euclidean                the city by public transportation than by direct lines (Supplementary
+distances and by public transport between all the blocks show that               Figure S7).
+there are many natural barriers in Helsinki, which were mentioned
+in the Introduction section. The city is divided into 2 clusters by
+straight lines, as opposed to 6 by the public transportation network.            4 Discussion
+    Figures 15 and Supplementary Figure S1-S3 show the results of
+the connectivity assessment of urban blocks in Stockholm, Sweden.                    The paper presents a method for assessing the connectivity of
+Stockholm, like the cities for which the connectivity assessment was             urban areas on public transport. To model the connectivity of
+done above, has a number of natural barriers in the form of the                  urban areas we use open data, such as geometries of cities and
+Norrström and Söderström rivers. The connectivity of blocks by                   routes with public transport stops, from which the intermodal
+Euclidean distances and by public transport is very uneven. The                  graph is constructed. Transport connectivity in this paper is
+urban areas of Sodermalmas, Kungsholmens and Spanga-Tensta                       meant the mutual transport accessibility of urban areas. To
+form an enclave of 6 and 7 clusters (Supplementary Figure S3).                   assess the connectivity calculated median travel time from
+However, some parts of these areas belong to completely different                each quarter to all others in a straight line (Euclidean
+clusters. This may be due to the presence of many cul-de-sacs in the             distance) and the network of public transport. This approach
+street and road network on which public transport travels. A small               allows us to compare how urban areas can be connected to each
+number of the blocks in the Hässelby-Vällingby and Bromma                        other through travel time, in case they are physically close or
+neighborhoods belong to clusters 0 and 1 (Supplementary Figure                   distant. Applying the method to different cities revealed that, for
+S3). These districts have the ﬁnal subway line stations connected to             example, in cities where there are natural barriers in the form of
+the city center (clusters 0–2). Part of this subway line does not fall           rivers, canals, etc., accessibility by public transport differs
+within the administrative boundaries of the city, so the nearby                  signiﬁcantly from accessibility by a straight line, as seen in
+neighborhoods belong to other clusters (this paper considers                     Saint Petersburg or Stockholm. On the other side, the results
+connectivity only for blocks that fall within the city boundaries).              show that in such cities as Amsterdam and Helsinki, with a well-
+    Supplementary Figure S4-S7 show the results of the connectivity              developed transport system, natural barriers are not always an
+estimation for Amsterdam (Netherlands). By Euclidean distances,                  obstacle to good transport connectivity of urban areas. This
+the city districts are divided into 11 clusters (Supplementary Figure            method does not take into account the entire set of data on
+S5). Some districts away from the city center form enclaves of                   intra-city transport. A weakness of this approach for evaluating
+clusters, such as clusters 7 and 9. However, when evaluating                     connectivity through accessibility is the resource-intensive
+connectivity by public transportation, these districts score better.             conﬁguration of the intermodal graph. Since the graph is built
+The Oud-Oost neighborhood is better connected to all other parts of              for the whole city, it is necessary to take into account that the
+
+
+
+Frontiers in Built Environment                                              10                                                          frontiersin.org
+Morozov et al.                                                                                                                                                10.3389/fbuil.2023.1148708
+
+
+
+
+speeds of transport may vary in different sections due to the speed                                amsterdam.nl;           https://dataportalen.stockholm.se;                  https://www.
+regime. The presented method makes it possible to assess the                                       hsy.ﬁ.
+connectivity of urban areas through the public transport network.
+A spatial unevenness model can be constructed for speciﬁc areas.
+With the method, it is possible to single out the enclaves of                                      Author contributions
+territories, which possess greater connectivity due not only to the
+street and road network but also to the geography of the city                                         Literary review - AM, IS and LS. Method - GK and NZ.
+(elongated districts, many rivers and channels, river sides                                        Description of method - AM and GK. Approbation of method -
+connected with bridges, isolated islands and so on). The                                           GK. Results and discussion - AM. Supervision - SB and SM.
+method can be used to make urban planning decisions about                                          Conceptual idea - SM.
+the provision of urban infrastructure, allows for ongoing
+monitoring of the situation and ﬁlling in the gaps.
+                                                                                                   Funding
+5 Conclusion                                                                                           This research is ﬁnancially supported by the Russian Science
+                                                                                                   Foundation, Agreement 17-71-30029 (https://rscf.ru/en/project/17-
+     The article presents a method for assessing the urban environment                             71-30029/), with co-ﬁnancing of Bank Saint Petersburg.
+as the transport connectivity of territories. As a territorial unit of the
+urban environment, the city block was chosen, which most often acts
+as a unit of the spatial planning structure of the city. This allowed us to                        Conﬂict of interest
+give greater versatility to the method, which allows us to obtain
+comparable estimates for different cities of the world. The obtained                                   The authors declare that the research was conducted in the
+estimates were compared with the estimate of the remoteness of the                                 absence of any commercial or ﬁnancial relationships that could be
+blocks by Euclidean distance. Thus, the Euclidean distance acts as a                               construed as a potential conﬂict of interest.
+baseline estimate. The basic assumption of the method was that the
+city’s transport system should give a better estimate of the city’s
+transport connectivity than baseline.                                                              Publisher’s note
+     This assumption proved to be justiﬁed for cities where transport
+systems do not have natural barriers, for example, in the continental                                  All claims expressed in this article are solely those of the authors
+part of Helsinki. At the same time, if there are signiﬁcant obstacles in the                       and do not necessarily represent those of their afﬁliated
+city in the form of a network of canals and rivers, the assessment turns                           organizations, or those of the publisher, the editors and the
+out to be worse, as can be seen in Saint Petersburg or Amsterdam.                                  reviewers. Any product that may be evaluated in this article, or
+     Thus, the proposed method can serve as a convenient and simple                                claim that may be made by its manufacturer, is not guaranteed or
+assessment of the quality of the organization of the city’s transport                              endorsed by the publisher.
+system and serve as a tool for its improvement.
+
+                                                                                                   Supplementary material
+Data availability statement
+                                                                                                        The Supplementary Material for this article can be found online
+   Publicly available datasets were analyzed in this study. This data                              at: https://www.frontiersin.org/articles/10.3389/fbuil.2023.1148708/
+can be found here: https://www.openstreetmap.org; https://maps.                                    full#supplementary-material
+
+
+
+References
+  Bolleter, J., Vokes, R., Duckworth, A., Oliver, G., McBurney, T., and Hooper, P. (2021).           Helsinki (2022). Region Environmental Services HSY Helsinki metropolitan postal code
+Using suitability analysis, informed by Co-Design, to assess contextually appropriate urban        areas.
+growth models in Gulu, Uganda. uganda 27, 245–269. doi:10.1080/13574809.2021.1968295
+                                                                                                     Hernandez, D. O., and Dávila, J. D. (2016). Transport, urban development and the
+  City of Amsterdam (2022). Maps data.                                                             peripheral poor in Colombia—Placing splintering urbanism in the context of transport
+                                                                                                   networks. J. Transp. Geogr. 51, 180–192. doi:10.1016/j.jtrangeo.2016.01.003
+  Currie, G. (2010). Quantifying spatial gaps in public transport supply based on social
+needs. J. Transp. Geogr. 18, 31–41. doi:10.1016/j.jtrangeo.2008.12.002                               Jia, T., Jiang, B., Carling, K., Bolin, M., and Ban, Y. (2012). An empirical study on
+                                                                                                   human mobility and its agent-based modeling. J. Stat. Mech. Theory Exp. 2012, P11024.
+  Escap, U. (2019). Enhancing rural transport connectivity to regional and international
+                                                                                                   doi:10.1088/1742-5468/2012/11/P11024
+transport networks in asia and the paciﬁc.
+                                                                                                     Jiang, L., Wen, H., and Qi, W. (2020). Sizing up transport poverty alleviation: A structural
+  Ewing, R. H. (1996). Pedestrian-and transit-friendly design.
+                                                                                                   equation modeling empirical analysis. J. Adv. Transp. 2020, 1–13. doi:10.1155/2020/8835514
+ Galpern, P., Ladle, A., Uribe, F. A., Sandalack, B., and Doyle-Baker, P. (2018).
+                                                                                                     Jin, E., Kim, D., and Jin, J. (2022). Commuting time and perceived stress: Evidence
+Assessing urban connectivity using volunteered mobile phone gps locations. Appl.
+                                                                                                   from the intra- and inter-city commuting of young workers in Korea. J. Transp. Geogr.
+Geogr. 93, 37–46. doi:10.1016/J.APGEOG.2018.02.009
+                                                                                                   104, 103436. doi:10.1016/J.JTRANGEO.2022.103436
+ Guze, S. (2019). Graph Theory Approach to the Vulnerability of Transportation
+                                                                                                      Kansky, K. J. (1963). Structure of transportation networks: Relationships between
+Networks. Algorithms 12 (12), 270. doi:10.3390/a12120270
+                                                                                                   network geometry and regional characteristics: Kansky, K J: Free download, borrow, and
+  Hadas, Y., and Ceder, A. (2010). Public transit network connectivity: Spatial-based              streaming: Internet archive. Department of Geography, University of Chicago.
+performance indicators. Transp. Res. Rec. 2143, 1–8. doi:10.3141/2143-01
+
+
+
+
+Frontiers in Built Environment                                                                11                                                                               frontiersin.org
+Morozov et al.                                                                                                                                                   10.3389/fbuil.2023.1148708
+
+
+
+
+  Kung, K. S., Greco, K., Sobolevsky, S., and Ratti, C. (2014). Exploring universal                   OSM (2022). OpenStreetMap.
+patterns in human home-work commuting from mobile phone data. PLOS ONE 9,
+                                                                                                      Reynolds, D. A., et al. (2009). Gaussian mixture models. Encycl. biometrics 741,
+e96180. doi:10.1371/JOURNAL.PONE.0096180
+                                                                                                    659–663. doi:10.1007/978-0-387-73003-5_196
+  Kurlov, A. V., Materuhin, A. V., Dresvyanin, A. V., and Gvozdev, O. G. (2022).
+                                                                                                      Rhee, I., Shin, M., Hong, S., Lee, K., Kim, S. J., and Chong, S. (2011). On the levy-walk nature
+“Geoinformational approach to assessing the accessibility for urban areas,” in
+                                                                                                    of human mobility. IEEE/ACM Trans. Netw. 19, 630–643. doi:10.1109/TNET.2011.2120618
+2022 international siberian conference on control and communications, SIBCON
+2022 - proceedings. doi:10.1109/SIBCON56144.2022.10002884                                             Rodrigue, J.-P. (2020). The geography of transport systems, 480. doi:10.4324/
+                                                                                                    9780429346323
+  Kwan, M.-P., Murray, A. T., Kelly, M. E., and Tiefelsdorf, M. (2003). Recent advances
+in accessibility research: Representation, methodology and applications. J. Geogr. Syst. 5,           Rousseeuw, P. J. (1987). Silhouettes: A graphical aid to the interpretation and
+129–138. doi:10.1007/s101090300107                                                                  validation of cluster analysis. J. Comput. Appl. Math. 20, 53–65. doi:10.1016/0377-
+                                                                                                    0427(87)90125-7
+  Lam, T. N., and Schuler, H. J. (1981). Connectivity index for systemwide transit route
+and schedule performance. Transp. Res. Rec. 854.                                                      Saikia, A., and Kar, B. K. (2023). Impact of road connectivity on urbanisation: A case
+                                                                                                    study of central brahmaputra valley, Assam, India. GeoJournal, 1–12. doi:10.1007/
+  Levinson, D. (2012). Network structure and city size. PLoS ONE 7, e29721. doi:10.
+                                                                                                    s10708-023-10843-4
+1371/JOURNAL.PONE.0029721
+                                                                                                      Scoppa, M., and Anabtawi, R. (2021). Connectivity in superblock street networks:
+  Litman, T. (2009). Transportation cost and beneﬁt analysis. Vic. Transp. Policy Inst.
+                                                                                                    Measuring distance, directness, and the diversity of pedestrian paths. Sustainability 13,
+31, 1–19.
+                                                                                                    13862. doi:10.3390/su132413862
+  Maaten, L. V. D., and Hinton, G. (2008). Visualizing data using t-sne. J. Mach. Learn.
+                                                                                                       Scoppa, M., Bawazir, K., and Alawadi, K. (2019). Straddling boundaries in superblock
+Res. 9, 2579–2605.
+                                                                                                    cities. assessing local and global network connectivity using cases from abu dhabi, uae.
+  Marchetti, C. (1994). Anthropological invariants in travel behavior. Technol. Forecast.           Transp. Res. Part A Policy Pract. 130, 770–782. doi:10.1016/J.TRA.2019.09.063
+Soc. change 47, 75–88. doi:10.1016/0040-1625(94)90041-8
+                                                                                                     Sridhar, K. S., and Nayka, S. (2022). Determinants of commute time in an indian city.
+ Mattioli, G., Lucas, K., and Marsden, G. (2017). Transport poverty and fuel poverty in the         Margin-The J. Appl. Econ. Res. 16, 49–75. doi:10.1177/09749101211073375
+UK: From analogy to comparison. Transp. Policy 59, 93–105. doi:10.1016/j.tranpol.2017.07.007
+                                                                                                      Stockholm (2021). Öppna Data - dataportalen Stockholm open data portal.
+  Mishina, M., Khrulkov, A., Solovieva, V., Tupikina, L., and Mityagin, S. (2022).
+                                                                                                      Vazquez-Prokopec, G. M., Bisanzio, D., Stoddard, S. T., Paz-Soldan, V., Morrison, A.
+Method of intermodal accessibility graph construction. Procedia Comput. Sci. 212,
+                                                                                                    C., Elder, J. P., et al. (2013). Using gps technology to quantify human mobility, dynamic
+42–50. doi:10.1016/J.PROCS.2022.10.206
+                                                                                                    contacts and infectious disease dynamics in a resource-poor urban environment. PLoS
+  NIC (2021). Transport connectivity.                                                               ONE 8, e58802. doi:10.1371/JOURNAL.PONE.0058802
+
+
+
+
+Frontiers in Built Environment                                                                 12                                                                                  frontiersin.org
+

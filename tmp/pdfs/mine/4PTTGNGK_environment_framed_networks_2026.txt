@@ -1,0 +1,1271 @@
+Kontsevik et al. Applied Network Science  (2026) 11:35                                                                                 Applied Network Science
+https://doi.org/10.1007/s41109-026-00783-6
+
+
+
+
+ RESEARCH                                                                                                                                                     Open Access
+
+
+Environment-framed networks: seasonal
+reconfiguration of service accessibility in Arctic
+transport systems
+Georgii Kontsevik1*, Alina Gubina1, Valeria Tikhevich1 and Sergey Mityagin1
+
+*Correspondence:
+Georgii Kontsevik                        Abstract
+kontsevik@itmo.ru                        While transport accessibility is an integral part of quality of life, its value does not
+1
+ Institute of Design and Urban
+Studies, ITMO University, Birzhevaya     remain constant over time. In practice, access to services can be crucial, especially
+avenue 14,                               in the case of medical services and transport hubs. This is particularly evident in
+Saint Petersburg 199034, Russia          remote regions such as the Arctic, where settlements are highly interdependent.
+                                         In harsh climatic conditions, transport links become vulnerable to disruption, and
+                                         strong seasonal fluctuations significantly alter the structure of the network. On
+                                         the other hand, in the Arctic, unlike in more temperate climates, the changing
+                                         seasons also bring new opportunities, such as ice roads. Traditional frameworks of
+                                         service accessibility assessment, however, rarely take into account such climate-
+                                         induced network reconfiguration. To study this phenomenon in detail, we propose
+                                         an Environment-Framed Network (EFN) model for analyzing seasonal resilience of
+                                         service accessibility in Arctic settlement systems under climate-constrained transport
+                                         connectivity. EFN represents transport as a temperature-dependent backbone
+                                         and models network layers as service-specific population flows, enabling explicit
+                                         treatment of environment-driven link existence. Simulations across four Arctic regions
+                                         reveal threshold-driven seasonal reconfigurations: up to 40% of settlements switch
+                                         service providers, and 15–20% become temporarily isolated for up to 2–4 months
+                                         during seasonal transitions. Despite strong regional heterogeneity, these dynamics
+                                         are consistent and governed by the instability of seasonal transport modes. The
+                                         results show that resilience in climate-dependent regions is determined primarily by
+                                         the stability of service catchments, rather than by static network connectivity.
+                                         Keywords Complex networks, Urban agglomeration, Urban resilience, Arctic
+
+
+                                       Introduction
+                                       As one of the most sensitive regions to climate change, the Arctic is undergoing rapid
+                                       transformations that are having a profound impact on transportation systems. Rising
+                                       air temperatures, thawing permafrost, and shrinking ice cover create challenging condi-
+                                       tions for the operation of both land and sea routes Dong et al. (2025); Stephenson et al.
+                                       (2011). In recent years, researchers have noted a paradoxical dynamic: while shipping
+                                       in the Arctic is becoming more accessible due to the decreasing extent of sea ice, land
+
+
+                                       © The Author(s) 2026. Open Access This article is licensed under a Creative Commons Attribution 4.0 International License, which permits use,
+                                       sharing, adaptation, distribution and reproduction in any medium or format, as long as you give appropriate credit to the original author(s) and the
+                                       source, provide a link to the Creative Commons licence, and indicate if changes were made. The images or other third party material in this article
+                                       are included in the article’s Creative Commons licence, unless indicated otherwise in a credit line to the material. If material is not included in the
+                                       article’s Creative Commons licence and your intended use is not permitted by statutory regulation or exceeds the permitted use, you will need to
+                                       obtain permission directly from the copyright holder. To view a copy of this licence, visit http://creativecommons.org/licenses/by/4.0/.
+Kontsevik et al. Applied Network Science   (2026) 11:35                                                           Page 2 of 26
+
+
+
+
+                  transportation infrastructure, including winter roads and airports, faces increasing risks
+                  due to degradation of the permafrost and decreasing periods of sustained low tempera-
+                  tures (Stephenson et al. 2011; Waite et al. 2023).
+
+                  Settlement agglomerations/systems management challenges
+                  The accessibility of transportation in the Arctic is affected by a broad set of climatic
+                  parameters, among which the most significant are surface air temperature, permafrost
+                  condition, and ice cover dynamics (Dong et al. 2025; Waite et al. 2023; Wang et al. 2020).
+                  The increase in average annual temperatures leads to a reduction in the period during
+                  which the construction and operation of winter roads is possible. Studies show that this
+                  process is faster in North America than in Eurasia, where colder winters still allow ice
+                  crossings to remain longer (Dong et al. 2025; Povoroznyuk et al. 2022). However, even in
+                  the Eurasian part of the Arctic, there is a steady trend towards a decrease in the number
+                  of days suitable for the use of such roads (Dong et al. 2025; Waite et al. 2023; Povoro-
+                  znyuk et al. 2022). The transportation network plays a key role in ensuring that peo-
+                  ple have access to essential services. However, the road network often provides uneven
+                  levels of accessibility for different communities. In addition, the accessibility of critical
+                  facilities is constantly interrupted by emergencies (Gangwal et al. 2023).
+                    A particular threat is the degradation of permafrost, which serves as a natural base
+                  for many infrastructure facilities. Warming leads to an increase in the depth of seasonal
+                  thawing, which involves ground subsidence, road bed failure, and runway deformation
+                  (Waite et al. 2023; Wang et al. 2020; Mahmoud et al. 2024). These processes require sig-
+                  nificant repair and modernization costs, which is especially problematic in remote and
+                  sparsely populated regions with limited financial resources (Stephenson et al. 2011;
+                  Waite et al. 2023; Coates and Broderstad 2019).
+                    One of the key conclusions of the reviewed studies is the dual impact of climate change
+                  on the Arctic transportation system. On the one hand, the reduction of sea ice opens
+                  up new opportunities for shipping (Stephenson et al. 2011; Mahmoud et al. 2024). On
+                  the other hand, land-based transportation infrastructure is facing increasing challenges.
+                  Winter roads, which traditionally served as the main means of communication between
+                  remote settlements during the cold season, are becoming less reliable due to the shorter
+                  period of sustained frost (Dong et al. 2025; Stephenson et al. 2011; Coates and Broder-
+                  stad 2019). As a result, many regions may face increased transport isolation, especially in
+                  the spring and fall periods, when the use of both conventional and winter roads becomes
+                  impossible (Dong et al. 2025; Waite et al. 2023).
+
+                  Settlement systems management technologies
+                  In general, modern research in the field of urban sustainability shows significant prog-
+                  ress in the development of methodological approaches and indicator systems to assess
+                  the sustainability of the transportation system. The reviewed studies have evolved from
+                  basic statistical methods to advanced hybrid algorithms. In addition to considering the
+                  effect of temperature, some studies consider temporal changes. The study (Huang et al.
+                  2022) examines spatial and temporal changes in the sustainability of ecological networks
+                  (EN), focusing on the landscape and the dynamics of the ecosystem in the evaluations.
+                  It uses chain theory to map the migration paths of organisms and identify barriers to the
+                  corridor, as in the study (Wang et al. 2023). In (Lu et al. 2022), genetic algorithms are
+Kontsevik et al. Applied Network Science   (2026) 11:35                                                          Page 3 of 26
+
+
+
+
+                  combined with neural networks, enabling optimal solutions under high uncertainty typi-
+                  cal of urban systems. Paper (Sun et al. 2024) introduces the CRITIC entropy method,
+                  which balances indicator significance by contrast and information richness, reducing
+                  subjective bias in weight determination. The network method is one of the most appro-
+                  priate and frequently used approaches for systematically assessing the availability of
+                  critical facilities (Gangwal et al. 2023). By looking at a set of social indicators, such as
+                  membership of different communities or household composition, the authors exam-
+                  ine the effects of flooding. They used a 100-year flood map to determine which roads
+                  would be flooded. This approach is also relevant to the Arctic, where predicting long-
+                  term changes is critical to the operation and planning of transportation infrastructure.
+                  However, digitalization and environmental analytics remain missing (Huang et al. 2022;
+                  Wang et al. 2023; Lu et al. 2022; Ji et al. 2024).
+
+                  Problem statement
+                  The most significant gap in the analyzed works is the insufficient consideration of cli-
+                  matic features and their impact on urban systems in the long term. For example, the
+                  indicators of transport accessibility, discussed in detail in (Yin et al. 2023), do not take
+                  into account that in winter many roads in northern regions become difficult to pass or
+                  are closed altogether. Similarly, the environmental indicators from (Wang et al. 2023) are
+                  not adapted to assess the impacts of extreme weather events, which are becoming more
+                  frequent due to climate change. In addition, because of significant climate change, the
+                  Arctic requires consideration of impacts in a few decades, as design solutions for north-
+                  ern roads should be based on projections of changes in permafrost conditions for at least
+                  50 years after construction (Povoroznyuk et al. 2022).
+                    Current urban resilience research provides powerful analytical tools but needs signifi-
+                  cant refinement to account for temporal and climatic factors. Special attention should
+                  be paid to Arctic territories, where traditional resilience assessment methods are often
+                  inadequate due to extreme climatic conditions (Coates and Broderstad 2019). Special-
+                  ized approaches are required here, taking into account such factors as permafrost, polar
+                  nights and extremely low temperatures (Lowe and Sharp 2021).
+
+                  Hypotheses
+                  This study develops an Environment-Framed Network (EFN) model to test the following
+                  hypotheses:
+
+                    • 	 H1: Remote urban agglomerations exposed to climatic forcing exhibit similar
+                        changes in seasonal accessibility patterns.
+                    • 	 H2: Seasonal climatic transitions induce systematic service-provider switching and
+                        temporary service unavailability.
+
+                  Unlike classical multilayer transport networks, EFN treats transport modes as a shared,
+                  environment-constrained backbone and defines layers as service-specific flows over that
+                  backbone.
+Kontsevik et al. Applied Network Science   (2026) 11:35                                                           Page 4 of 26
+
+
+
+
+                  Related works
+                  In this study, the terms urban agglomerations, settlement systems, and networks of set-
+                  tlements are used interchangeably to denote a functionally connected set of cities and
+                  rural settlements linked by shared transport infrastructure and service accessibility
+                  relations.
+
+                  Network resilience
+                  Overall, network resilience theory provides a unified perspective for complex systems in
+                  biology, infrastructure, and socioecology. Its core ideas—phase transitions in intercon-
+                  nected systems, recovery based on centrality, and multilevel vulnerabilities—offer prac-
+                  tical principles for improving resilience.
+                    Network resilience has been studied in various fields and research areas, from climate
+                  to transportation. Examples of some of these studies include climate networks (e.g.,
+                  moisture recycling in the Amazon), which demonstrate feedforward loops that accel-
+                  erate cascading transitions. Several models have been proposed for analyzing network
+                  resilience. Regional resilience networks, such as China’s economic zones, use modified
+                  gravity models to quantify resource flows. Cities with high interconnectedness recover
+                  faster but face higher risks of cascading effects during financial crises (Wang et al. 2023).
+
+                  Urban and agglomeration structural stability
+                  In recent years, the resilience of urban and agglomeration (or regional) networks has
+                  been widely studied (Jie et al. 2024). Research shows that both individual settlements
+                  and the entire network of cities suffer simultaneously, experiencing cascading failures
+                  as a result of disruptions. The losses incurred can be viewed from an economic, func-
+                  tional, or topological perspective (Yin et al. 2023). The phenomenon of urban resilience
+                  is examined through specific areas, such as economic or infrastructural urban resilience
+                  (which, in addition to other parameters such as road density, includes key urban services
+                  such as hospitals) (Guo et al. 2024); and also link it to areas of organizational sustain-
+                  ability (market, society) and urban network sustainability (population network, inno-
+                  vation network, ecological network) (Mu et al. 2022; Huang et al. 2022), which can be
+                  analyzed separately or averaged as a combined measure of urban sustainability (Ji et al.
+                  2024). They also highlight the limitations of agglomeration-level research in terms of
+                  urban network sustainability, which is important given the interdependence of nodes in
+                  the city network.
+
+                  Urban resilience measures
+                  (Jie et al. 2024) lists a set of parameters used in research, mainly to assess the resilience
+                  and reliability of the urban environment. Other works also include indicators of vul-
+                  nerability and anti-fragility (Kiparisov and Lagutov 2024). To assess the resilience of a
+                  system, the authors mention the level of hierarchy and assortativity coefficient, degree
+                  distribution, and degree correlation. Reliability is explained by the level of structural
+                  redundancy (density, average number of independent paths, network structure entropy),
+                  modularity, hierarchy, and transmission indicators. In another line of research, the resil-
+                  ience of cities (in the context of disruptive events such as natural disasters) is viewed
+                  as the resilience of communities to the nonlinearity of complex urban dynamics, with
+                  resourcefulness added as an element of resilience. The study of urban subsystems adds a
+Kontsevik et al. Applied Network Science   (2026) 11:35                                                            Page 5 of 26
+
+
+
+
+                  quantitative assessment of resourcefulness to weigh the aforementioned characteristics
+                  against other indicators (e.g., considering not only the number of base stations but also
+                  internet speed) (Yin and Mostafavi 2023).
+
+                  Temporal connectivity resilience of network of cities
+                  Cities are connected by transport networks not only by roads, but also by air and water
+                  transport. As shown earlier, connectivity, as reflected by various network attributes, is
+                  crucial for the stability of network functioning. Although changes in urban networks are
+                  often viewed as rapid changes in their properties as a result of specific events, such as
+                  natural disasters, traffic accidents, etc. (Yin et al. 2023). Another example of long-term
+                  changes is the spatiotemporal evolution of the network and its resilience properties, as
+                  assessed for an ecological network (EN) in (Huang et al. 2022). Changes in EN param-
+                  eters, including source and corridor (edge) quality, were studied at 8-10 year intervals
+                  from 2000 to 2018, revealing significant changes in the variables under study.
+
+                  Distinction of the proposed model (EFN)
+                  The layers are service flows rather than transport subnetworks. Unlike most works on
+                  multilayer transport networks, where the layers are different transport subsystems (avia-
+                  tion, rail, road, water transport, and their connectivity and sustainability; see, e.g. (Li
+                  et al. 2025; Mei et al. 2025; Ye et al. 2025)), in EFN, layers are defined by flows of move-
+                  ment between cities in terms of a specific service. Settlements have different sets of
+                  services and attract populations from settlements that do not have these services in dif-
+                  ferent ways. Thus, the set of network layers is formed precisely as a set of flows to differ-
+                  ent types of services, rather than as a set of infrastructure subsystems. This brings EFN
+                  closer to the literature on trip distribution and the assessment of social facility provision
+                  (Mishina et al. 2024), but shifts the focus to a seasonally changing, climate-constrained
+                  network of connections.
+                    In EFN, transport links are not layers of the model; they are represented as edges of a
+                  single backbone network that can belong to different modalities (land, water, air) and be
+                  subject to different constraints. Traditional network resilience studies often analyze the
+                  importance of nodes (hubs) and the multi-layer effects of their damage (Mei et al. 2025;
+                  Ye et al. 2025), but in EFN, the nodes are real settlements, for which short-term “destruc-
+                  tion” as a reaction to external disturbances is uncharacteristic and can only be consid-
+                  ered in the long term (population outflow, closure of production facilities).
+                    At the same time, flows pass along edges — transport links of different modalities,
+                  which are affected by weather and climate factors. Changes in temperature and weather
+                  conditions can simultaneously affect several modes of transport, as discussed in detail in
+                  systematic reviews on weather disruptions in transport and logistics (Touloumidis et al.
+                  2025), on the resilience of bus networks in cold regions (Gu et al. 2025), the adaptation
+                  of the aviation sector to climate change (Burbidge et al. 2024), and summaries of climate
+                  risks and their consideration in infrastructure planning (Rahman et al. 2025; Food 2010).
+                  In EFN, it is precisely these climate-dependent changes in the state of the edges that
+                  lead to a redistribution of flows and, ultimately, to changes in the level of accessibility of
+                  social infrastructure in large cities in the agglomeration.
+                    EFN dynamics manifest themselves in seasonal changes in transport connections
+                  depending on limiting factors (temperature, weather conditions). The evolution of the
+Kontsevik et al. Applied Network Science   (2026) 11:35                                                           Page 6 of 26
+
+
+
+
+                  network occurs due to (i) changes in the set of edges (their existence/non-existence) and
+                  (ii) the redistribution of demand between nodes. Layers, interpreted as population flows
+                  to specific services, are independent in the current setting and do not generate cross-
+                  level cascading effects. This distinguishes EFN from works that explicitly model cascad-
+                  ing failures in multilayer transport networks (e.g., in metro-bus dual networks under the
+                  influence of temporarily changing passenger flows (Guo et al. 2025; Rouhana and Jawad
+                  2025), or in inter-level road networks with cross-layer route selection (Ye et al. 2025).
+                     The authors agree that differentiating the consequences of failure of nodes with dif-
+                  ferent structural significance (for example, a regional center versus a peripheral village)
+                  is an extremely important aspect of network stability analysis. In this paper, we focus
+                  on another systemic effect — the dynamics of the redistribution of availability flows
+                  between multiple nodes in conditions of seasonal disturbances, where the “disappear-
+                  ance” of any settlement simulates the loss of a local service delivery center. The col-
+                  lapse of a large transport and logistics hub would have catastrophic consequences that
+                  go beyond the seasonal dynamics under consideration and lead, among other things, to
+                  long-term migrations and the desolation of dependent territories. Such node-based dis-
+                  ruptions are not the focus of this work.
+                     The study of the resilience of precisely such supporting, highly centralized nodes to
+                  extreme climatic or infrastructural disruptions requires separate, more detailed model-
+                  ing with different initial assumptions and is the subject of our further research program.
+                     However, as the results show, when considering the dynamics of flow distribution in
+                  EFN in a comprehensive manner, the areas of interaction between cities change: areas
+                  of attraction to different centers are reformatted, which allows analyzing the seasonal
+                  evolution of “service areas” depending on the state of the environment and the network.
+                     EFN emphasizes the importance of meeting demand for services, as access to them
+                  directly affects quality of life, especially in remote settlements where the consequences
+                  of insufficient accessibility are most critical. Here, EFN develops a line of work on assess-
+                  ing the provision and accessibility of social infrastructure (Mishina et al. 2024), but con-
+                  siders it in the context of explicitly modeled external constraints (climate, seasonality),
+                  embedding it in the broader context of climate-oriented solutions for infrastructure and
+                  supply chains (Rahman et al. 2025).
+
+                  Transport modes and environmental constraints in the Arctic
+                  The transport infrastructure in Arctic regions around the world is characterized by a
+                  linear nodal structure with a low network density (Dankin et al. 2022). This is due to
+                  extreme climatic conditions, low population density and the complexity of construction
+                  in permafrost conditions. Most territories do not have year-round transport links, and
+                  the available modes of transport (mainly aviation and water) are characterized by high
+                  operating costs. At the same time, there are significant differences in transport accessi-
+                  bility between more developed coastal areas and remote inland territories.
+                     Table 1 summarizes the main modes of Arctic transport, their operating temperature
+                  ranges, and environmental thresholds. In this paper we mainly focus on operating tem-
+                  perature range as a key constraint.
+                     For agglomerations, as for cities, time-to-service duration constraints were also
+                  applied, which differs between regions. Thus, even if a route exists, it should pass acces-
+                  sibility constraints to be further considered as an active edge in the network.
+Kontsevik et al. Applied Network Science         (2026) 11:35                                                                   Page 7 of 26
+
+
+
+
+                  Table 1 Operational constraints for Arctic transport modes
+                  Mode                               Operating tem- Constraints
+                                                     perature (°C)
+                  Automobile                         [−60; +40]     Snow drifts >50 cm, visibility <50 m (blizzard) (Ministry
+                                                                    2020; Nordic 2020; Finnish 2019)
+                  Small aircraft (AN-2, MI-8)        [−50; +45]     Wind >15 m/s, runway icing, visibility <1000 m (Various
+                                                                    2009; Ministry 2009; Kong and Doré 2024; Transport 2024)
+                  Water transport (boats, ferries)   [−2; +45]      Waves >4 pts, ice thickness >15 cm, storms (Government
+                                                                    2020; International 2014; International 2017)
+                  Snow vehicles (e.g.,               [−50; +10]     Loose snow >1 m (Federal 2017; Povoroznyuk et al. 2023;
+                  snowmobiles)                                      Barrette et al. 2022)
+
+                  Arctic unique challenges
+                  The Arctic regions are a unique and extremely complex object for network analysis due
+                  to the combination of extreme natural, infrastructural, and socio-economic factors that
+                  form a fundamentally different logic of transport links compared to temperate latitudes.
+                    Firstly, classical static networks (highways, railways) are fragmented or absent here,
+                  giving way to dynamic, seasonal and informal communication routes: winter roads that
+                  exist only a few months a year; temporary ice crossings; snowmobile trails, the routes
+                  of which vary depending on weather conditions. Secondly, multimodality acquires not
+                  an additional, but a mandatory and life-supporting character, where the same route
+                  between two points can sequentially include moving by car through a winter road,
+                  reloading onto a boat to overcome a water barrier and ending with a helicopter section.
+                  Thirdly, data on such links are often unsystematic, local in nature, or exist only in the
+                  form of oral practice, which makes traditional sources (such as OpenStreetMap (Haklay
+                  and Weber 2008)) incomplete and requiring complex verification.
+                    Finally, the spatial organization of Arctic communities often follows the logic of access
+                  to resources (deer pastures, fishing grounds, oil and gas fields) rather than the princi-
+                  ples of economic optimization, creating network structures poorly described by models
+                  developed for urbanized territories. Thus, the network model for the Arctic is not a fixed
+                  infrastructure, but a dynamic, multimodal and contextually dependent system, the anal-
+                  ysis of which requires special methodological adaptations to account for its fundamental
+                  instability and weak formalization.
+
+                  Modes and seasonal feasibility
+
+                    • 	 Road transport is key in winter when rivers freeze into seasonal ice roads. However,
+                        it fails in deep frost (below −50◦ C) and spring thaw.
+                    • 	 Small aircraft ensure year-round access in isolated areas but are vulnerable to icing,
+                        storms, and low visibility.
+                    • 	 Water transport dominates in summer, but is limited by the short navigation season
+                        (2–4 months), ice coverage, and storm threats.
+                    • 	 Specialized vehicles (snowmobiles, all-terrain) are widely used by indigenous
+                        groups and industry. However, permafrost melting affects terrain passability.
+                    • 	 Railways are almost absent due to extreme construction and maintenance costs.
+Kontsevik et al. Applied Network Science   (2026) 11:35                                                         Page 8 of 26
+
+
+
+
+                  Common Arctic transport challenges
+                  The transport systems of all Arctic regions of the world face a common set of challenges
+                  caused by extreme natural conditions (Dankin et al. 2022; Serova and Serova 2019). All
+                  the northern territories are characterized by:
+
+                    • 	 Seasonality — many links are only viable for part of the year (e.g., winter roads,
+                        water routes).
+                    • 	 High weather dependence — strongly affecting reliability and planning.
+                    • 	 Linear, disconnected networks — settlements link to regional hubs, but not to each
+                        other.
+                    • 	 Multimodality — transport switching between seasons is mandatory.
+                    • 	 Extremely high costs — infrastructure and operation often exceed 5–10 times
+                        temperate costs.
+
+                  These conditions are found across the Arctic. For example:
+
+                    • 	 Scandinavia has the most robust road network, enhanced by ferry links.
+                    • 	 Canada, Russia, USA depend on aircraft and seasonal roads.
+                    • 	 Greenland lacks road network, fully dependent on sea and air.
+
+                  Data
+                  Data sources
+                  For this study, we mainly used OpenStreetMap (Haklay and Weber 2008) as a data
+                  source for road and water infrastructure, cities and regions borders. To obtain exist-
+                  ing transport connections among remote settlements we searched local websites, social
+                  media groups and interviewed local residents where it was possible. Transport times
+                  were collected from local transit websites and regional transport agencies. The actual list
+                  of data sources is provided in A. The temperature is obtained using NASA POWER API
+                  (Nasa Power Project 2024) with a spatial resolution of temperature at 2 m of 0.5 x 0.625
+                  Degrees, providing temperature data since 1982.
+
+                  Data limitations
+                  The key data limitation of this study, which also touches the topic of reuse of the pro-
+                  posed method is a scarcity of input data. Being well established in large cities, open
+                  transport data is very limited in remote regions, especially for small remote settlements.
+                  Another important topic which needs to be covered is a network parameters. Usually in
+                  network science the network disruption is considered as a situation when the network
+                  disassembles to the extent then one or more nodes stop being connected with the rest of
+                  the network. However, based on conducted experiments, for the network of Arctic cities
+                  in some areas this is a common situation. Thus in such cases we consider the change in
+                  number of months while certain city dose not have an access (in a specified time con-
+                  straint) to the desired service.
+Kontsevik et al. Applied Network Science   (2026) 11:35                                                          Page 9 of 26
+
+
+
+
+                  Data schema: graph
+
+
+                  Network
+                  Networks themselves are represented as groups of connected cities in an Arctic region,
+                  connected by different kinds of transport modes. Initial state of the network is a cold
+                  period (which is most probable period for the Arctic region), dated back to the early
+                  1980-s, the beginning of measured temperature time period. The states of the network
+                  evolves monthly until 2025th. Thus, each year the Network is represented by 4 seasons
+                  of different durations. However the Network states are considered not by seasons but
+                  through the limit temperatures, which exceed the threshold of the existence of certain
+                  transport mode. Initially every network doesn’t have islands, has a few clear hubs and in
+                  most cases is represented as a MultiGraph data class.
+
+                  Edges
+                  In this model links are simple connections among cities, representing time (or distance)
+                  among two geographical points. Graph of urban agglomeration might have several edges
+                  among the same nodes since there are more that one transport option to reach one city
+                  from another (such as private car, boat, plane). Each link has transport mode and time
+                  as a weight of the edge. However it is important to note that in such remote area as an
+                  Arctic region, there is a seasonal specific regarding routes for warm, cold and middle
+                  seasons. Thus, there are a few additional types of transport modes, representing the exis-
+                  tence of the link. Basically, the private car mode splits into two specific periods (warm
+                  and cold), apart from the ones existing through all the seasons. In the midseason it is
+                  considered that non of the latter exist. Warm period roads represent less popular routes
+                  that exist only in good environmental condition due to the difficulty maintaining them
+                  through the year. The roads of the cold period exist in specific cold temperatures. When
+                  there is enough snow, it is compressed via specific machines to create road-like surface
+                  out of the snow. Such routes are unique and might not repeat the existing warm period
+                  routes, but create new edges, connecting cities only in this time of the year.
+
+                  Nodes
+                  In this work, nodes represent towns and villages. Each settlement has a set of following
+                  parameters: population, number of services of selected types, list of transport facilities
+                  such as marinas or airports.
+
+                  Study area
+                  Due to data availability in this research, we consider urban agglomerations in Eurasian
+                  Arctic. Some of the specific routes were obtained from local websites and other very
+                  area-specific web resources, local communities, and news feeds. Although the method
+                  itself remains to be scalable due to general requirements for the input data (Fig. 1).
+                     It is clear that the spatial distribution of nodes of the same color is wide. Such remote
+                  nodes, such those in the orange group, represent large cities, which play an important
+                  role for the main group of nodes, being important logistics hubs due to strong aviation
+                  connectivity.
+Kontsevik et al. Applied Network Science       (2026) 11:35                                                                          Page 10 of 26
+
+
+
+
+                  Fig. 1 Study area map. Settlements in agglomerations are differentiated by colors: red – Mezen, green – Northern
+                  Administrative District, yellow – Yamalo-Nenets Autonomous District, orange – Yakutia/Chukotka
+
+
+
+
+                  Fig. 2 Network scheme
+
+                  Modeling
+                  Model proposed in the article
+                  In this article we study the network of cities in areas, where the seasonal influence of
+                  climatic changes is strong and affects the connectivity between cities. To model and
+                  predict evolving seasonal patterns, we present the environment-framed network model
+                  (EFN). EFN model has two parameters: the global external parameter of the environ-
+                  ment temperature T, the internal set of parameters of the model such as the graph con-
+                  nectivity parameter for a graph G(t), which spans the nodes (cities). The model allows to
+                  describe how the connectivity of G(t) depends on the environmental parameters, such as
+                  temperature.
+                    We test the EFN model on the resilience properties looking at: deletion of OD pairs
+                  based on the connection probability threshold (Berthelot et al. 2020); stability of the
+                  network based on the fulfilled demand for selected services (e.g. clinic in desired time
+                  accessibility).
+
+                  Environment-framed (temporal) network model
+                  In the EFN framework, the transport network topology evolves through temperature-
+                  dependent edge feasibility, while service accessibility evolves through reassignment of
+                  OD flows over the feasible network. As a result, temporal changes are analyzed at two
+                  coupled levels: (i) network connectivity and (ii) provider-specific service catchments
+                  derived from flow assignments (Fig. 2).
+                    We consider a dynamic graph G(t) = (V, E(t)), where edges exist probabilistically
+                  depending on time and temperature.
+Kontsevik et al. Applied Network Science       (2026) 11:35                                                                   Page 11 of 26
+
+
+
+
+                  Edge existence modelling.
+                  Let k be the type of connection:
+
+                    • 	 k1 : Regular road
+                    • 	 k2 : Aviation
+                    • 	 k3 : Winter only road
+                    • 	 k4 : Water transport
+
+                  The feasibility of a transport connection of mode k between settlements i and j at time t
+                  is determined exclusively by temperature and is quantified by a temperature-dependent
+                  feasibility function:
+                                    ( k                    )              1
+                        Pijk (t) = P Eij (t) = 1 | T̃ij (t) =              (            ).
+                                                                          T̃ij (t) − θk    (1)
+                                                                1 + exp −
+                                                                                βk
+
+                  Here, T̃ij (t) is the effective temperature proxy for the origin–destination pair (i, j), θk
+                  denotes the critical temperature threshold associated with transport mode k, and βk
+                  controls the steepness of the transition between infeasible and feasible regimes (see D
+                  for detailed explanation).
+                    Pijk (t) is interpreted as a feasibility weight that determines whether a transport edge of
+                  mode k is available at time t. It does not represent a service accessibility condition.
+
+                  Service accessibility
+                  Service accessibility is evaluated after transport feasibility has been determined. For
+                  each region r, we define a maximum admissible travel time Dr reflecting regional plan-
+                  ning norms.
+                    A settlement i is considered connected to a service provider j at time t if there exists at
+                  least one feasible path composed of available transport edges such that the correspond-
+                  ing travel time τij (t) satisfies
+
+                        τij (t) ≤ Dr .
+
+                  If no provider satisfies this condition, the settlement is considered isolated for that ser-
+                  vice at time t.
+                     Region-specific values of Dr are taken from official planning regulations (Table 2).
+                     For each service m (e.g., port m1 , hospital m2 ), we define
+                                {
+                                    1,     if service m is present at node i,
+                        δim =       0,     otherwise.
+
+                  In summary, temperature controls transport feasibility (edge existence), whereas travel-
+                  time thresholds control service accessibility over the feasible network.
+
+
+
+                  Table 2 Time accessibility constraints for regions
+                  Region                                               Time accessibility constraint
+                  Yakutia/Chukotka                                     3 h (Department 2022; Government of 2011)
+                  Yamalo-Nenets Autonomous District                    1.5 h (Government 2018; Government of and Krai 2014)
+                  Mezen                                                1 h (Government 2016)
+                  Northern Administrative District                     3 h (Department 2024)
+Kontsevik et al. Applied Network Science       (2026) 11:35                                                        Page 12 of 26
+
+
+
+
+                  Fig. 3 Flow redistribution scheme for transitional season (autumn / spring)
+
+
+
+
+                  Fig. 4 Flow redistribution scheme for cold season (winter)
+
+                    Figures 3 and 4 display schematic version of flow redistribution across different levels
+                  of network (service layers) in warm and cold periods. Each figure displays nodes (settle-
+                  ments) with services with colored stroke, where color reflects service type. Schemat-
+                  ics represent flows by directed edges. Since the examples tailored to showcase seasonal
+                  changes for the Node 1, bold edges represent it’s flow to the destination node. Here, edge
+                  existence displays both physical existence and fit to regional accessibility norms.
+
+                  Results
+                  Results are reported at three complementary scales: network-level connectivity, service-
+                  specific flow assignments, and region-level aggregates.
+
+                  Network-level seasonal dynamics
+                  The simulation results show that urban agglomerations in the considered Arctic region
+                  display different fragility patterns. Differences in the distribution of key (serving) cities,
+                  the diversity of transport modes, and the high dependency of small towns on seasonally
+                  unstable transport modes (such as water transport or winter roads).
+                     This network instability caused by seasonal temperature changes leads to untracked
+                  changes in consumer-provider relationships. Some settlements might not be connected
+                  to a provider for a period of several months due to missing transport connections, which
+                  is somewhat normal for remote towns and villages in such regions.
+                     In addition, the urban agglomeration network, as in most urban networks, is a mul-
+                  tilayer network. The nodes (settlements) interact differently on each of many possible
+                  levels. In the context of consumer-provider relationships, uneven distribution of services
+                  creates complex relationships. This example can be seen in 5.
+                     The existing edges at 5 also differ in the plots for different months. Gray links show
+                  whether the link exists according to the temperature and transport type rule, and col-
+                  ored links show demand routes, displaying the potential flow from one settlement to
+                  another, according to service demand.
+Kontsevik et al. Applied Network Science      (2026) 11:35                                                                      Page 13 of 26
+
+
+
+
+                  Fig. 5 Seasonal changes in multilayer network interactions between May and August for Yamalo-Nenets Autono-
+                  mous District
+
+
+
+
+                  Fig. 6 Seasonal changes in routes by transport type between May and August in Yamalo-Nenets Autonomous
+                  District
+
+                  Flow and provider reassignment
+                  In Fig. 6 it can be clearly seen that certain small settlements (presented on the left side
+                  of the circled chart) are not connected to any services in a specified temporal thresh-
+                  old. While on the right chart (presenting network state 3 months after) all the settle-
+                  ments have an access to the desired service (marina in this case). It is also important to
+                  highlight that several settlements changed the type of transport connection. This can
+                  be studied on the example of Heta village. First, in May it was connected to the marina
+                  service via winter road, but in August the Water transport started to play main role con-
+                  necting Heta to the nearest marina. However, as presented in Fig. 7, besides changing
+                  the transport type, the settlement remained to be connected to the same provider.
+
+                  Catchment (assignment/ isolation) stability, similarity and evolution
+                  For each month, settlements are grouped by their assigned service provider, forming
+                  provider-specific service catchments. These catchments represent assignment-based
+                  allocation basins rather than topological communities detected from network structure.
+Kontsevik et al. Applied Network Science      (2026) 11:35                                                         Page 14 of 26
+
+
+
+
+                  Fig. 7 Flows redistribution in Yamalo-Nenets Autonomous District
+
+
+
+
+                  Fig. 8 Service area changes in Yamalo-Nenets Autonomous District
+
+                  Temporal similarity between consecutive months is quantified using the Jaccard index of
+                  settlement sets.
+                    In particular, in Fig. 6 can be seen that the access routes for the marina (second blue
+                  layer in Fig. 5) change significantly. This case shows routes instability and fragility of the
+                  access from affected settlements. As will be shown later in Fig. 10, being unstable in sea-
+                  son transition months (May, September), in between periods, the overall picture seems
+                  more or less consistent.
+                    Despite transportation type changes due to seasonality only a few settlements lose
+                  access to the selected service. Although not stable in global terms, the system regains its
+                  initial state in October, indicating clear state transitions in the mentioned period.
+
+                  Service catchments structure change over time
+                  Providers change mentioned in Fig. 7, occurring due to seasonal transport changes,
+                  shown in Fig. 6 both indicate displacement of service areas. This evolution could be
+                  represented as a who-serves-whom matrix, presented as a polygonal service area map
+                  in Figs. 8 and 9. It can be seen that there are changes in both service areas and active
+Kontsevik et al. Applied Network Science       (2026) 11:35                                                      Page 15 of 26
+
+
+
+
+                  Fig. 9 Service catchments evolution in Mezen for Marina service
+
+
+
+
+                  Fig. 10 Service catchments evolution in Yamalo-Nenets Autonomous District for Marina service
+
+
+
+
+                  Fig. 11 Service catchments evolution in Northern Administrative District for Marina service
+
+                  providers for different services. Nodes are colored by the type of facility they serve
+                  access to.
+                    Seasonal structural changes in the system of Arctic urban agglomeration network
+                  take place during certain months, during which the transition occurs due to tempera-
+                  ture changes. Month-to-month similarity of service catchments was quantified using the
+                  Jaccard index, computed as the ratio of intersection to union of settlement sets, repre-
+                  sented on service catchments similarity plot in Fig. 10.
+                    Although the service-provider relationships appear to be more consistent in a warm
+                  period, which is indicated by normalized mutual information plot in the Fig. 10. Service
+                  catchments evolution events plot in Fig. 10 highlights the different patterns of transi-
+                  tioning from one state to another from May-to-June to September-to-October. Transi-
+                  tioning from cold to warm period requires only one step, while the reverse transition
+                  takes two steps (from 8 to 10 service areas and back) (Figs. 9, 10, 11 and 12).
+Kontsevik et al. Applied Network Science        (2026) 11:35                                                                            Page 16 of 26
+
+
+
+
+                  Fig. 12 Service catchments evolution in Yakutia/Chukotka for Marina service
+
+
+
+                  Table 3 Isolation persistence, provider switching, and network structure metrics
+                  Metric                        Yakutia/Chukotka            Yamalo-Nenets Au-        Mezen            Northern
+                                                                            tonomous District                         Administra-
+                                                                                                                      tive District
+                  Number of settlements         23                          38                       47               44
+                  Mean isolated months          9.095                       3.263                    9.525            1.773
+                  IQR isolated months           1.0                         8.0                      1.0              0.0
+                  Peak isolation share          0.762                       0.289                    0.800            0.182
+                  Peak switch share             0.143                       0.079                    0.000            0.432
+                  Peak switch months            May–Jun; Sep–Oct            May–Jun; Sep–Oct         Jan–Feb to       Jun–Jul;
+                                                                                                     May–Jun          Jul–Aug
+                  Peak isolation months         Jan–Jun; Aug–Oct            Jan–May; Oct–Dec         Jan–Jun;         May–Jun;
+                                                                                                     Aug–Oct          Aug–Sep
+                  Density                       0.464                       0.126                    0.255            0.179
+                  Average degree                9.278                       4.667                    9.942            7.689
+                  Clustering coefficient        0.567                       0.459                    0.579            0.756
+                  Diameter                      3.167                       6.667                    8.000            4.000
+                  Modularity                    0.022                       0.413                    0.263            0.233
+                  Number of communities         7.33                        9.33                     4.00             8.17
+                  Isolation metrics are computed from monthly service availability. Network metrics are averaged over monthly graphs.
+                  Modularity and number of communities are obtained using greedy modularity optimization
+
+
+                  Regional regime comparison
+                  The considered regions differ by location, spatial distribution and density of land, admin-
+                  istrative borders, and the amount of big cities with close access 3. Although being in an
+                  Arctic region they show different state transition patterns.
+                    Across all four regions (Mezen, NAO, Yamalo–Nenets AD, Yakutia/Chukotka), acces-
+                  sibility dynamics follow a common seasonal regime characterized by: sharp degradation
+                  during spring and autumn transition months, partial stabilization during cold and warm
+                  plateaus, recovery to structurally similar states after transitions.
+                    Synchronized drops in Jaccard similarity during May–June and September–Octo-
+                  ber consistent timing of peak isolation and provider switching months across regions,
+                  repeated emergence–disappearance cycles of service catchments rather than monotonic
+                  degradation.
+                    At the same time, regional topology modulates severity, not mechanism. For example,
+                  Yakutia/Chukotka exhibits longer isolation persistence due to sparse topology and win-
+                  ter-road dependence, while NAO shows shorter but sharper switching episodes linked
+                  to aviation–water substitution. This confirms mechanistic universality with structural
+                  heterogeneity, directly supporting the first hypothesis.
+Kontsevik et al. Applied Network Science   (2026) 11:35                                                          Page 17 of 26
+
+
+
+
+                    The results show that seasonal transitions are not marginal perturbations but system-
+                  level reconfiguration events: switching and isolation peaks are temporally aligned with
+                  temperature threshold crossings, not random failures. It is demonstrated that provider
+                  switching is driven by loss of feasibility of entire transport modes, forcing reassignment
+                  of OD flows even when settlements themselves remain intact.
+
+                  Discussion
+                  Limitations
+
+                    • 	 Data availability Although the authors provide the data used in this study, a
+                        significant part of it was collected manually. The issue is that exact plane and ship
+                        routes on the local scale are usually missing from worldwide datasets.
+                    • 	 Simplifications made In this research we do not consider environment-based
+                        effects that take place in such region as an Arctic (such as snow storms), that affect
+                        the transport routes. These effects are considered as part of temperature restrictions
+                        for different transport modes mentioned in the paper.
+                    • 	 Temperature thresholds To show rapid changes in transport mode availability due
+                        to temperature changes the sigmoid function was used. The threshold value was set
+                        to the mean of the sigmoid function to show the transition between seasons. The
+                        threshold and decay function could be adjusted for other cases.
+
+                  Conclusion
+                  As climate change and globalization amplify systemic risks, these frameworks will be
+                  indispensable for designing failsafe infrastructure and sustainable ecosystems.
+
+                  Summary of key findings
+                  The EFN model reveals that Arctic transport networks undergo profound seasonal
+                  transformations with immediate implications for infrastructure planning and climate
+                  adaptation. Revealed uncertain temperature-dependent catchment areas lead to recon-
+                  figuration of flows in service-provider relations in the network. Multilayer interactions
+                  underline key settlements in the network across several service dimensions.
+
+                  Contributions to the field
+                  In real-world applications, nonlinear dynamics in service demand can be observed due
+                  to seasonal changes in transport connectivity. As shown in this paper, this effect is most
+                  noticeable in a highly climate-dependent region such as the Arctic.
+                    This paper contributes to the field in the following ways:
+
+                    • 	 The representation of seasonal patterns in the problem of demand satisfaction.
+                        Specifically, with the focus on services at the regional (agglomeration) scale.
+                    • 	 Comparative analysis of network dynamics. Seasonal changes in the state of service
+                        networks across regions that differ by main types of transport connections, network
+                        size and distribution of services (supply) and population (demand).
+
+                  Policy and planning implications
+                  The data and results obtained allow us to talk about the necessary development of settle-
+                  ments and the definition of their functions. Based on this data, it is possible to draw
+Kontsevik et al. Applied Network Science   (2026) 11:35                                                            Page 18 of 26
+
+
+
+
+                  conclusions about maintaining and strengthening transport links, as well as develop-
+                  ing infrastructure services in settlements. First and foremost, it is proposed that the
+                  results be integrated into the process of developing spatial planning programs for Arctic
+                  regions. The method is recommended for use as one of the tools for analyzing trans-
+                  port connectivity and the level of infrastructure provision in order to determine strate-
+                  gic development goals and compile a list of necessary measures to maintain the system
+                  under study:
+
+                    • 	 Identification of priority investment projects, decision-making on the allocation
+                        of budget funds, and modernization of infrastructure facilities. This will help focus
+                        resources where they will be of greatest benefit to the population.
+                    • 	 Development of support programs for the indigenous peoples of the north.
+                        Identifying the most vulnerable settlements that need support to preserve their
+                        traditional way of life and cultural heritage will ensure their sustainable development.
+                    • 	 Evaluating the effectiveness of existing programs.
+                    • 	 Optimizing logistics. Improving the logistics of delivering goods and materials to
+                        remote areas will reduce costs and increase delivery efficiency.
+                    • 	 Developing tourism in remote areas of the north.
+
+                  Future research directions
+                  Seasonal transitions between network states in the task of meeting urban service needs
+                  form the basis for further research into operations dependent on the external climate
+                  environment. In particular, the proposed model is the basis for the use of fundamen-
+                  tal models involving (influenced by) the external environment. An example of the use
+                  of the presented model could be the optimal placement of services, taking into account
+                  changes in demand of a known dependence during a given transition period.
+                    Further work on the EFN involves refining the tools and models used. In particular,
+                  demand distribution can be specified by more complex behavioral models, including
+                  agent-oriented approaches. In addition, the integration of EFN with modern spatio-tem-
+                  poral methods of transport flow analysis (Rahman et al. 2025; Li et al. 2024) and climate-
+                  oriented risk assessment and infrastructure adaptation approaches (Rahman et al. 2025;
+                  Touloumidis et al. 2025; Burbidge et al. 2024) will allow for a more complete description
+                  of the response of regional service networks to changing climatic conditions.
+
+                  Appendix A: Manual data collection and data manipulations
+
+                  A.1 Data collection protocols
+                  Data was collected and compiled from various sources to build a multimodal transport
+                  network and then analyze the effects of temperature. The process of collecting and calcu-
+                  lating time metrics for each type of transport was organized as follows: Motor transport.
+                  The initial road network was obtained from OpenStreetMap and via OSMnx Python
+                  library (Boeing 2025). A weighted graph was built on the basis of this network. The time
+                  cost was calculated using shortest path between 2 nodes on a graph, taking into account
+                  the actual length of the segment and the assigned speed, differentiated by seasons:
+                  60 km/h for the summer period and 40 km/h for the winter period. Settlement polygons
+                  were represented as their corresponding centroids; then their centroids were mapped to
+                  the closest road graph nodes, to make the calculations possible.
+Kontsevik et al. Applied Network Science   (2026) 11:35                                                          Page 19 of 26
+
+
+
+
+                    Aviation transport. Data on scheduled flights and flight times were collected from
+                  official sources: local airline schedules, airport websites, and local government regula-
+                  tions (Aviotryad 2025; Arktika 2025; Yamal 2025; TSAero 2025; Chukotavia 2025; Taimyr
+                  2025). For connected settlements, between which there is no regular communication,
+                  or data about it is not given in the schedule, the flight time was estimated based on the
+                  geodesic distance, taking into account the typical cruising speed of the most common
+                  aircraft, the Mi-8 helicopter.
+                    Water transport. Information about current river and sea routes, as well as travel time,
+                  was extracted from the websites of water transport operators (Severnaya Transportnaya
+                  Kompaniya 2025). The travel time for water transport was calculated based on the length
+                  of the fairway and the accepted average operating speed of 20 km/h. This value is justified
+                  by the analysis of the fleet of vessels involved on local routes (boats of the “Yaroslavets”
+                  and “KS” types), for which the typical cruising speed in conditions of winding rivers with
+                  depth restrictions and the need for frequent stops is 20-25 km/h (Korinevsky and Logi-
+                  nov 2006). This approach provides a conservative and realistic estimate of time costs.
+
+                  A.2 Validation and evaluation of data quality
+                  The initial cartographic data from OpenStreetMap, although valuable, may be incomplete
+                  (Deri et al. 2025) or inaccurate for remote and infrastructurally underdeveloped regions,
+                  such as the Arctic (Kwakye et al. 2024). To ensure the completeness and reliability of the
+                  transport network model, a step-by-step process of data validation and addition was car-
+                  ried out.: Cross-validation and addition of the route network. The OSM data was com-
+                  pared with alternative cartographic sources (Google 2025). The identified gaps (winter
+                  roads, actual roads, and potential ice crossings, etc.) were supplemented based on an
+                  analysis of regulations - seasonal resolutions of local authorities on the opening/closing
+                  of winter roads and crossings (Republic 2024; Russian 2025; Community 2025), as well as
+                  studying current messages in regional social networks reflecting real practices of popula-
+                  tion displacement.
+                    Connections were evaluated for each type of transport, for which it was possible to
+                  obtain the actual time according to the schedule and compare it with the calculated val-
+                  ues. This made it possible to characterize the level of detail of the model and outline
+                  directions for its future refinement.
+                    Expert evaluation and logical verification: The calculated time matrices for all modes
+                  of transport have been logically verified for consistency (for example, flight time can-
+                  not exceed the time of a similar car trip over significant distances). Where possible, the
+                  results were selectively compared with data from navigation services and expert assess-
+                  ments. The experts in this case were local residents and their relevant experience of real
+                  trips.
+
+                  Appendix B: Comparison logic
+
+                  B.1 Regional comparison
+                  Selected territories represent a wide range of settlement conditions, infrastructure facili-
+                  ties and transport models. A comparative analysis of key parameters makes it possible to
+                  identify systemic differences and common features characteristic of the Arctic as a whole.
+                  In total, 9 out of 74 municipalities of the Arctic zone of the Russian Federation were stud-
+Kontsevik et al. Applied Network Science   (2026) 11:35                                                            Page 20 of 26
+
+
+
+
+                  ied, which displays 1/4 of the territory of the Russian Arctic (Dankin et al. 2022; Pilyasov
+                  and Zamyatina 2016; Council 2023).
+                    The comparison reveals a fundamental diversity of spatial and transport models within
+                  the considered region: from the relatively connected and infrastructurally developed west-
+                  ern periphery (NAO and Mezen Municipal District) through polycentric industrial areas
+                  with a river framework (Yamalo-Nenets Autonomous District/Taimyr) to dispersed ter-
+                  ritories of the east, extremely dependent on seasonal winter routes (Yakutia/Chukotka).
+                  Despite these differences, all territories show common systemic features: The critical role
+                  of seasonal and informal transport (winter roads, snowmobile trails) complementing the
+                  official network. The formation of transport links across administrative borders, dictated
+                  by the logic of the natural environment and economic activity. There is a sharp contrast in
+                  accessibility between a few hubs (administrative or industrial centers) and a vast periph-
+                  ery. The dependence of the transport framework on a limited number of natural objects
+                  (large rivers, coast) and modes of transport (air, winter). Successful adaptation and appli-
+                  cation of a unified methodology for territories with such different settlement densities,
+                  network topology and socio-economic structure will show its universality.
+
+                  B.2 Service catchments stability thresholds
+                  The identification of unstable settlements and the determination of thresholds after
+                  which a settlement is considered “disappeared” in a dynamic model is a projection of
+                  the vulnerability of the socio-spatial structure of the region. In the context of the Arctic,
+                  the disappearance of the settlement signals a critical degradation of its functions in the
+                  transport and social system. Settlement stability thresholds correspond to the following
+                  real processes:
+                     1. Loss of critical transport connectivity. A settlement (or group of settlements) ceases
+                  to be a stable integrated element of a multimodal network during the season. This leads to
+                  a regime of point isolation of the settlement or to the destruction of local socio-economic
+                  contours and undermines the basis for the use of limited infrastructure.
+                     2. Cascading effect on neighboring and related settlements. The disappearance of one
+                  settlement leads to an increase in the burden on the remaining stable centers, disruption
+                  of supply chains and entails long-term socio-demographic reactions (outflow of the most
+                  mobile population - youth).
+                     3. A systemic shift in the settlement model. The disappearance of a settlement or an
+                  entire cluster of settlements reflects the transition of the system to a qualitatively new
+                  state. For example, the transition from a polycentric model (several local support vil-
+                  lages) to a monocentric one (absolute dependence on one remote regional center). This
+                  dramatically increases the vulnerability of the system as a whole — the failure of one main
+                  center paralyzes the entire periphery. Because in a situation where one locality becomes
+                  isolated from the entire system, its services cease to be available to the population of other
+                  settlements, or services outside its borders become inaccessible to its population.
+                     Thus, the stability threshold we have set is an indicator of the point at which the deg-
+                  radation of transport accessibility ceases to be an operational problem and becomes a
+                  threat to the sustainability of the settlement itself as a social unit. This approach makes
+                  it possible to use the network model not only to describe the current state, but also to
+                  proactively identify “points of failure” in the Arctic settlement system.
+Kontsevik et al. Applied Network Science   (2026) 11:35                                                           Page 21 of 26
+
+
+
+
+                  Appendix C: Urban policy applications
+
+                  C.1 Extended discussion
+                  The probabilistic temperature-dependent multilayer network model (EFN) developed in
+                  the study allowed us to move from qualitative descriptions to a quantitative analysis of
+                  the seasonal dynamics of transport accessibility in the Arctic. The results obtained reveal
+                  the systemic properties of Arctic infrastructure networks and suggest new optics for their
+                  planning.
+                    Interpretation of key results. Our results show that the external instability hides highly
+                  structured patterns of seasonal variability in the system configuration.
+                    1. Non-linearity and threshold effect. The model confirmed that the availability of ser-
+                  vices does not change smoothly, but rather abruptly during periods of seasonal transi-
+                  tions (melting/ice formation) (Ahmed 2005).
+                    The threshold character set by the sigmoid function adequately reflects the reality when
+                  a slight warming above the critical point leads to the collapse of the entire network of
+                  winter roads, rather than their gradual deterioration.
+                    2. Vulnerability of polycentricity: An analysis of the evolution of settlements revealed
+                  that the stability of the system depends not on individual roads, but on the stability of
+                  local centers of attraction (settlement nodes). The disappearance of such a settlement in
+                  the model (the “death” event) means not just the isolation of several settlements, but the
+                  disintegration of the local cluster structure, which forces the remaining settlements to
+                  reorient to more remote and congested centers. This explains why up to 40% of localities
+                  are forced to change service providers: the system is constantly being rebuilt, trying to
+                  find a new balance after the loss of local node and new service providers.
+                    3. Geographical universality of mechanisms with local diversity: Despite the radical
+                  differences between the regions (linear structure of the Northern Administrative District
+                  vs. polycentric Yamalo-Nenets Autonomous District vs. dispersed Yakutia/Chukotka),
+                  the basic mechanisms of degradation and restoration of connectivity turned out to be
+                  common. In all cases, seasonal modes of transport (winter roads, river routes) play a key
+                  role, and shifts in accessibility are synchronized with temperature cycles. This proves that
+                  the proposed EFN model is precisely the generalizing framework applicable to different
+                  configurations of Arctic settlement systems. Methodology and limits of generalization.
+                  The EFN model contributes by allowing for what has traditionally been left outside the
+                  scope of analysis. From static to dynamic: Unlike static infrastructure maps, EFN simu-
+                  lates network performance over time, which is critical for regions where the road exists
+                  only 4 months a year.
+                    Integration of the human factor and informal practices: Manual collection of data on
+                  unofficial winter roads and local routes made it possible to include real, not only official,
+                  travel practices in the model. This increases the adequacy of the model, but at the same
+                  time points to its main limitation — dependence on time-consuming collection of expert
+                  data. The development of automated methods (track analysis, social media) is a key area
+                  for scaling.
+                    Consideration of extreme weather events (blizzards, storms) as part of the general-
+                  ized temperature threshold, this is a necessary simplification at the current stage. Tacti-
+                  cal planning will require embedding probabilistic models of specific hazards that disrupt
+                  specific relationships.
+Kontsevik et al. Applied Network Science   (2026) 11:35                                                           Page 22 of 26
+
+
+
+
+                  Fig. 13 Network scheme
+
+                    Accounting for extreme weather events through an aggregated temperature threshold
+                  is a strategic simplification adopted in this paper to achieve the main goal of modeling
+                  long—term seasonal dynamics. This simplification is based on two key assumptions:
+                    Correlation with seasonality: Peaks in the activity of the main disrupting factors (snow-
+                  storms leading to the closure of winter shelters; storms stopping river and sea navigation)
+                  are statistically timed to the periods of seasonal transitions, which in the model are deter-
+                  mined by temperature thresholds.
+                    Integral effect: On a monthly or seasonal scale, the cumulative effect of multiple short-
+                  term extreme events manifests itself as an extension of the period of “unavailability” of a
+                  particular type of transport, which is recorded by the model through a shift in the thresh-
+                  old of its operation.
+
+                  C.2 Formation of a new spatial planning logic
+                  The results obtained are changing the approach to infrastructure management in the
+                  Arctic.
+
+                    1. Prioritization of investments: The model allows us to shift the focus from repairing
+                       specific road sections to strategically strengthening the backbone links that keep
+                       entire communities from disintegrating. Investments in the capitalization of a key
+                       winter mine leading to a vulnerable cluster will have a greater systemic effect than
+                       repairing several disparate sites.
+                    2. Adaptive spatial planning: Identified “accessibility windows” and seasonal patterns
+                       of flow redistribution should form the basis for adaptive work schedules for social
+                       services, educational and medical teams. Planning of the northern delivery should
+                       also take into account not just the navigation period, but the dynamically changing
+                       map of accessibility of settlements.
+                    3. Proactive social risk management: The fact of seasonal isolation of 15-20% of
+                       settlements is not only a transport problem, but also an acute social problem. The EFN
+                       model makes it possible to predict these periods and develop proactive measures: the
+                       creation of food and medicine supplies, the organization of temporary medical care
+                       centers, distance education and consultation schemes (Fig. 13).
+
+                  Appendix D: Remarks on model formulation
+
+                  D.1 Failure mode transitions
+
+                    • 	 Temperature T influences seasonal state S, which is used only to display comparable
+                        network states.
+Kontsevik et al. Applied Network Science                     (2026) 11:35                                                                                                                Page 23 of 26
+
+
+
+
+                  Fig. 14 Temperature-dependent probabilities for different transport modes
+
+                  Example:
+
+                     • 	 P (Water transport) → 0 when T exceeds operational thresholds.
+                     • 	 P (Winter road) ↑ compensates partially if road infrastructure is available.
+
+                  D.2 Temperature model
+                  Let T (x, t) denote the temperature field at geographic location x and month t. For each
+                  settlement i with coordinates xi , temperature is sampled as
+
+                           Ti (t) := T (xi , t).
+
+                  Temperature values are used solely to evaluate operational feasibility constraints of
+                  transport modes and do not represent disruption, degradation, or any internal state of
+                  the settlement nodes.
+                    Because the model operates on an origin–destination abstraction rather than explicit
+                  route geometries, we define an effective temperature proxy for each OD pair (i, j) as
+                                       (              )
+                           T̃ij (t) = g Ti (t), Tj (t) ,
+
+                  where g(·) aggregates endpoint temperatures. In the baseline specification, g is defined
+                  as the arithmetic mean of endpoint temperatures; alternative conservative aggregations
+                  can be used to reflect stricter feasibility assumptions.
+                    Seasonal effects are not introduced as an explicit categorical variable. Instead, season-
+                  ality emerges implicitly through the temporal evolution of Ti (t) and its interaction with
+                  mode-specific feasibility thresholds, enabling continuous transitions between accessibil-
+                  ity regimes.
+                    For interpretability, we refer to temperature ranges separated by feasibility thresholds
+                  as seasonal phases. Transitions between these phases are triggered by crossings of mode-
+                  specific temperature thresholds rather than by predefined calendar seasons.
+                    Based on the obtained data, the feasibility of transport mode existence is modeled as a
+                  sigmoid function of temperature, reflecting threshold-like operational limits under sea-
+                  sonal climate conditions (Fig. 14).
+                  Acknowledgements
+                  This work supported by the Ministry of Economic Development of the Russian Federation (IGK 000000C313925P4C0002),
+                  agreement No139-15-2025-010.
+                  Author contributions
+                  G.K. and A.G. wrote the main manuscript; V.T. prepared a part of code implementation and curated the data; S.M.
+                  supervised the work.
+                  Data availability
+                  Data and codes for this article are available at the provided github repository: ​h​t​t​p​s​​:​/​/​g​i​t​​h​u​b​.​c​​o​m​/​G​​e​o​r​g​e​K​o​n​t​s​e​v​i​k​/​s​e​a​s​
+                  o​n​_​f​r​a​m​e​d​_​m​u​l​t​i​l​a​y​e​r​_​a​r​c​t​i​c​_​n​e​t​w​o​r​k​_​m​o​d​e​l​​
+Kontsevik et al. Applied Network Science                        (2026) 11:35                                                                                                                           Page 24 of 26
+
+
+
+
+                  Code availability
+                  The source code and data for this article are available in GitHub repository: ​h​t​t​p​s​​:​/​/​g​i​t​​h​u​b​.​c​​o​m​/​G​​e​o​r​g​e​K​o​n​t​s​e​v​i​k​/​s​e​a​s​o​n​
+                  _​f​r​a​m​e​d​_​m​u​l​t​i​l​a​y​e​r​_​a​r​c​t​i​c​_​n​e​t​w​o​r​k​_​m​o​d​e​l​​
+
+
+                  Declarations
+                  Conflict of interest
+                  The authors declare no Conflict of interest.
+
+                  Received: 8 September 2025 / Accepted: 10 February 2026
+
+
+
+
+                  References
+                  Aeroport Yamal (Akyamal): Raspisanie dvizheniya passazhiram: Passenger Flight Schedule. Yamal airport flight schedules for
+                        passenger transport networks. (2025). ​h​t​t​p​s​:​​/​/​a​k​y​​a​m​a​l​.​r​​u​/​p​a​​s​s​a​z​h​​i​r​a​m​/​​r​a​s​p​i​s​​a​n​i​e​​-​d​v​i​z​h​e​n​i​y​a​/ Accessed 2025–12-08
+                  Ahmed F (2025) Ice roads and income in remote indigenous communities of Canada. World Dev Perspect 37:100666
+                  Arctic Council of Russia: Arctic Regions of Russia (2023). https://as.arcticrussia.ru/useful Accessed 2023–11-20
+                  Arktika Avialinii (2AO AO): Services and Operations: Arctic Airlines. Passenger flights, cargo, charters, rescue operations, helicop-
+                        ter maintenance, aviation training complex. Key Arctic carrier. (2025). https://www.2aoao.ru Accessed 2025–12-08
+                  Barrette, P.D., Hori, Y., Kim, A.M.: The canadian winter road infrastructure in a warming climate: Toward resiliency assessment and
+                        resource prioritization. Sustainable and Resilient Infrastructure (2022) 10.1080/23789689.2022.2094124
+                  Berthelot G, Tupikina L, Kang M-Y, Sapoval B, Grebenkov DS (2020) Pseudo-darwinian evolution of physical flows in complex
+                        networks. Sci Rep 10(1):15477
+                  Boeing G (2025) OSMnx: New methods for acquiring, constructing, analyzing, and visualizing complex street networks. GitHub.
+                        Software version used: v1.9+ (2025). Python package for downloading and modeling street networks from OpenStreet-
+                        Map. Essential for urban network analysis.. https://doi.org/10.5195/geo.2020.76. ​h​t​t​p​s​:​​/​/​g​e​o​​f​f​b​o​e​i​​n​g​.​c​​o​m​/​p​u​​b​l​i​c​a​​t​i​o​n​s​/​​o​
+                        s​m​n​​x​-​p​a​p​e​r​/
+                  Burbidge R, Paling C, Dunk RM (2024) A systematic review of adaption to climate change impacts in the aviation sector. Transp
+                        Rev 44(1):8–33
+                  Chukotavia Airlines: Article 494: Flight Information. Chukotka regional aviation operations and schedules. (2025). ​h​t​t​p​s​:​​/​/​c​h​u​​k​o​t​
+                        a​v​i​​a​.​r​u​​/​r​u​/​a​r​t​i​c​l​e​/​v​i​e​w​/​i​d​/​4​9​4​/ Accessed 2025–12-08
+                  Coates KS, Broderstad EG (2019) Indigenous peoples of the arctic: Re-taking control of the far north. The Palgrave handbook of
+                        Arctic policy and politics 9–25
+                  Dankin MA, Zamyatina NY, Zaitsev AA, Nikitin BV, Poturaeva AV, Ivlieva OD (2022) Reference Settlements of the Russian Arctic.
+                        Russia, Scientific Center for Arctic Research (SCRA), Saint Petersburg
+                  Dankin, M.A., Zamyatina, N.Y., Zaitsev, A.A., Nikitin, B.V., Poturaeva, A.V., Ivlieva, O.D.: Reference Settlements of the Russian Arctic,
+                        p. 246. ANO Information and Analytical Center of the State Commission for the Development of the Arctic, Moscow (2022)
+                  Department of Architecture and Urban Planning under the Head of the Republic of Sakha (Yakutia): Resolution No. 26 On
+                        approval of regional standards for urban planning design of the Republic of Sakha (Yakutia). Electronic resource (2022).
+                        https://docs.cntd.ru/document/406031104 Accessed 2024–11-30
+                  Department of Construction, Housing and Communal Services, Energy and Transport of Nenets Autonomous Okrug: Order No.
+                        4 On approval of regional standards for urban planning design of Nenets Autonomous Okrug. Electronic resource (2024).
+                        https://base.garant.ru/408841477/ Accessed 2024–11-30
+                  Deri, F., Mara F, Anselmi C (2025) Crowdsourced data for urban planning: A critical evaluation of openstreetmap accuracy and
+                        completeness. In: International Conference on Computational Science and Its Applications, pp. 403–420. Springer
+                  Dong Y, Xiao P, Zhang X, Ge D, Yu J, Chen Y, Wu Q, Ma Y, Liu R, Luan W et al (2025) Increased vulnerability of arctic potential ice
+                        roads under climate change. Commun Earth Environ 6(1):37
+                  Federal Agency for Technical Regulation and Metrology (Rosstandart): Gost 34066–2017: Snowmobiles - technical require-
+                        ments and test methods. Technical report (2017)
+                  Finnish Transport Infrastructure Agency: Winter road maintenance guidelines. Technical report, Finnish Transport Infrastructure
+                        Agency (2019). Accessed 14 Dec 2024. ​h​t​t​p​s​:​​/​/​v​a​y​​l​a​.​f​i​/​​e​n​/​m​​a​i​n​t​e​​n​a​n​c​e​​/​r​o​a​d​-​​n​e​t​w​​o​r​k​/​w​i​n​t​e​r​-​m​a​i​n​t​e​n​a​n​c​e
+                  Food and Agriculture Organization (2010) Climate Variability and Change. FAO, Rome
+                  Gangwal U, Siders A, Horney J, Michael HA, Dong S (2023) Critical facility accessibility and road criticality assessment consider-
+                        ing flood-induced partial failure. Sustain Resilient Infrastruct 8(sup1):337–355
+                  Google Maps: Google Maps: [Description of map view or search, e.g., Arctic winter roads Yakutia Chukotka] (2025). ​h​t​t​p​s​:​/​/​w​w​w​
+                        .​g​o​o​g​l​e​.​c​o​m​/​m​a​p​s​​​​ Accessed 2025–12-08
+                  Government of the Russian Federation, Ministry of Transport of the Russian Federation: Decree no. 1487 (2020) on the rules of
+                        navigation in the northern sea route waters; rules of the russian river register; code of inland waterway transport of the
+                        russian federation (federal law no. 24-fz). Technical report (2020). Collection of Russian regulations for inland waterways
+                        and Arctic navigation
+                  Government of Chukotka Autonomous Okrug: Resolution No. 569 On approval of Regional standards for urban planning
+                        design of Chukotka Autonomous Okrug. Electronic resource (2011). https://docs.cntd.ru/document/469504095 Accessed
+                        2024–11-30
+                  Government of Yamalo-Nenets Autonomous Okrug: Resolution No. 69-P On approval of regional standards for urban planning
+                        design of Yamalo-Nenets Autonomous Okrug. Electronic resource (2018). https://docs.cntd.ru/document/543542347
+                        Accessed 2024–11-30
+                  Government of Krasnoyarsk Krai: Resolution No. 631-P On approval of regional standards for urban planning design of Kras-
+                        noyarsk Krai. Electronic resource (2014). https://docs.cntd.ru/document/430572436 Accessed 2024–11-30
+Kontsevik et al. Applied Network Science                                            (2026) 11:35                                                                                                                                                                                Page 25 of 26
+
+
+
+
+                  Government of Arkhangelsk Oblast: Resolution No. 123-pp On approval of regional standards for urban planning design of
+                          Arkhangelsk Oblast. Electronic resource (2016). https://docs.cntd.ru/document/462627276 Accessed 2024–11-30
+                  Government of the Republic of Sakha (Yakutia): Information on Active Winter Roads as of January 16, 2024 (2024). ​h​t​t​p​s​:​​/​/​x​n​-​​8​0​
+                          a​f​c​r​​b​a​m​b​​4​a​a​v​e​​1​a​.​x​n​​-​p​1​a​i​/​​p​r​e​s​​s​-​c​e​n​​t​e​r​/​i​​n​f​o​r​m​a​​t​s​i​y​​a​-​o​-​d​​e​j​s​t​v​​u​y​u​s​h​c​​h​i​k​h​​-​a​v​t​o​​z​i​m​n​i​​k​a​k​h​-​p​​o​-​s​o​​s​t​o​y​a​n​i​y​u​-​n​a​-​1​6​-​0​1​-​2​0​2​4​-​g
+                          Accessed 2025–12-08
+                  Gu S, Miao A, Yan D, Hu B, Cheng G, Xu Z (2025) Resilience assessment of urban conventional bus networks in cold regions
+                          under snowfall weather. Reliability Engineering & System Safety 111824
+                  Guo X, Du Q, Li Y, Zong X, Bai L (2025) Cascading failure and recovery propagation of metro-bus double-layer network under
+                          time-varying passengers. Transp Res Part D: Transp Environ 139:104571
+                  Guo Z, Li Z, Lu C, She J, Zhou Y (2024) Spatio-temporal evolution of resilience: The case of the chengdu-chongqing urban
+                          agglomeration in china. Cities 153:105226
+                  Haklay M, Weber P (2008) Openstreetmap: user-generated street maps. IEEE Pervasive Comput 7(4):12–18
+                  Huang L, Wang J, Cheng H (2022) Spatiotemporal changes in ecological network resilience in the shandong peninsula urban
+                          agglomeration. J Clean Prod 339:130681
+                  International Maritime Organization: International Code for Ships Operating in Polar Waters (Polar Code). IMO Resolution
+                          MSC.385(94). Formal legal code adopted under SOLAS and MARPOL conventions; entered into force 1 Jan 2017 (2014)
+                  International Maritime Organization: Polar Code: Guidance for Ships Operating in Polar Waters. Operational guidelines and
+                          practical implementation of the Polar Code requirements (2017). ​h​t​t​p​s​:​​/​/​w​w​w​​.​c​d​n​.​i​​m​o​.​o​​r​g​/​l​o​​c​a​l​r​e​​s​o​u​r​c​e​​s​/​e​n​​/​O​u​r​W​​o​r​k​/​S​​a​
+                          f​e​t​y​/​​D​o​c​u​​m​e​n​t​s​​/​P​o​l​a​​r​%​2​0​C​o​​d​e​%​2​​0​G​u​i​d​a​n​c​e​.​p​d​f
+                  Ji J, Fang L, Chen J, Ding T (2024) A novel framework for urban flood resilience assessment at the urban agglomeration scale. Int
+                          J Disaster Risk Reduct 108:104519
+                  Jie R, Wentao Y, Yuting H, Zihao L (2024) Defining urban network resilience: a review. Front Urban Rural Plan 2(1):14
+                  Kiparisov PO, Lagutov VV (2024) Integrated gis-and network-based framework for assessing urban critical infrastructure acces-
+                          sibility and resilience: the case of hurricane michael. arXiv:2412.13728
+                  Kong, X., Doré, G.: Case study of the thermal regime of permafrost underneath the airstrips near hudson bay coast, canada. In:
+                          Cold Regions Engineering 2024: Sustainable and Resilient Engineering Solutions for Changing Cold Regions, pp. 251–261
+                          (2024)
+                  Korinevsky PL, Loginov AA (2006) A Brief Description of the Boats of Project 376, 376u. N/A, Moscow, Veliky Novgorod. Technical
+                          description of project 376 and 376u boats
+                  Kwakye D, Marx S, Herfort B, Langer M, Lautenbach S (2024) Data quality of openstreetmap for industrial sites in the arctic.
+                          AGILE GIScience Series 5:34
+                  Li J, Li Z, Qi X (2025) A review of multilayer networks-based interregional transportation networks analysis. Chaos Solitons &
+                          Fractals 192:115993
+                  Li, Z., Xia, L., Shi, L., Xu, Y., Yin, D., Huang, C.: Opencity: Open spatio-temporal foundation models for traffic prediction.
+                          arXiv:2408.10269 (2024)
+                  Lowe ME, Sharp S (2021) Gendering human capital development in western alaska. Econ Anthropol 8(1):46–60
+                  Lu H, Zhang C, Jiao L, Wei Y, Zhang Y (2022) Analysis on the spatial-temporal evolution of urban agglomeration resilience: A
+                          case study in chengdu-chongqing urban agglomeration, china. Int J Disaster Risk Reduct 79:103167
+                  Mahmoud MR, Roushdi M, Aboelkhear M (2024) Potential benefits of climate change on navigation in the northern sea route
+                          by 2050. Sci Rep 14(1):2771
+                  Mei X, Ye W, Li W, Chen C, Li A, Wu J, Du H (2025) Robustness evaluation and optimization of china’s multilayer coupled inte-
+                          grated transportation system from a complex network perspective. Sustainability 17(16):7398
+                  Ministry of Regional Development of the Russian Federation, Federal Agency for Technical Regulation and Metrology (Rosstan-
+                          dart), Ministry of Emergency Situations of the Russian Federation: Sp 24.13330.2012 highways; gost r 50992–2019 climatic
+                          safety of road vehicles; order no. 731 (2020) on approval of the rules for the use of crossings and pontoon bridges in the
+                          russian federation. Technical report (2012). Collection of Russian federal regulations related to highway engineering and
+                          operational safety in severe climates
+                  Ministry of Transport of the Russian Federation: Order No. 128 (31 Jul 2009): Federal Aviation Rules for Preparation and Execu-
+                          tion of Flights in Civil Aviation of the Russian Federation. Russian Federal Aviation Regulatory Document (2009)
+                  Mishina M, Mityagin S, Belyi A, Khrulkov A, Sobolevsky S (2024) Towards urban accessibility: Modeling trip distribution to assess
+                          the provision of social facilities. Smart Cities 7(5):2741–2762
+                  Mu X, Fang C, Yang Z (2022) Spatio-temporal evolution and dynamic simulation of the urban resilience of beijing-tianjin-hebei
+                          urban agglomeration. J Geog Sci 32(9):1766–1790
+                  NASA POWER Project: NASA Prediction Of Worldwide Energy Resources (POWER) Data. NASA Langley Research Center. 2 m air
+                          temperature (T2M), spatial resolution 0.5° × 0.625°, accessed via API (2024). https://power.larc.nasa.gov/
+                  Naryan-Marsky Aviotryad (avianao.ru): Raspisanie i rezhim raboty kassy MVL: Local Flight Schedule and Cashier Hours (2025).
+                          https://avianao.ru Accessed 2025–12-08
+                  Nordic Road Association (NVF): Nordic arctic highway engineering standards 2020–2024. Technical report, Nordic Road Associa-
+                          tion (2020). https://www.nvfnorden.org/
+                  Pilyasov AN, Zamyatina NY (2016) Arctic entrepreneurship: Conditions and development opportunities. Arctic: Ecology and
+                          Economics 4, 4–15
+                  Povoroznyuk O, Vincent WF, Schweitzer P, Laptander R, Bennett M, Calmels F, Sergeev D, Arp C, Forbes BC, Roy-Léveillée P et al
+                          (2022) Arctic roads and railways: social and environmental consequences of transport infrastructure in the circumpolar
+                          north. Arctic Science 9(2):297–330
+                  Povoroznyuk O, Vincent WF, Schweitzer P, Laptander R, Bennett M, Calmels F, Sergeev D, Arp C, Forbes BC, Roy-Léveillée P, Walker
+                          DA (2023) Arctic roads and railways: Social and environmental consequences of transport infrastructure in the circumpolar
+                          north. Arctic Science 9(2):297–330. https://doi.org/10.1139/as-2021-0033
+                  Rahman MA, Islam MI, Tabassum M, Bristy IJ (2025) Climate-aware decision intelligence: Integrating environmental risk into
+                          infrastructure and supply chain planning. Saudi J Eng Technol (SJEAT) 10(9):431–439
+                  Rouhana F, Jawad D (2025) A spatial-network approach to assessing transportation resilience in disaster-prone urban areas.
+                          ISPRS Int J Geo Inf 14(7):261
+Kontsevik et al. Applied Network Science                   (2026) 11:35                                                                                                          Page 26 of 26
+
+
+
+
+                  Russian Federation Ministry or Agency: Regulatory Document No. 469501126 (2025). ​h​t​t​p​s​:​/​/​d​o​c​s​.​c​n​t​d​.​r​u​/​d​o​c​u​m​e​n​t​/​4​6​9​5​0​1​1​
+                        2​6​​​​ Accessed 2025–12-08
+                  Serova NA, Serova VA (2019) Critical tendencies of transport infrastructure development in the Russian arctic. Arctic and North
+                        36:35–46
+                  Severnaya Transportnaya Kompaniya (STK): Letnyaya navigatsiya: Summer Navigation Schedule, Naryan-Mar Routes (2025). ​h​t​t​p​
+                        s​:​​/​/​s​t​k​​n​a​o​.​r​u​​/​r​a​s​​p​i​s​a​n​​i​e​/​l​e​​t​n​y​a​y​a​​-​n​a​v​​i​g​a​c​z​i​y​a​.​h​t​m​l Accessed 2025–12-08
+                  Stephenson SR, Smith LC, Agnew JA (2011) Divergent long-term trajectories of human access to the arctic. Nat Clim Chang
+                        1(3):156–160
+                  Sun J, Zhai N, Mu H, Miao J, Li W, Li M (2024) Assessment of urban resilience and subsystem coupling coordination in the
+                        beijing-tianjin-hebei urban agglomeration. Sustain Cities Soc 100:105058
+                  TSAero: Flight Operations and Schedules. Regional aviation services. (2025). http://www.tsaero.ru Accessed 2025–12-08
+                  Taimyr24.ru: Transport Section: Aviation and Regional Connectivity. Taimyr Peninsula transport news including air connectivity.
+                        (2025). https://taimyr24.ru/left_menu/transport/ Accessed 2025–12-08
+                  Touloumidis D, Madas M, Zeimpekis V, Ayfantopoulou G (2025) Weather-related disruptions in transportation and logistics: A
+                        systematic literature review and a policy implementation roadmap. Logistics 9(1):32
+                  Transport Canada: Canadian Aviation Regulations (CAR) Section 602.11: Aircraft Operation in Icing Conditions. Accessed 14 Dec
+                        2024 (2025). ​h​t​t​p​s​:​​/​/​l​a​w​​s​-​l​o​i​s​​.​j​u​s​​t​i​c​e​.​​g​c​.​c​a​​/​e​n​g​/​r​​e​g​u​l​​a​t​i​o​n​s​/​S​O​R​-​9​6​-​4​3​3​/
+                  Various Aircraft Manufacturers: Operating Instructions for Specific Aircraft Models. (2009). Standard aircraft flight operation
+                        manuals for Arctic aviation
+                  VK Community -67555736 (Yakutia Roads Group): Post on Winter Roads or Arctic Infrastructure Update (2025). ​h​t​t​p​s​:​/​/​v​k​.​c​o​m​/​
+                        w​a​l​l​-​6​7​5​5​5​7​3​6​_​8​5​4​9​7​​​​ Accessed 2025–12-08
+                  Waite T, Evans M, Kholod N, Blahut N, Rowland J (2023) Review of quantitative methods to assess impacts of changing climate
+                        and socioeconomic conditions on arctic transportation systems. Ambio 52(7):1155–1169
+                  Wang Y, Cai Y, Xie Y, Chen L, Zhang P (2023) An integrated approach for evaluating dynamics of urban eco-resilience in urban
+                        agglomerations of China. Ecol Ind 146:109859
+                  Wang T, Qu Z, Yang Z, Nichol T, Clarke G, Ge Y-E (2020) Climate change research on transportation systems: Climate risks, adap-
+                        tation and planning. Transp Res Part D: Transp Environ 88:102553
+                  Xinran Wang DW, Shan X (2023) Analysis of regional resilience network from the perspective of relational and dynamic equilib-
+                        rium. J Clean Prod
+                  Ye Y, Wen H, Zhang L, Zheng Y, Li Y (2025) A multi-factor integrated vulnerability assessment framework for multi-layer intercity
+                        road networks considering cross-layer path selection. Physica A 130807
+                  Yin K, Wu J, Wang W, Lee D-H, Wei Y (2023) An integrated resilience assessment model of urban transportation network: A case
+                        study of 40 cities in china. Transp Res Part A Policy Pract 173:103687
+                  Yin K, Mostafavi A (2023) Deep learning-driven community resilience rating based on intertwined socio-technical systems
+                        features. arXiv:2311.01661
+
+
+                  Publisher's Note
+                  Springer Nature remains neutral with regard to jurisdictional claims in published maps and institutional affiliations.
+

@@ -1,0 +1,489 @@
+      Assessment of spatial inequality in agglomeration
+                          planning
+
+ Georgii Kontsevik1[0000-0003-4757-8865], Igor Lavrov1[0000-0003-2506-8995], Aleksandr Moro-
+ zov1[0009-0009-0889-9683], Leonid Kharlov1[0000-0002-6880-1766] and Sergey Mityagin1[0000-0001-
+                                             9877-1687]
+
+
+               1
+                   ITMO University, Birzhevaya line, 14, Saint-Petersburg, Russia
+                               mityagin.spb@gmail.com
+
+
+
+       Abstract. The paper considers the problem of spatial inequality of agglomera-
+       tions. The paper proposes an approach to the estimation of spatial inequality
+       based on the intermodal transport graph and data on the placement of urban ser-
+       vices in the agglomeration cities. This approach has been experimentally tested
+       on the agglomeration of St. Petersburg. The result is an assessment of the influ-
+       ence of cities in relation to each other, as well as the evaluation of each city by
+       the availability of a particular type of service.
+
+       Keywords: Network modeling, City graph, Agglomeration, Settlement system,
+       Urban planning, Urban Environment Model, Informational Model, Algorithms
+       on Graphs, Urban Neighborhood Model, Urban Environment Model, Urban
+       Neighborhood Centrality, Urban Neighborhood Profile.
+
+
+1      Introduction
+
+The article is about spatial inequality of urban agglomerations. The spatial inequality is
+defined as the socio-economic inequality of the population caused by differences in the
+development of territories. Such distinctions, in turn, can be caused not only by geo-
+graphical, but also historical, cultural and other reasons [1].
+   The concept of spatial inequality is closely connected with the assessment of the
+quality of life for the population of the studied territory. There are many studies on the
+implementation of such an assessment in terms of one or more factors – for example,
+the level of income or level of education [2], but there is no consensus among research-
+ers on the rules for building a comprehensive assessment of the quality of life for the
+population of a particular territory. This is partly due to the fact that there is no unified
+definition of what "quality of life" is and what parameters it includes. In particular, the
+following groups of parameters can be identified [3]: physical, mental, psychological,
+social, cultural, economic, political and environmental, but there is no clear understand-
+ing of how they can be formalized to build an integral assessment for the purpose of
+comparing different territories with each other.
+   The heterogeneity of the quality of life is clearly manifested when considering such
+urban systems as agglomerations. The concept of "agglomeration" itself is quite vague:
+2
+
+
+it is not part of a formal administrative-territorial division and has no clear boundaries.
+In this regard, the same agglomeration, depending on the chosen approach to defining
+its boundaries, may include different towns and villages [4]. An urban agglomeration
+is a group of cities that are territorially close and have stable economic, labor, recrea-
+tional and cultural relations [5]. The region where an urban agglomeration is located
+should have a highly developed transport infrastructure, be spatially compact and eco-
+nomically closely integrated [6]. Urban agglomeration is a natural stage of urban de-
+velopment and urbanization, when cities in specific regions begin to "cooperate", not
+just compete with each other [7]. Urban agglomerations have some characteristics, such
+as the integrity of economic markets, functional connectivity of territories, which are
+achieved due to the developed transport infrastructure [8].
+    This paper studies the concept of spatial inequality of territories and proposes an
+approach to its assessment for agglomerations based on the construction of the transport
+graph and data on the availability of services in the cities of agglomerations. Experi-
+mental testing of the method was carried out on the example of the agglomeration of
+St. Petersburg (Russia), which includes a number of territories of the city itself and the
+surrounding cities of the Leningrad region. This agglomeration is the second largest in
+the Russian Federation (after Moscow agglomeration) and is of interest for the study
+partly because of the known heterogeneity of population on its territory.
+
+
+2      Territorial dissimilarities in settlement systems
+
+The settlement system in this paper is defined as a set of settlements that are territorially
+close and functionally interconnected [9]. One of the actual problems both within one
+and between several settlement systems is the differences in the quality of settlement
+life caused not only by geographical differences of territories, but also by the histori-
+cally established socio-economic disparities in their development.
+    On one scale of consideration, agglomerations can be chosen as a settlement system.
+In general, agglomerations can be defined as sets of cities and surrounding territories,
+united by stable links of various types (labor, cultural, infrastructural) between their
+populations. However, the delimitation of the boundaries of agglomerations, as well as
+the boundaries of other settlement systems, is subject for a discussion due to the lack
+of a unified approach among researchers.
+
+
+2.1    Approaches for delimitation of agglomeration borders
+
+The question of delimitating the boundaries of agglomeration depends on which pro-
+cesses are chosen as fundamental for the formation of such a system of human settle-
+ment. The two main categories of approaches to defining the concept of agglomeration
+can be distinguished as economic and functional [10].
+   The economic approach is based on statistical data on the socio-economic processes
+in which the territory in question is involved. Such data for agglomerations can be the
+following [11]:
+                                                                                           3
+
+
+ number of cities with population over a certain threshold;
+ per capita GDP;
+ non-agricultural industries’ impact on the GDP;
+ clear distinction of economic belts of certain transportation radii.
+
+   The functional approach is based on actual data on the human settlement and inter-
+connections between settlements. The advantage of the approach is a broader set of data
+that is publicly available: the number of population of territories and their parts, the
+characteristics of transport infrastructure, the location and parameters of services – lo-
+cations of interest to the population satisfying certain needs. In this regard, this ap-
+proach was chosen for the construction of the agglomeration assessment model in the
+framework of this work.
+
+
+2.2    Spatial inequality problem: case study and countermeasures
+
+One of the reasons of spatial inequality is different opportunities for earning money
+between more advantaged areas with more amenities and services and peripheries and
+rural areas that become poorer in comparison. Mastronardi and Cavallo's study demon-
+strates that income inequality appears to be greater in “densely populated urban centers
+with a high incidence of tertiary activities and young population” [12].
+    However, it would be unreasonable to avoid creating urban centers since while rural
+areas exhibit lower inequality, they also often lack basic healthcare, education, and mo-
+bility services. In fact, setting up infrastructure in sparsely populated areas would be
+too costly. So, rather than abolishing metropolises, Mastronardi and Cavallo suggest
+redistributive policies that are supported by policies that affect market functioning, cor-
+porate governance, intergenerational transmission of advantages and disadvantages,
+and the link between structural and sectorial policies [12].
+    Other studies also demonstrate that “high mobility areas have (i) less residential seg-
+regation, (ii) less income inequality, (iii) better primary schools, (iv) greater social cap-
+ital, and (v) greater family stability” [13] while “policies that exogenously improve
+amenities in low-public good communities may increase segregation” [14]. Besides, as
+the model of Sun et al. suggests, market-driven residential redevelopment tends to ex-
+acerbate spatial inequality through facilitating income sorting (concentration of people
+with high income in the advantaged areas) [15].
+    Reducing the spatial inequality of agglomerations can be carried out in different
+ways:
+    (1) local actions – adding new opportunities for the population by creating new ser-
+         vices in needy settlements;
+    (2) connecting actions – improving the transport connectivity of the agglomeration
+         through measures to improve its transport system;
+    (3) administrative actions – by means of dispositive correction of the composition
+         of agglomerations through stimulating measures for the settlement of people.
+4
+
+
+3      Spatial inequality modeling
+
+Cities located outside the agglomeration core cannot always provide the full range of
+services and opportunities to residents that are available in the "center" [16, 17]. There
+are several common reasons why residents of peripheral cities travel to neighboring or
+central cities [18]: work, education, retail, recreation.
+   In this paper, spatial inequality is assessed through the accessibility/sufficiency of
+large shopping and entertainment centers. Travelling from one city to another within
+an agglomeration for the purpose of shopping is one of the most common after work
+and study [18]. Data on labor migration is not openly available, so it is not expected to
+be used.
+   Retail trade is an important component of the urban economy. Large objects of trade
+can have a wide service area and a large temporary transport accessibility (from 30
+minutes) [19]. Cities and towns where such shopping centers are located can be points
+of attraction, serving the needs of neighboring territories.
+
+
+3.1    Selected agglomeration description
+
+St. Petersburg agglomeration (the second largest in Russia) was chosen for the analysis
+due to the known heterogeneity of population on its territory. The selected agglomera-
+tion is shown on Figure 1.
+
+
+
+
+                          Fig. 1. Saint Petersburg agglomeration
+                                                                                          5
+
+
+   For the analysis and assessment of spatial inequality, the cities and settlements that
+are part of St. Petersburg and the Leningrad Oblast were selected according to the stud-
+ies dedicated to the identification of the boundaries of the St. Petersburg agglomeration
+[16,18]:
+
+ St. Petersburg (Central, Admiralteisky, Petrogradsky, Vasi-leostrovsky, Kalininsky,
+  Krasnogvardeisky, Nevsky, Frunzensky, and Kirovsky administrative districts as a
+  whole; Primorsky district without the municipal entity Lakhta-Olgino and the settle-
+  ment of Lisy Nos; Vyborgsky district without the settlement of Levashovo and Par-
+  golovo; Moscow district without the territories of Aviagorodok and Pulkovo; Kras-
+  noselsky district without Krasny Selo and Gorelovo);
+ cities within the administrative boundary of St. Petersburg (Kol-pino; Pushkin; Pe-
+  terhof; Shushary; Krasnoye Selo; Kronstadt; Pargolovo; Lomonosov; Sestroretsk;
+  Zelenogorsk);
+ cities within the Leningrad Oblast (Gatchina; Vyborg; Vsevolozhsk; Sosnovy Bor;
+  Sertolovo; Murino; Tosno; Kudrovo).
+
+
+3.2    Data selection and preprocessing
+
+To model the spatial inequality of the St. Petersburg agglomeration the following data
+are needed:
+
+ population and cities in the agglomeration;
+ about shopping and entertainment centers and their areas;
+ intracity and external public transport routes.
+
+   Population data are taken from the Federal State Statistics Service of the Russian
+Federation Rosstat according to the results of the census for 2020 [20]. Geometries of
+the agglomeration cities and data on shopping centers were obtained using the open
+mapping service OpenStreetMap (OSM) [21]. The routes and stops of intracity (bus,
+trolleybus, streetcar, metro) and external (trains and electric trains) public transport are
+also taken from OSM by appropriate tags. The CityGeoTools library for modeling the
+intermodal graph [22] is used to calculate the time of accessibility of shopping centers
+and travel time between cities.
+
+
+3.3    Accessibility graph: algorithm and construction
+
+   A public transport graph was used to model service availability. The general scheme
+of the algorithm is shown in Figure 2:
+
+
+
+
+                           Fig. 2. General outline of the algorithm
+6
+
+
+   The first step is to select the types of transport used for modeling, as well as the cities
+included in the agglomeration. Types of public transport selected for modeling the in-
+termodal transport graph: tram, trolleybus, bus, train, subway. It is necessary to con-
+sider intra-city modes of public transport, as accessibility is modeled between the cen-
+ters of cities. In this paper, we have not considered accessibility by private car, as this
+was not the purpose of the work.
+   At the second stage, an intermodal graph was constructed for each city. The general
+scheme of graph construction for one city is shown in Figure 3 below:
+
+
+
+
+                        Fig. 3. Graph modeling algorithm for one city
+
+   The graph modeling algorithm is taken from the work [23]. At the first stage, routes
+and stops for the selected type of transport are loaded from OSM. Then they are com-
+bined into a single network for each type of transport. At the end, all types of transport
+are combined into one network, forming a single graph. The weights of the edges is the
+time between the nodes (PT stops) of the graph. The difference from the work [23] in
+this case is that to build a graph for agglomeration it is necessary not to cut the transport
+routes by the geometry of the city, as it is done in the mentioned work (but it is possible
+to limit them by the geometry of the selected area to discard unnecessary information).
+Thus, a route from the OSM data relating to a city can go beyond the city, for example,
+when a bus or train travels from one city to another. This change made it possible to
+obtain data on connections between cities.
+   The transport graph for one city, without cutting the routes by the city boundaries is
+shown in Figure 4.
+   It is important to note that Vyborg and St. Petersburg are connected by a high-speed
+train line. The most distant from the other cities of the agglomeration, still connected
+to the analyzed city centers, is Vyborg. Since in the current method the train speed is
+the same everywhere in the graph, the weight of the edge was manually changed in
+order to highlight the line. The high-speed train line on the transport subgraph is high-
+lighted for clarity in Figure 5. Such a line exists only between these two cities in the
+agglomeration and this reflects the inequality of the spatial component of the equity in
+high-speed railways (HSR) [24]. Thus, this train allows Vyborg to be a full-fledged part
+of the St. Petersburg agglomeration and maintain a good level of influence in the cotext
+of social services, such as aforementioned “malls”.
+                                                                                             7
+
+
+
+
+                       Fig. 4. Transportation routes outside the city
+
+
+
+
+Fig. 5. High-speed train between Vyborg and St. Petersburg (the core of the agglomeration)
+8
+
+
+   After obtaining the transport graph of one city, it is necessary to connect it to the
+graph of the neighboring city. However, we cannot be sure that one route in the graph
+of one city ends where the next route of another type in another graph begins. This
+mismatch can be seen in the following Figure 6:
+
+
+
+
+Fig. 6. Non-intersecting transport graphs of cities; and united non-intersecting transport graphs
+of cities
+
+    In order to connect the graphs of the two cities it is necessary to take into account
+the possible transfers between one or more modes of transport. Thus, the nearest nodes
+of the graphs (stops) within a radius of 100 meters were connected by a line. This con-
+nection reflects the possibility of walking between stops. Accordingly, the weight of
+such an additional edge will be the Euclidean distance between the points (the length
+of the edge) divided by the speed of a pedestrian. It should be noted that in this case it
+was not possible to construct a path between two selected points on the pedestrian
+graph, because sometimes transport routes end at the stations, where there is no pedes-
+trian graph.
+    As a result, a transport graph covering the entire St. Petersburg agglomeration was
+obtained, which is shown in Figure 7:
+                                                                                          9
+
+
+
+
+                 Fig. 7. Transport graph for the St. Petersburg agglomeration
+
+   In order to calculate the distances between cities on the transport graph it is necessary
+to use the following algorithm, as is shown in Figure 8:
+
+
+
+
+               Fig. 8. The algorithm for calculating accessibility between cities
+
+    This algorithm calculates accessibility between cities by different types of transport
+using transfers between them.
+    The distribution of shopping centers in St. Petersburg and Leningrad region by area
+is shown in Figure 9:
+10
+
+
+
+
+Fig. 9. Distribution of Shopping Centers in Leningrad Oblast by area and distribution of shopping
+centers in Leningrad Oblast with area larger than average
+
+   Since the OSM data does not always accurately reflect reality and there may be small
+shopping centers under the mall tag, and to reflect the fact that people are more likely
+to go to another city for a large shopping center, only shopping centers with a larger
+than average area in the Leningrad region were selected. The distribution of all malls
+and only those whose area is larger than the average is shown in Figure 9.
+
+   In order to estimate the spatial inequality in the agglomeration, it is necessary to
+calculate the inequality coefficient:
+   Let 𝐾 - be the number of cities in the agglomeration:
+
+ 𝑙𝑖𝑛𝑘 - normalized connectivity between cities 𝑖 and 𝑗. Constraint: 𝑙𝑖𝑛𝑘 <
+   120 𝑚𝑖𝑛.;
+ 𝑆𝑒𝑟𝑣𝑖𝑐𝑒𝑠 - the number of services in the city;
+ 𝐼 - the inequality indicator for the selected city;
+ 𝑃𝑜𝑝𝑢𝑙𝑎𝑡𝑖𝑜𝑛 - the population in the selected city.
+
+                      𝐼 =               +∑      𝑙𝑖𝑛𝑘 ∙                                       (1)
+
+
+   In this paper, we use normalized weighting coefficients, because we compare cities
+only within the agglomeration and not with the target value. As a result of calculating
+the coefficient of spatial inequality between the cities of the St. Petersburg agglomera-
+tion, we obtained an estimate for each city based on its distance from the other cities
+and the number of services in the considered and the nearest cities. The right side of the
+equation is shown in Figures 10 and 11. Figure 10 shows directly the weighting coeffi-
+cient of the connection between the cities (𝑙𝑖𝑛𝑘 ). Figure 11 shows the impact of cities
+on each other, taking into account transport connectivity and the presence or absence
+of the services in question. The results are presented as a map in Figure 12 below. The
+values of the obtained indicators are presented in Table 1.
+                                                                                            11
+
+
+
+
+Fig. 10. Normalized weight coefficient of transport connection of cities in the agglomeration
+
+
+
+
+                    Fig. 11. Weights of influence of cities on each other
+12
+
+
+
+
+Fig. 12. Provision of cities with "mall" service, taking into account the influence of neighboring
+                                               cities
+
+                               Table 1. Indicator threshold values
+
+  Minimum value           Maximum value                          Description
+       0                       0.2               The territory practically lacks the neces-
+                                                 sary number of places providing the ser-
+                                                 vice; the transport connection with the
+                                                 neighboring territories provided with the
+                                                 service is very poor
+          0.2                     0.4            There are few or almost no service
+                                                 points in the area, but the transport con-
+                                                 nection to the neighboring service areas
+                                                 is good
+          0.4                     0.6            The area is well provided with the ser-
+                                                 vice and has stable transportation links
+                                                 with neighboring areas, compensating
+                                                 the lack of its own needs
+          0.6                     0.8            Territory is well provided with the ser-
+                                                 vice, covering its own needs, but cannot
+                                                 cover the needs of neighboring areas
+          0.8                      1             Territory is provided with the service to
+                                                 the extent that fully covers its and neigh-
+                                                 boring territories' needs
+                                                                                            13
+
+
+4      Discussion
+
+The calculation of the indicator in this paper is based on the transport graph of the
+region and data on the location of individual services. The indicator allows to compare
+the spatial inequality of individual cities of the agglomeration and thereby identify the
+most problematic places. Solutions to reduce the spatial inequality can be either adding
+new service points to the cities with the lowest index value, or improving their transport
+connections with neighboring cities with the best index values through the development
+of intercity transport infrastructure.
+   At the same time, real passenger flows and the capacity of service points are not
+taken into account due to the lack of detailed data. In addition, transport interconnec-
+tions are considered as potentially possible for the existing infrastructure - in reality,
+without a survey it is difficult to predict the purpose of trips of specific passengers, i.e.
+the demand for specific services and the need to move between the cities of the agglom-
+eration for a specific service. This aspect should be considered in further studies of
+intra-regional spatial inequality.
+
+
+5      Conclusion
+
+The paper considers the concept of urban agglomeration, spatial inequality. The assess-
+ment of spatial inequality was carried out by constructing an intermodal transport graph
+with the selected type of service on the example of "mall" and its application on the
+example of St. Petersburg agglomeration.
+   As a result of modeling, it was possible to see the influence of cities on each other
+in the agglomeration, taking into account their transport connectivity. It can be seen
+that the cities that are closer to the center of the agglomeration are not equal to the more
+distant cities. This happened due to their poor connectivity and the lack of points of
+attraction (selected services) within these cities.
+
+Acknowledgements. This research is financially supported by the Russian Science
+Foundation, Agreement 17-71-30029 (https://rscf.ru/en/project/17-71-30029/), with
+co-financing of Bank Saint Petersburg.
+
+
+References
+ 1. D.i., U.: Theoretical and methodological foundations of economic inequality of regions.
+    Vestnik (Herald) of Belgorod State Technological University named after V. G. Shukhov,
+    120–126 (2018).
+ 2. Galster, G., Sharkey, P.: Spatial foundations of inequality: A conceptual model and empiri-
+    cal overview. RSF: The Russell Sage Foundation Journal of the Social Sciences. 3, 1–33
+    (2017).
+ 3. Sinha, B.R.K.: Introduction: An Overview of the Concept of Quality of Life. In: Sinha,
+    B.R.K. (ed.) Multidimensional Approach to Quality of Life Issues: A Spatial Analysis. pp.
+    3–23. Springer, Singapore (2019).
+14
+
+
+ 4. Liang, J., Li, F., Mao, L.: Review of the methods of delimitation for the spatial scope of
+    urban agglomeration. In: 18th International Conference on Geoinformatics, 1–10 (2010).
+ 5. Fang C., Yu D.: China’s Urban Agglomerations. Springer Geography (2020).
+ 6. Fang C., Yu D.: Overview of the fundamental connotation and strategic position of China’s
+    urban agglomerations. Springer Geography, 1–63 (2020).
+ 7. Georgievich A.E.: Оutlines of the theory of urban agglomerations’ self-development. Re-
+    gional economy (2012).
+ 8. Tokunova G.: Transport Infrastructure as a Factor of Spatial Development of Agglomera-
+    tions (Case Study of Saint Petersburg Agglomeration). Transportation Research Procedia.
+    20, 649–652 (2017).
+ 9. Tkachenko, A. A.: Key concepts of the theory of resettlement: an attempt to rethink. Vestnik
+    (Herald) of Moscow University. Series 5. Geography, 10–15 (2018).
+10. Antonov, E. V., Makhrova, A. G.: Largest urban agglomerations and super-agglomerations
+    in Russia. Izvestiya Rossiiskoi akademii nauk. Seriya geograficheskaya, 31–45 (2019).
+11. Fang, C., Yu, D.: Urban agglomeration: An evolving concept of an emerging phenomenon.
+    Landscape and Urban Planning. 162, 126–136 (2017).
+12. Mastronardi, L., Cavallo, A.: The spatial dimension of income inequality: An analysis at
+    municipal level. Sustainability. 12, 1622 (2020).
+13. Chetty, R., Hendren, N., Kline, P., Saez, E.: Where is the land of opportunity? The geogra-
+    phy of intergenerational mobility in the United States. The Quarterly Journal of Economics.
+    129, 1553–1623 (2014).
+14. Banzhaf, H.S., Walsh, R.P.: Segregation and Tiebout sorting: The link between place-based
+    investments and neighborhood tipping. Journal of Urban Economics. 74, 83–98 (2013).
+15. Sun, W., Fu, Y., Zheng, S.: Local public service provision and spatial inequality in Chinese
+    cities: The role of residential income sorting and land-use conditions. Journal of Regional
+    Science. 57, 547–567 (2017).
+16. Reznikov I.L.: Vyyavlenie granic Sankt-Peterburgskoj gorodskoj aglomeracii. Vestnik
+    Sankt-Peterburgskogo universiteta Nauki o Zemle. 64, 89–103 (2017).
+17. Garreau Joel: Edge city: life on the new frontier. 548 (1992).
+18. Lachininsky S.S., Sorokin I.S.: Spatial structure and the development of settlements in the
+    Saint Petersburg agglomeration. Baltic Region. 13, 48–69 (2021).
+19. Yigitcanlar T., Sipe N., Evans R., Pitot M.: A GIS‐based land use and public transport ac-
+    cessibility indexing model. 44, 30–37 (2010).
+20. Rosstat — Vserossijskaya perepis’ naseleniya 2020 goda, https://rosstat.gov.ru/vpn_popul,
+    last accessed 2023/04/07
+21. OpenStreetMap, https://www.openstreetmap.org/#map=10/59.9512/30.2303, last accessed
+    2023/04/05
+22. CityGeoTools - python package of methods developed for analysis of the urban environ-
+    ment, https://github.com/iduprojects/CityGeoTools, last accessed 2023/03/15
+23. Mishina, M., Khrulkov, A., Solovieva, V., Tupikina, L., Mityagin, S.: Method of intermodal
+    accessibility graph construction. Procedia Computer Science 212, 42–50 (2022).
+24. Cavallaro, F., Bruzzone, F., Nocera, S.: Spatial and social equity implications for high-speed
+    railway lines in Northern Italy. Transportation Research Part A: Policy and Practice 135,
+    327–340 (2020)
+

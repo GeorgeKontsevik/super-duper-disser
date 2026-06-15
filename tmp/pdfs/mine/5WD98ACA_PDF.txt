@@ -1,0 +1,1159 @@
+Tab 2
+Research Paper/Article
+
+Title:​
+Assessment of Transport Networks Stability in the context of Climate
+Stressors on Urban Agriculture Supply Chain in Equatorial regions.
+
+Abstract
+
+
+Introduction (1–1.5 pages)
+Cities across the equatorial belt are expanding at unprecedented rates, and this rapid urban
+growth is transforming the way food moves from farms to consumers. Unlike temperate regions,
+where climate patterns follow relatively predictable seasonal cycles, equatorial cities must
+contend with intense rainfall, high temperatures, rising flood risks, and year-round agricultural
+activity. As a result, food systems in these regions depend heavily on transportation networks
+that operate under near-constant environmental stress. These networks, which include roads,
+bridges, and feeder routes from peri-urban farms, function as the “circulatory system” of the
+urban food economy. When they fail, disruptions ripple quickly through supply chains and
+threaten food access for millions.
+
+Urban agriculture has become an increasingly important buffer for food security in these
+fast-growing regions, especially where formal food distribution systems remain underdeveloped.
+Yet the success of urban agriculture hinges on the reliability of transport infrastructure. Even
+minor disruptions can slow the movement of perishable goods, increase spoilage, and destabilize
+market prices. Studies consistently show that the majority of food consumed in low- and
+middle-income urban areas is sourced through rural–urban supply chains, making transport
+connectivity central to both availability and affordability of food [1]. When climate-related
+hazards interrupt these links, the impacts extend well beyond localized damage. Modeling
+evidence demonstrates that even isolated network disruptions can generate indirect losses across
+entire regions, affecting households and businesses that are not directly exposed to the hazard
+[2].
+
+Climate change is intensifying the frequency and severity of disruptive weather events in
+equatorial regions. Short, intense rainfall episodes—common in these climates—have been
+empirically linked to abrupt declines in road serviceability and transport operations. Projections
+indicate that these interruptions will grow more frequent as climate conditions shift [3]. Flooding
+remains the most immediate concern, but the risks are compounded in cities where impermeable
+land cover, rapid urban expansion, and the urban heat island effect accelerate infrastructure
+degradation [4]. Low-lying neighborhoods, which often serve as transit corridors between
+peri-urban farms and central markets, face particularly high vulnerability.
+
+Despite growing recognition of these challenges, existing research has not sufficiently examined
+the intersection of transport network stability, climate stressors, and urban agriculture. Much of
+the literature focuses on export commodities or passenger transport, overlooking the unique
+characteristics of urban food supply chains. Food systems in equatorial cities often rely on
+informal markets, short delivery cycles, and decentralized production sites—features that alter
+how climate hazards propagate through the network.
+
+This study addresses these gaps by assessing the stability of transport networks in equatorial
+regions under different climate stress scenarios, with a focus on their role in urban agriculture
+supply chains. By combining open-source transport data, climate indicators, and spatial network
+models, we identify vulnerable corridors, quantify potential impacts of climate-induced
+disruptions, and highlight opportunities for improving resilience. Understanding these dynamics
+is crucial for guiding infrastructure investments, strengthening urban food systems, and
+protecting vulnerable communities in the face of growing climate uncertainty.
+
+
+Literature Review
+   ●​ 2.1 Urban Agriculture: Concept & Trends
+
+Urban agriculture is a broad concept encompassing a wide variety of food production practices
+within cities and surrounding areas, including everything from small-scale home gardens to large
+commercial peri-urban farms. Although widely acknowledged in policy and academic circles,
+the term lacks a universally accepted definition, as it encompasses a diverse range of practices,
+scales, and motivations. For this review, we adopt a functional definition that highlights urban
+agriculture’s role in providing food for cities, which includes both intra-urban production and the
+peri-urban agricultural zones that serve as vital suppliers to urban markets.
+
+The rapid global trend toward urbanization has significantly altered food system dynamics,
+particularly in low- and middle-income countries, where urban growth rates are the highest.
+Cities in these regions have become hubs for food consumption, serving as aggregation points
+for the production and distribution of goods to a growing urban population. However, this
+transformation has made cities increasingly dependent on complex supply chains that connect
+rural producers with urban consumers [1]. In equatorial regions, this process is further
+complicated by the rising demand for fresh produce and staple goods, creating pressure on
+supply chains to source food from increasingly distant agricultural zones.
+
+In Africa, urban and peri-urban agriculture are key components of food security strategies. In
+many West African cities, for example, agricultural supply chains remain informal and
+vulnerable to the challenges of underdeveloped infrastructure. Studies in Ghana’s Accra
+metropolis illustrate how food provisioning relies on a web of wholesalers, transporters, and
+market vendors operating with minimal institutional support [5]. Similarly, comparative research
+across Ouagadougou (Burkina Faso), Bamako (Mali), and other West African cities reveals how
+regional distribution dynamics vary according to factors such as seasonality and product type [6].
+
+In Southeast Asia, rapid urbanization has led to significant pressures on both agricultural
+production and transport infrastructure. Cities like Jakarta and Manila, for instance, face dual
+challenges of urban sprawl and climate vulnerability, including frequent flooding and the rise of
+urban heat islands. These challenges not only threaten agricultural zones but also jeopardize the
+transport networks critical for food distribution [4]. In some areas, urban expansion has led to the
+conversion of agricultural land into residential and industrial zones, reducing local food
+production capacity and increasing dependence on distant rural areas, which amplifies the
+vulnerability of transport networks.
+
+In South America, large-scale commodity agriculture dominates; yet, even here, disruptions to
+transportation networks can have serious consequences. Research on Brazil’s soybean export
+corridors demonstrates how road disruptions result in substantial cost increases, with disruptions
+exceeding 10% on key routes during perturbation scenarios [7]. Though this study focuses on
+export commodities, it offers valuable insights for urban agriculture supply chains, which
+similarly rely on well-maintained and reliable transport routes for the movement of goods.
+
+Emerging Challenges
+
+Across all equatorial regions, the challenges faced by urban agriculture are compounded by
+climate change, aging infrastructure, and weak governance. Many urban food systems, especially
+in the equatorial areas, operate informally without coordinated policy frameworks or substantial
+investment in infrastructure. Informal markets often lack basic facilities, such as cold storage or
+loading zones, making them highly susceptible to transport disruptions. These vulnerabilities are
+exacerbated by the increasing frequency and severity of extreme weather events, which further
+highlight the need for climate-resilient transport infrastructure to support urban food supply
+chains [5].
+
+   ●​ 2.2 Supply Chain Impact Factors
+
+The stability and efficiency of urban agriculture supply chains depend on a multitude of factors,
+including market accessibility, the quality of road infrastructure, and climate stressors. These
+factors do not operate in isolation but instead interact in ways that can amplify vulnerabilities,
+particularly in equatorial cities.
+Market Accessibility and Infrastructure
+
+Market accessibility includes both physical access to markets via roads and the economic access
+to affordable food, which is shaped by transaction costs, market power, and access to
+information. In equatorial cities, poor infrastructure and congestion exacerbate the vulnerability
+of food systems to transport disruptions. Informal markets, which are prevalent in many African
+and Asian cities, are particularly at risk due to their reliance on poorly maintained roads and the
+absence of cold storage or other critical facilities [5].
+
+Research in Accra highlights how the lack of formal planning for urban food distribution results
+in inefficient market locations, suboptimal routing, and a lack of capacity to respond to
+disruptions in the supply chain [5]. The fragmented nature of food supply systems in these cities
+means that even a minor disruption can have cascading effects, undermining food access for
+vulnerable populations.
+
+Road Infrastructure Quality and Network Criticality
+
+The quality of road networks is a key determinant of supply chain resilience. Critical road
+links—such as bridges or narrow streets—can have a disproportionate impact on network
+performance, especially when roads are already congested or in disrepair. In equatorial regions,
+many roads suffer from chronic underinvestment, making them prone to disruption from extreme
+weather events. For example, unpaved rural roads often become impassable during the rainy
+season, and urban roads may lack adequate drainage systems, rendering them vulnerable to
+flooding [2]. Network criticality analysis identifies the most important roads in a supply chain,
+focusing attention on those links that are most essential to the functioning of urban food systems.
+
+Climate Stressors
+
+Climate change introduces a range of stressors that threaten transport network stability,
+particularly in equatorial regions. Flooding, both riverine and pluvial, is one of the most
+immediate threats, with frequent short-duration, high-intensity rainfall events causing significant
+transport disruptions. Studies show that these extreme events will increase in frequency under
+climate change scenarios, leading to greater instability in transport networks [3]. The
+compounded effects of urban heat islands and land use change create further vulnerabilities,
+particularly in low-lying urban areas with poor drainage and high levels of impermeability [4].
+
+Flooding disrupts the movement of goods by blocking roads and limiting access to markets,
+while high temperatures accelerate pavement degradation, making roads more susceptible to
+flooding damage. These vulnerabilities are compounded by the increasing conversion of
+agricultural land to urban areas, which reduces the redundancy of supply routes and increases the
+reliance on already stressed transport networks.
+Global Case Studies
+
+Several global case studies demonstrate how disruptions to transport infrastructure can
+significantly affect food supply chains:
+
+   ●​ Tanzania: The DisruptSCT modeling framework applied to Tanzania shows how
+      transport failures can ripple through production and consumption networks, with indirect
+      losses affecting areas not directly impacted by the disruption [2]. This case study
+      emphasizes how disruptions to key links can trigger a cascade of economic losses,
+      illustrating the far-reaching impacts of transport instability.​
+
+   ●​ Brazil: Research on road disruptions in Brazil’s soybean export corridors reveals that
+      cost increases exceeding 10% occur on many routes during disruption scenarios [7].
+      These findings are highly relevant to urban agriculture, where similar disruptions to key
+      transport corridors can lead to significant increases in food prices and disruptions in
+      market supply.​
+
+   ●​ West Africa: Empirical studies in West African cities, such as Accra, highlight how
+      informal markets and inadequate infrastructure increase vulnerability to transport failures.
+      Research in Accra shows that ad hoc market locations and the absence of formal
+      city-level food distribution planning contribute to inefficiencies in food supply systems
+      [5].
+
+
+
+   ●​ 2.3 Transport Network Stability and Resilience
+
+Transport network stability—the ability of a network to maintain functionality under stress—is
+fundamental to supply chain resilience. For urban agriculture, where perishable goods must
+move quickly from production sites to markets, even brief transport disruptions can result in
+spoilage, price volatility, and food access gaps. This section reviews key concepts, methods, and
+findings from the literature on transport network resilience, with emphasis on applications
+relevant to urban food systems.
+
+Importance of Stability for Supply Chains
+
+Stable road networks maintain frequent, timely flows of staple and perishable goods; when links
+fail, indirect economic and food security impacts propagate across regions and actor groups[2].
+The importance of stability extends beyond simple connectivity to encompass reliability,
+redundancy, and adaptive capacity. Reliability refers to consistent travel times and costs;
+redundancy involves alternative routes or modes; and adaptive capacity reflects the ability of
+network users and managers to respond to disruptions through rerouting, demand management,
+or temporary infrastructure solutions.
+
+For urban agriculture supply chains, stability is particularly critical because:
+
+1. Perishability: Fresh produce has a limited shelf life, making delays costly.
+
+2. Frequency: Many urban markets require daily or near-daily deliveries, offering little buffer for
+disruptions.
+
+3. Scale: Small-scale producers and vendors often lack resources to absorb losses from spoilage
+or missed market days.
+
+4. Informality: Informal supply chains may lack contractual protections or insurance, placing the
+full burden of disruption on the most vulnerable actors.
+
+Key Research Findings
+
+The literature on transport network resilience has developed several analytical approaches that
+can inform assessments of urban agriculture supply chains:
+
+-Network Criticality and Input-Output Coupling: The DisruptSCT approach couples network
+criticality metrics with input-output and agent-based models to quantify direct and indirect
+impacts of transport disruption[2]. Network criticality analysis identifies links or nodes whose
+failure would most severely degrade system performance, while input-output modeling traces
+how disruptions propagate through economic sectors. Agent-based simulation adds behavioral
+realism by modeling how firms and households respond to disruptions. Applied to Tanzania, this
+integrated framework revealed that indirect losses from transport failures can exceed direct
+infrastructure damage costs by an order of magnitude, with impacts distributed unevenly across
+regions and socioeconomic groups[2]
+
+-Complex Network Theory and Flood Scenarios: Resilience assessment frameworks applying
+complex network theory together with designed flood inundation scenarios reveal spatial patterns
+of vulnerability and dynamic performance loss in coastal urban transport networks [8]. These
+studies typically construct networks as graphs (nodes and edges), apply disturbance scenarios
+(e.g., inundation at specified depths), and measure performance using metrics such as network
+efficiency, connectivity loss, and travel time increases. The approach allows identification of
+critical infrastructure and assessment of how network performance degrades under different
+flood severities.
+
+-Pluvial Flood Impact Modeling: Scenario-based modeling of pluvial flooding links rainfall
+intensity and duration to localized transport operational loss [3]. By simulating drainage system
+capacity and road inundation thresholds, these models estimate which road segments will
+become impassable under different rainfall scenarios. Coupling these estimates with climate
+projections provides forward-looking assessments of how transport disruption frequency and
+severity may change. Studies consistently find that short-duration,                high-intensity
+events—common in equatorial climates—pose the greatest disruption risk[3].
+
+Vulnerability Assessment Tools
+
+Common tools and metrics identified in the literature include:
+
+- Network criticality analysis: identifying essential links/nodes[2]
+
+- Input-output economic linkage modeling: tracing sectoral impacts[2]
+
+- Agent-based propagation simulation: modeling behavioral responses[2]
+
+- Complex network metrics: efficiency, betweenness centrality, robustness[8]
+
+- Flood inundation scenario design: linking hazard to network performance[3]
+
+- Techno-economic route disruption analysis: quantifying cost impacts[7]
+
+These tools offer complementary perspectives: network analysis focuses on structural properties,
+economic modeling traces indirect impacts, and scenario simulation explores dynamic responses.
+Integrating multiple approaches provides a more complete picture of resilience.
+
+Research Gaps
+
+Despite advances in transport network resilience research, several gaps remain, particularly
+regarding urban agriculture supply chains:
+
+1. Urban Agriculture-Specific Analysis: Most studies focus on general urban mobility,
+commuter traffic, or export commodities. The specific characteristics of urban agriculture supply
+chains—short distances, high frequency, perishability, informality—have received limited
+attention. There is insufficient evidence on how transport disruptions uniquely affect urban food
+systems compared to other supply chains.
+
+2. Integrated Assessment of Combined Stressors: Few studies fully integrate land use change,
+urban expansion, heat effects, and hydrological extremes in one framework[4,8]. Most analyses
+focus on a single stressor (usually flooding), missing potential interactions. For example,
+heat-induced pavement degradation may worsen flood damage, or urban expansion may
+simultaneously increase flood exposure and reduce network redundancy.
+
+3. Informal Market Dynamics: The role of informal markets in mediating transport disruptions
+is poorly understood. Informal systems may exhibit flexibility and adaptive capacity that formal
+models miss, or they may be more vulnerable due to a lack of resources and institutional support.
+Empirical research highlights the importance of informal markets in urban food systems but
+rarely integrates this understanding into quantitative resilience assessments[5,6].
+4. Standardized Methodologies: Context and commodity specificity complicate generalization;
+a corridor critical for one supply chain may be unimportant for another[2]. There is a need for
+standardized methodologies that can be adapted to different contexts while allowing comparison
+across studies. Such methods should reflect heterogeneous supply chain roles and policy
+objectives, enabling prioritization of investments that address the most critical vulnerabilities.
+
+
+
+   ●​ 2.4 Methods for Assessing Network Disruption
+          ●​ style outline: hydrological, accessibility, network theory methods.
+   ●​ 2.5 Best Practices and Recent Advances
+          ●​ Highlighting 2–3 papers (recent Q1 articles for structure) and what they do well.
+   ●​ 2.6 Gaps and Opportunities
+          ●​ Where the research fits in—lead smoothly into methodology.
+
+
+
+
+3. Methods (Materials & Methods)
+This section describes the data sources, analytical approach, procedural workflow, and
+limitations of the study. The methodology is designed to assess the stability of transport networks
+under climate stress scenarios for urban agriculture supply chains in equatorial regions, with an
+emphasis on reproducibility and transparency.
+
+3.1 Data Sources and Selection
+The study integrates multiple data sources to construct a comprehensive picture of transport
+networks, urban agriculture supply chains, and climate stressors.
+Transport network data (OpenStreetMap)
+OpenStreetMap (OSM) serves as the primary source for transport networks and road
+infrastructure. OSM provides open-access, crowd-sourced geographic information on road
+networks, including road classifications (primary, secondary, tertiary, residential), surface types
+(paved, unpaved), and connectivity [15, 17]. Despite limitations in data completeness and
+accuracy in some regions, OSM represents the most comprehensive openly available transport
+network dataset for many equatorial cities that lack official GIS infrastructure data [15].
+For this study, OSM data are extracted for selected equatorial urban regions using the OSMnx
+Python library [15], which facilitates downloading, modeling, and analyzing street networks.
+Road segments are classified by type and surface, allowing differentiation between major
+arterials and minor roads, and between all‑weather paved roads and more vulnerable unpaved
+routes.
+Climate indicators
+Climate stressor data are obtained from multiple sources:
+Historical rainfall data: Precipitation records from meteorological stations and gridded datasets
+such as CHIRPS [9] and ERA5 [10] provide historical patterns of rainfall intensity, duration, and
+frequency. These data are used to identify areas experiencing extreme rainfall events and to
+characterize typical and extreme conditions.
+Flood hazard maps: Where available, flood hazard maps from national agencies or global
+datasets (e.g., GLOFAS [12] or similar global flood hazard products) identify areas at risk of
+riverine or pluvial flooding. These maps are integrated with transport network data to identify
+vulnerable road segments [3, 8].
+Urban heat and land‑use data: Satellite-derived land surface temperature data (e.g., Landsat [13],
+MODIS [14]) and land‑cover classifications identify urban heat islands and areas with high
+impermeability. These indicators help assess combined climate vulnerabilities [4].
+Urban agriculture and market data
+Data on urban agriculture production zones and market locations are compiled from:
+
+   ●​ Published studies and reports documenting food supply chains in study cities [5, 6]
+   ●​ Market location data from municipal sources or OSM points of interest [17]
+
+These data are inherently less precise than transport network data, reflecting the informal and
+dynamic nature of urban food systems. Where comprehensive data are unavailable, proxy
+indicators (e.g., distance from city center, land‑use classification) are used [5, 6].
+Geographic scope
+The study focuses on selected cities in equatorial regions (broadly defined as latitudes within 15°
+of the equator), chosen to represent diverse contexts in terms of city size, economic
+development, and climate exposure. Cities are selected based on data availability, relevance to
+urban agriculture supply chains, and representation of different continental regions (Africa, Asia,
+South America) [1, 4].
+Rationale for data selection
+The choice of open‑source data (OSM, CHIRPS, ERA5, Landsat/MODIS) prioritizes
+reproducibility, accessibility, and applicability to data‑scarce contexts [9, 10, 13, 14, 15]. While
+proprietary or official datasets may offer higher accuracy in specific cases, open‑source data
+enable replication and extension of the methodology to other cities and regions. The integration
+of multiple data types—transport, climate, agricultural—reflects the multi‑dimensional nature of
+supply‑chain resilience [2, 3, 8].1
+
+3.2 Analytical Approach
+The analytical framework consists of four main steps: network extraction and characterization,
+climate indicator integration, vulnerability metrics calculation, and spatial analysis. Each step
+employs established methods adapted to the urban agriculture supply‑chain context [2, 3, 8, 15,
+16].
+Step 1: Network extraction and characterization
+Transport networks are extracted from OSM using OSMnx [15], which constructs graph
+representations of road networks with nodes (intersections) and edges (road segments). Network
+characterization includes:
+Classification: Roads are classified by type (primary, secondary, tertiary, residential) and surface
+(paved, unpaved) to differentiate infrastructure quality and climate vulnerability [3, 15].
+Topological metrics: Standard network metrics—node degree, edge betweenness centrality,
+closeness centrality—are calculated using NetworkX [16] to identify structurally important
+network elements. Betweenness centrality, which measures the frequency with which a road
+segment appears on shortest paths between node pairs, is particularly relevant for identifying
+critical corridors [2, 8, 16].
+Connectivity analysis: Network connectivity is assessed by measuring the number of alternative
+routes between key locations (e.g., production zones and markets). Low connectivity indicates
+vulnerability to single‑point failures [2, 8].
+Step 2: Climate indicator integration:
+Footnote: Literature thresholds are from            references; Severity scale for        roads is
+researcher-derived.
+Table 1. Severity Scale for Roads
+
+Level Label        Meaning for Roads
+
+1     Minor        Little or no structural damage; short-term disruption (reduced visibility, minor
+                   washouts).
+
+2     Moderate     Partial damage or temporary blockages; some roads are impassable but
+                   repairable in the short term.
+
+3     Severe       Significant structural damage (bridges, culverts, washed-out segments); long
+                   repair times.
+
+4     Catastrophic Widespread destruction; full network disruption; roads unusable for extended
+                  periods.
+
+Table 2. Climate Indicators Affecting Roads
+Indicator        Typical Literature        Proposed Road Impacts            Reference
+                 Thresholds                Severity
+
+Extreme Rainfall Rainfall intensities of 2–4       Pavement erosion,       [18] Pregnolato et
+/ Flash Flooding 50–100 mm/day are                 overtopping of          al., J.
+                 often sufficient to               culverts, washouts, and Infrastructure
+                 trigger road failures;            bridge stress, which    Systems, 2017
+                 rainfall exceeding the            can severely impact
+                 95th percentile is linked         road functionality
+                 to road washouts
+
+Flood Depth      Depths of 0.3 m are        2–4    Loss of vehicle control, [19] Dottori et al.,
+(Road            enough to render small            complete road closure, NHESS, 2016
+Impassability)   vehicles impassable;              and damage to
+                 depths ≥0.5 m cause               subgrade infrastructure
+                 instability in the flow of
+                 water, resulting in total
+                 road closures
+
+Landslide        Rainfall of 30–100       3–4      Road blockages caused [20] Gariano &
+Triggering       mm/24h can trigger                by landslides, the    Guzzetti,
+Rainfall         shallow landslides,               collapse of road      Earth-Science
+                 particularly in tropical          embankments, and      Reviews, 2016
+                 regions, especially when          substantial erosion
+                 combined with already             damage
+                 saturated soils
+
+Extreme Heat /   Pavement degradation 1–2          Surface bleeding, ruts, [21] Khan &
+Pavement         accelerates when                  cracks in the pavement, Ghuzlan,
+Softening        surface temperatures              and a shortened         Construction &
+                 exceed 40°C, leading to           lifespan of road        Building
+                 rutting; temperatures             surfaces                Materials, 2018
+                 over 45–50°C can cause
+                 degradation of asphalt
+                 binder
+Drought / Soil     The Standardized         1–2       Cracking, settlement of [22] WMO SPI
+Shrink–Swell       Precipitation Index                pavements, shoulder Guidance, 2012
+                   (SPI) of ≤ −2 indicates            failures, and general
+                   severe drought                     road deterioration
+                   conditions that can lead
+                   to soil shrinkage,
+                   damaging flexible
+                   pavements
+
+Dust Storms / During the Harmattan 1–2                Reduced visibility,     [23] Okafor et al.,
+Harmattan (PM season, PM10 levels                     driving hazards,        Atmospheric
+& Visibility) range from 200–300                      clogged drainage, and   Environment,
+              μg/m³, with PM2.5 at                    asphalt surface         2016; [7] Oke et
+              100–150 μg/m³, and                      abrasion                al., 2020
+              visibility often drops to
+              1–5 km
+
+Windstorms /       Wind speeds of 20–25 2–3           Fallen trees, road     [25] WMO
+Squall Lines       m/s can cause damage;              debris, and structural Tropical Storm
+                   ≥30 m/s winds are                  damage to culverts or Guidance, 2018
+                   likely to disrupt road             roadside barriers
+                   structures, trees, and
+                   infrastructure
+
+Urban Heat &       Urban areas with >70% 1–2          Overwhelmed drainage [26] Li et al.,
+Impermeable        impervious surface area            systems, increased   Science of the
+Surfaces           are linked to increased            local flooding, and  Total
+                   runoff and amplified               faster road surface  Environment,
+                   flood risks,                       degradation due to   2020
+                   compounding damage                 runoff
+                   to roads
+
+
+
+Climate stressor data are spatially overlaid with transport networks to identify vulnerable road
+segments:
+Flood exposure: Flood hazard maps are intersected with road network geometries to identify
+segments within flood‑prone areas; segments are tagged with flood depth or probability classes
+for scenario analysis [3, 8, 12].
+Rainfall intensity: Historical rainfall data are used to calculate exceedance probabilities for
+different intensity thresholds. Road segments in areas experiencing frequent high‑intensity events
+are flagged as high‑risk [3, 9, 10].
+Heat and impermeability: Urban heat and land‑cover data identify areas where combined heat
+and flood stressors may compound vulnerability. Road segments in highly impermeable,
+low‑lying areas receive elevated vulnerability scores [4, 13, 14].
+Temporal patterns: Seasonal and interannual variability in climate stressors are characterized to
+understand when vulnerabilities are highest (e.g., rainy season) [9, 10].
+Step 3: Vulnerability metrics calculation
+Vulnerability metrics combine network structural importance with climate exposure:
+Climate‑weighted criticality: Betweenness centrality is weighted by climate exposure (e.g., flood
+probability, rainfall intensity) to produce a climate‑weighted criticality score. High scores
+indicate road segments that are both structurally important and climate‑exposed [2, 3, 8].
+Supply‑chain‑specific metrics: For urban agriculture, vulnerability is assessed relative to specific
+origin–destination pairs (production zones to markets), including:
+
+   ●​ Route redundancy (number of alternative routes between production zones and markets);
+   ●​ Expected disruption frequency (probability that critical routes become impassable under
+      different climate scenarios);
+   ●​ Travel time/cost increases when primary routes are disrupted, and traffic is rerouted [2, 7,
+      8].
+
+Spatial vulnerability index: A composite index combining multiple indicators (criticality,
+exposure, redundancy) is calculated for each road segment and aggregated to identify vulnerable
+zones [3, 8].
+Step 4: Spatial analysis and visualization
+Spatial analysis techniques are used to visualize and interpret vulnerability patterns:
+Hotspot analysis: Spatial clustering methods (e.g., Getis–Ord Gi*) identify hotspots where
+vulnerable road segments are concentrated.
+Supply‑chain pathway analysis: Least‑cost paths between production zones and markets are
+mapped on climate‑adjusted networks, with overlays of vulnerability scores to identify at‑risk
+supply‑chain corridors [2, 7].
+All spatial analysis and visualization are conducted in Python using OSMnx [15], NetworkX
+[16], GeoPandas, Matplotlib, and related libraries.
+
+3.2.1 Climate anomalies and road‑status rules
+To translate climate anomalies into changes in network performance, the analysis applies simple,
+literature‑informed rules to OSM road classes and surfaces. Empirical studies of pluvial flooding
+link surface‑water depth and duration to loss of service or closure on urban roads, with
+lower‑standard and unpaved roads particularly sensitive to shallow flooding [3]. Based on these
+findings and global flood hazard modeling practices [3, 12], the following rules are adopted:
+Flood depth:
+Road segments intersecting areas with estimated flood depths ≥ 0.30 m are treated as impassable
+if they are unpaved residential, tertiary, or track‑type links, reflecting their high sensitivity to
+ponding and surface damage [3].
+Paved residential and tertiary segments under the same depth are kept in the network but
+assigned substantial speed reductions.
+Primary and secondary segments are only removed when depths exceed 0.50 m, consistent with
+their higher design standards and the tendency of major corridors to remain passable up to
+greater depths, albeit at reduced speeds [3, 8].
+Rainfall intensity:
+Short‑duration, high‑intensity rainfall events are identified using CHIRPS and/or ERA5 extremes
+[9, 10]. In grid cells that frequently exceed defined intensity thresholds (for example, the local
+95th percentile), unpaved links in low‑lying areas are assigned an elevated probability of
+temporary closure, reflecting evidence that such events drive recurrent local disruption in urban
+transport networks [3].
+Chronic stress (heat and impermeability):
+Areas combining high land‑surface temperature and high impermeable cover are assumed to
+experience faster pavement degradation and higher susceptibility to flood damage [4]. Segments
+in these areas are therefore given higher vulnerability weights, implemented as multipliers on
+disruption probabilities.
+These rules are applied directly to OSM highway and surface attributes, producing
+climate‑adjusted network realisations for each scenario. Threshold values are aligned with ranges
+reported in pluvial flood and transport-resilience studies [3, 8], and are further explored in the
+sensitivity analysis.
+
+
+
+
+3.3 Procedural Detail
+The procedural workflow follows a systematic sequence designed to ensure reproducibility and
+transparency:
+   1.​ Download OSM network data for selected study cities using OSMnx [15], specifying
+       network type (drive), bounding box coordinates, and retention of all road
+       classifications.
+   2.​ Clean and preprocess network data by removing disconnected components,
+       standardizing attribute fields (road type, surface, length), and projecting to appropriate
+       local coordinate reference systems.
+   3.​ Calculate topological metrics (betweenness centrality, closeness centrality, node
+       degree) for all network edges and nodes using NetworkX [16].
+   4.​ Acquire climate datasets including CHIRPS precipitation data [9], ERA5 reanalysis
+       [10], flood hazard maps [12], and Landsat/MODIS land surface temperature and land
+       cover data [13, 14].
+   5.​ Preprocess climate data by clipping to study area extents, resampling to a consistent
+       spatial resolution, and calculating relevant indicators (e.g., 95th percentile rainfall
+       intensity, mean annual flood depth, mean land surface temperature).
+   6.​ Spatially join climate indicators to road network segments using geometric intersection
+       or nearest-neighbor methods, assigning each segment relevant climate exposure values.
+   7.​ Identify urban agriculture zones and markets from published sources [5, 6], field data,
+       satellite imagery [13, 14], and OSM points of interest [17].
+   8.​ Calculate origin-destination matrices between production zones and markets,
+       identifying all feasible routes and calculating baseline travel times and distances.
+   9.​ Apply climate-stress scenarios by implementing road-status rules (Section 3.2.1) to
+       remove or downgrade vulnerable segments based on flood depth thresholds [3, 8],
+       rainfall intensity exceedance [9, 10], and heat/impermeability indicators [4].
+   10.​Recalculate network metrics and O-D matrices for each scenario to quantify changes in
+       connectivity, travel time, route redundancy, and access.
+   11.​Generate vulnerability indices by combining structural criticality scores with climate
+       exposure indicators, weighted by supply-chain relevance [2, 8].
+   12.​Conduct spatial analysis, including hotspot identification, scenario comparison, and
+       supply-chain pathway mapping using GeoPandas and Matplotlib visualization tools.
+   13.​Perform sensitivity analysis by varying threshold parameters (e.g., flood depth cutoffs,
+       rainfall intensity percentiles) to assess robustness of findings.
+   14.​Document and archive all code, data sources, parameter values, and intermediate
+       outputs to ensure full reproducibility.
+
+
+
+
+Results
+Discussion:​
+Assumptions and Limitations
+Several assumptions and limitations shape the scope and interpretation of this study:
+Uniform disruption thresholds: The analysis applies uniform flood depth and rainfall intensity
+thresholds to determine road impassability (e.g., flood depth > 0.3 m for unpaved roads). These
+thresholds are guided by ranges reported in pluvial flood impact studies on transport networks [3,
+8], but actual thresholds vary with local drainage capacity, road construction quality, and
+maintenance practices. Sensitivity analysis explores the impact of threshold variation, but
+site-specific validation would strengthen the findings.
+OSM data quality: OSM coverage and accuracy vary across regions, with some equatorial cities
+having incomplete or outdated road network data [15, 17]. While OSM represents the best
+available open-source option for many study areas, the analysis may underestimate network
+extent or misclassify road types in areas with limited contributor activity. Where possible, OSM
+data are cross-validated against satellite imagery and local sources.
+Static network representation: The analysis treats road networks as static infrastructure, not
+accounting for short-term adaptations such as temporary road closures, traffic management
+interventions, or emergency rerouting by local authorities and users. Real-world supply chains
+exhibit adaptive behaviors that may partially compensate for network disruptions, meaning the
+study may overestimate actual impacts.
+Focus on direct disruption: The methodology emphasizes direct transport network disruption
+rather than full indirect economic impacts propagating through input-output linkages and
+behavioral responses. While more complex integrated frameworks—such as the DisruptSCT
+approach coupling network analysis with input-output and agent-based models [2]—capture
+these indirect effects, they require extensive economic data, often unavailable for equatorial
+cities. This study's focus on network-level vulnerability provides a necessary first step, but future
+work should integrate economic impact modeling where data permit.
+Climate scenario simplicity: Climate stress scenarios are based on historical climate data [9,
+10] and global climate projections [11], which provide broad guidance but may not capture local
+microclimatic variations or compound extreme events (e.g., simultaneous heat and flood stress).
+The scenario design prioritizes transparency and replicability over exhaustive coverage of all
+possible climate futures.
+Urban agriculture data gaps: Data on urban agriculture production zones, market locations,
+and supply chain flows are often incomplete or informal in equatorial cities [5, 6]. The study
+relies on published sources, satellite imagery [13, 14], and proxy indicators, which introduce
+uncertainty in identifying critical supply corridors. Participatory mapping and field validation
+would improve spatial accuracy, but were beyond the scope of this desk-based analysis.
+Generalizability: Although the methodology is designed for broad applicability across
+equatorial regions, the specific findings reflect the characteristics of the selected study cities and
+may not apply to all contexts. Differences in urban form, infrastructure quality, climate exposure,
+and food system organization mean that vulnerability patterns and priority interventions will
+vary. The open-source, reproducible approach facilitates adaptation and application to additional
+cities.
+Despite these limitations, the methodology offers a rigorous, transparent, and reproducible
+framework for assessing the vulnerability of transport networks to climate stressors in urban
+agriculture supply chains. The integration of open-source data, established network analysis
+methods [15, 16], and climate science [3, 9, 10, 11] offers a practical tool for researchers and
+practitioners working in data-scarce equatorial urban contexts.
+
+
+
+Conclusion
+
+
+
+
+References:
+[1] Reardon T, Zilberman D. Climate-smart food supply chains in developing countries in an era
+of rapid dual change in agrifood systems and the climate. In: Lipper L, McCarthy N, Zilberman
+D, Asfaw S, Branca G, editors. Climate Smart Agriculture: Building Resilience to Climate
+Change. Springer; 2018. p.335–355.
+
+[2] Colon C, Hallegatte S, Rozenberg J. Transportation and Supply Chain Resilience in the
+United Republic of Tanzania. World Bank Group; 2019.
+
+[3] Pregnolato M, Ford A, Glenis V, Wilkinson S, Dawson R. Impact of climate change on
+disruption to urban transport networks from pluvial flooding. Journal of Infrastructure Systems.
+2017;23(4):04017015.
+
+[4] Arifai AM, Arsyad MF. Urban expansion, climate vulnerability, and transportation resilience:
+insights for sustainable development. Advance Sustainable Science, Engineering and Technology
+(ASSET). 2025;7(3).
+
+[5] Ofori B, Pabi O, Nukpezah D, Amoako C. Food system flows and distribution for the Accra
+metropolis: unfolding the policy dimensions. Legon Journal of the Humanities.
+2022;32(2):165–192.
+
+[6] Karg H, Drechsel P, Akoto-Danso EK, et al. Foodsheds and city-region food systems in two
+West African cities. Sustainability. 2022;14(14):8345.
+
+[7] L’Her GF, Schweikert A, Espinet X, et al. Transport resilience and adaptation to climate
+impacts: a case study on agricultural transport in Brazil. In: Frangopol DM, Akiyama M, editors.
+Life-Cycle of Structures and Infrastructure Systems. Springer; 2023. p.303–311.
+
+[8] Wei M, Xu J, Wang Y. Resilience assessment of traffic networks in coastal cities under
+climate change: a case study of one city with unique land use characteristics. Land.
+2022;11(10):1834.
+
+[9] Funk C, Peterson P, Landsfeld M, et al. The Climate Hazards InfraRed Precipitation with
+Station data (CHIRPS) dataset. Remote Sensing. 2015;7(5):0000–0000. (Use CHIRPS
+documentation / DOI for exact citation when finalising.)
+
+[10] Hersbach H, Bell B, Berrisford P, et al. The ERA5 global reanalysis. Quarterly Journal of
+the Royal Meteorological Society. 2020;146(730):1999–2049.
+
+[11] Eyring V, Bony S, Meehl GA, et al. Overview of CMIP6 experimental design and
+organization. Geoscientific Model Development. 2016;9:1937–1958.
+[12] Dottori F, Alfieri L, Bianchi A, et al. Development and evaluation of a global flood hazard
+model.    Natural       Hazards    and      Earth   System    Sciences.    2016;16:1841–1853.
+(Fathom/GLOFAS-related citation; replace with exact Fathom or GLOFAS paper you used.)
+
+[13] United States Geological Survey (USGS). Landsat missions — Landsat Collection
+documentation. USGS; (date). (Cite the Landsat product/collection you used — e.g., Landsat 8
+Collection.)
+
+[14] Justice CO, Townshend JRG, Holben BN, Tucker CJ. Analysis of the phenology of global
+vegetation using meteorological satellite data. International Journal of Remote Sensing. (or cite
+MODIS product documentation you used).
+
+[15] Boeing G. OSMnx: New methods for acquiring, constructing, analyzing, and visualizing
+complex street networks. Computers, Environment and Urban Systems. 2017;65:126–139.
+
+[16] Hagberg AA, Schult DA, Swart PJ. Exploring network structure, dynamics, and function
+using NetworkX. In: Proceedings of the 7th Python in Science Conference (SciPy2008); 2008.
+p.11–15. (NetworkX toolkit citation.)
+
+[17] OpenStreetMap contributors. OpenStreetMap. https://www.openstreetmap.org. (Cite the
+OSM data and date accessed in your paper.)
+
+[18]. Pregnolato M, Ford A, Robson C, Glenis V, Barr S, Dawson RJ. Assessing urban strategies
+for reducing the impacts of extreme weather on infrastructure networks. Journal of Infrastructure
+Systems. 2017;23(3).
+
+[19]. Dottori F, Salamon P, Bianchi A, Alfieri L, Hirpa F, Feyen L. Development and evaluation
+of a framework for global flood hazard mapping. Natural Hazards and Earth System Sciences.
+2016;16(5):1407–1422.
+
+[20]. Gariano SL, Guzzetti F. Landslides in a changing climate. Earth-Science Reviews.
+2016;162:227–252.
+
+[21]. Khan SI, Ghuzlan KA. Effect of high temperature on asphalt pavement performance.
+Construction and Building Materials. 2018;170:623–632.
+
+[22]. World Meteorological Organization (WMO). Standardized Precipitation Index (SPI) User
+Guide. WMO-No. 1090; 2012.
+
+[23]. Okafor C, Anuforom A, Aroh K, Ezenwa I. Characterization of Harmattan dust and its
+implication on air quality in Nigeria. Atmospheric Environment. 2016;147:352–362.
+[24]. Oke AM, Oluleye A, Faleye F. Variability of Harmattan dust and its influence on visibility
+and particulate concentration in West Africa. Environmental Monitoring and Assessment.
+2020;192.
+
+[25]. World Meteorological Organization (WMO). Global Guide to Tropical Cyclone
+Forecasting. WMO-No. 1194; 2018.
+
+[26]. Li Y, Sun G, Caldwell PV, Cohen EC, Fang Y, Wang D. Urbanization and impervious
+surface impacts on watershed hydrology: A review. Science of the Total Environment.
+2020;743:140–186.
+Tab 1
+Title & Abstract
+Title:​
+Assessment of Transport Networks Stability in the context of Climate Stressors on Urban
+Agriculture Supply Chain in Equatorial regions.
+
+Abstract:​
+Urban agriculture contributes to food security, livelihoods, and environmental sustainability in
+fast-growing urban areas, and its performance depends on reliable and stable transport networks
+that connect farming sites with markets. In Northern Nigerian cities, variations in road conditions
+and exposure to environmental factors influence accessibility and may affect agricultural
+productivity and the movement of produce. This study builds on earlier analysis of Kano,
+Kaduna, Sokoto, Maiduguri, and Jos by integrating transport network characteristics with
+selected climate-related indicators to examine how environmental stressors interact with road
+connections that support urban agriculture supply chains. The work applies a network-based
+approach using OpenStreetMap data to identify farming sites, extract road geometries, and
+compute travel distances between farms and central urban nodes. Spatial analysis in Python
+enables the comparison of accessibility, network vulnerability, and climate-related pressures
+across the study areas. The results highlight differences in network performance that have
+implications for market integration, production efficiency, and urban planning. The study
+provides a transferable geospatial procedure that can be applied in other equatorial regions to
+support decision-making where formal datasets are limited.
+
+Keywords:​
+Equatorial regions, climate stressors, transport networks, network stability, spatial analysis,
+urban agriculture, agricultural supply chains, Northern Nigeria
+
+
+
+
+Research Objectives
+   1.​ To evaluate approaches for assessing how urban agriculture in Northern Nigerian cities is
+       impacted by transport network stability under climate stressors and their applicability to
+       other Equatorial regions.
+   2.​ To assess the performance of urban agriculture supply chains in Northern Nigerian cities
+       with respect to market accessibility, network vulnerability, and transportation
+       infrastructure, with implications for similar Equatorial regions.
+
+
+
+   3.​ To highlight findings that are relevant to other Equatorial regions and to identify the main
+       opportunities and challenges that transport network instability and climate hazards
+       present to urban agriculture in Northern Nigerian cities.
+
+
+
+
+Literature Review
+Literature directly appraising urban agriculture's effectiveness from the perspective of transport
+access is notably scarce. The articles under scrutiny, nonetheless, offer useful information on
+transportation-related access measures affecting Northern Nigeria's urban agriculture
+productivity. Based on the researched literature, Table 1 below gives an evaluation metric
+system. Different research underscore the link between transport systems and agricultural trade,
+stressing how modern road and rail networks lower travel time and therefore enlarge market
+reach, especially in cattle commerce [7]. Lowering of transportation fees goes a long way to
+increase food crop output efficiency [3]. Notwithstanding, high transport expenses and poor
+infrastructure remain common and greatly slow down the efficiency of agricultural trade in
+Nigeria, particularly in rural regions. Rising fuel prices, restricted vehicle supply, and bad road
+conditions worsen logistical issues that make it expensive for farmers to move goods from rural
+areas to urban markets [47]. Furthermore, the overdependence on road transportation along with
+the absence of other logistics choices including railroads or waterways has stretched the
+agricultural supply chain even more, increasing expenses and reducing the sector's
+competitiveness. Development of cities, also known to raise transportation expenditures, is
+another cause of lower urban agriculture efficiency. Dealing with these obstacles via better
+transportation systems and cost-cutting measures is vital for increasing market reach and food
+crop output efficiency.
+Table 1 – Assessment Metric Scheme
+
+ Assessment Metric              Impact on Urban Agriculture                       Examples
+
+
+Transport Time       Improves market access and efficiency of trade in      Cattle trade in
+                     agricultural products                                  Northern Nigeria
+
+
+
+
+Transportation Costs Enhances the efficiency of food crop production        General food crop
+                     when costs are reduced                                 production
+
+
+
+
+Proximity to         Facilitates market access and operational efficiency   Fish farms in Northern
+Transport Routes     of urban farms                                         Nigeria
+
+
+
+Urban Sprawl         Negatively affects agricultural efficiency due to      Urban agricultural
+                     higher logistical expenses                             activities
+
+
+
+
+Road Infrastructure Supports mobility and agricultural trade, despite       Kano's road networks
+Quality             challenges like poor upkeep                             and connectivity
+
+
+
+
+Use of Alternative   Fosters socio-economic development but still has       Sokoto's reliance on
+Transport            limitations                                            motorcycles
+
+
+
+Transport Mode       Compounds inefficiencies in agriculture                National transport
+Utilization                                                                 inefficiencies
+    Market Proximity    Enhances agricultural efficiency by improving buyer Dawanau Market,
+                        access and trade                                    Kano
+
+
+
+
+    Socio-Economic      Improves marketing efficiency and agricultural         Tomato marketers in
+    Factors             productivity                                           Kano
+
+    Technological Tools Optimizes transport systems and urban agriculture      Mapping of market
+                        planning                                               distribution using
+                                                                               ArcGIS
+
+
+    Predictive Models   Assists in planning for future transport infrastructure Forecasting urban
+                        and agricultural use                                    agricultural land use
+
+
+
+
+    Location of Key     Influences the efficiency of agricultural supply chains Markets and abattoirs
+    Facilities                                                                  in Northern Nigeria
+
+
+
+​
+
+
+​
+Comparison of Existing Methods/Approaches
+Method Category Techniques/Models          Typical Data Sources        Description & How it
+                      Used                                                    Works
+
+Hydrological &     Hydraulic &         Rainfall data (TRMM,     Simulates flood events
+Hydrodynamic       Hydrologic (H&H), CHIRPS), LULC data,        based on terrain and water
+Models             Lumped              DEMs, river flow records behavior. Generates flood
+                   Hydrological,                                extent and depth maps to
+                   Logistic Regression                          understand affected areas
+                                                                and infrastructure.
+
+Network            Graph Theory,        Road network shapefiles Represents transport
+Theory-Based       Stochastic Modeling, (OpenStreetMap), Python, systems as nodes and
+Models (Our        Centrality Measures, GIS travel data,         edges. Measures network
+Method)            Diffusion Models     infrastructure maps,     performance, redundancy,
+                                        Google Maps/HERE API and accessibility and
+                                                                 identifies critical links
+                                                                 under disruptions.
+
+Functional Impact Bureau of Public       Flood depth data, travel   Assesses partial failure by
+Models            Roads (BPR)            time/volume data,          linking flood depth to
+                  Function, Temporal     GPS/traffic sensors        travel time, road speed, and
+                  Capacity Loss                                     capacity reductions.
+                  Models,
+                  Depth-Disruption
+                  Curves
+
+Accessibility &    Travel Time            Population data, facility Evaluates ease of access to
+Spatial Coverage   Modeling,              locations, travel time/cost essential services using
+Models             Accessibility Indices, matrices, network data      isochrones and travel time
+                   Service Area                                       before and after
+                   Analysis                                           disruptions.
+
+Scenario-Based      Route Disruption     Road condition surveys, Simulates alternative
+Resilience Analysis Simulation,          mobility data, satellite routing due to road failure
+                    Alternative Path     imagery, transport plans and measures the impact on
+                                                                  time/cost/accessibility.
+                      Analysis, Network
+                      Robustness Measures
+
+
+
+
+Climate & Hazard Indicators Affecting
+Roads
+Footnote: Literature thresholds are from references; local thresholds for Kaduna were calculated
+using NASA POWER, station records, and regional studies. Severity scale and example impacts
+are researcher-derived.
+
+Severity Scale for Roads
+
+
+Level      Label                                 Meaning for Roads
+
+1       Minor       Little or no structural damage; short-term disruption (reduced visibility,
+                    minor washouts).
+
+2       Moderate    Partial damage or temporary blockages; some roads are impassable but
+                    repairable in the short term.
+
+3       Severe      Significant structural damage (bridges, culverts, washed-out segments); long
+                    repair times.
+
+4       Catastrophic Widespread destruction; full network disruption; roads unusable for extended
+                     periods.
+
+Example Hazard Indicators Table
+
+
+    Indicator         Literature        Local        Proposed Example Road            Reference
+                      Thresholds      Thresholds     Severity    Impacts
+                                      (Kaduna)
+
+Extreme           >95th or 50–100 18.36 mm/day 2–3              Pavement            Frontiers (2022)
+Rainfall/Flooding mm/day                                        washouts, culvert
+                                                                failures, localized
+                                                                flooding
+SPI (StandardizedSPI ≥ +2 wet; ≤ -2.5 to +2.1        1–2          Soil shrinkage → WMO SPI
+Precipitation    -2 dry                                           cracks; drainage Guidance
+Index)                                                            overload
+
+Dust Storms      PM2.5 up to 300 80–120 µg/m³; 2                  Visibility loss,  ScienceDirect
+(Harmattan)      µg/m³; visibility visibility 2–5                 clogged drainage, (2007)
+                 <10 km            km                             and asphalt
+                                                                  abrasion
+
+Landslides       >30–100         25–40 mm/day 3–4                 Road blockages, ScienceDirect
+                 mm/24h          triggers                         slope collapse  (2023)
+
+Cyclones/Storms Cat 1 ≥33 m/s    20–25 m/s           3–4          Powerline          WMO Cyclone
+                                 (squall lines)                   collapse, uprooted Guide
+                                                                  trees, and
+                                                                  washed-out
+                                                                  pavements
+
+
+
+
+Key Studies / Papers
+             Study                    Focus                  Findings Relevant to Severity Scale
+
+FHWA: Impact of              15-year study of rainfall, ~36% flexible, ~24% rigid pavements
+Environmental Factors on     moisture, and              deteriorate due to environmental factors,
+Pavement Performance         temperature effects on supporting rainfall-based severity
+                             pavements                  classification
+
+Pavement Risk Assessment     Quantifying future            Offers methods to link rainfall intensity
+for Future Extreme           precipitation risk on         to performance losses and road closures
+Precipitation Events         pavement
+
+Best Practices for Assessing Flooding effects on           Thin asphalt-concrete pavements are
+Roadway Damages Caused pavement types                      more vulnerable; drainage is critical;
+by Flooding (LTRC, USA)                                    moderate vs severe damage thresholds
+                                                           validated
+Asphalt Pavement Water Film Rainfall intensity and   Shows a non-linear increase in risk above
+Detection & Prediction Model surface water film      certain rainfall intensities; validates
+                             effects                 threshold-based severity classification
+
+
+Methodology Notebooks (Colab Links)
+General Methodology Tasks
+
+   ●​ https://colab.research.google.com/drive/1N-RuCv0Mu95dBsR7PJbFjjG-xH1XXkAv?usp
+      =sharing
+   ●​ https://colab.research.google.com/drive/1aHOfAO8nmznxjEStmwFYdkgqP6rNUeqr?usp
+      =sharing
+   ●​ https://colab.research.google.com/drive/1RTAm--cvdzGyBbKsnMciOk0j4FOUtCZj?usp
+      =sharing
+   ●​ https://colab.research.google.com/drive/10QCL2hX4Fc4dXFv0hz7vGS7XyXpoxzBG?us
+      p=sharing
+
+Task-Specific Notebooks
+
+   ●​ Task 1:
+      https://colab.research.google.com/drive/166dWS-hLxHsRpJ5aEeb-qJtIE-sXzYMM?usp=
+      sharing
+   ●​ Task 2:
+      https://colab.research.google.com/drive/1pkG5-BEEN9udHuQ61DNasI6hxqJsXUJG?usp
+      =sharing
+
+Climate Risk Indicators / Logistics Tasks
+
+   ●​ Task 1:
+      https://colab.research.google.com/drive/1oBNgCmZebg5vcsqGpKzA1IaNh1AOa0ph?us
+      p=sharing
+   ●​ Task 2:
+      https://colab.research.google.com/drive/1oBNgCmZebg5vcsqGpKzA1IaNh1AOa0ph?us
+      p=sharing
+   ●​ Task 3:
+      https://colab.research.google.com/drive/1yaUuSQCbvzNuA91k4ObQDAtWVeU_5vO8?
+      usp=sharing
+
+       ​
+   References:
+1.​ Wuyep, S. & Rampedi, I., Urban Fish Farming in Jos, Nigeria: Contributions towards
+     Employment Opportunities, Income Generation, and Poverty Alleviation for Improved
+     Livelihoods, Agriculture, 8.7, 2018.
+2.​ Dankani, I. Urban Physical Development as a threat to urban agriculture in metropolitan
+     Kano
+3.​ Ngari, A. & Adebayo, E. Economic efficiency of Peri-urban food crop production in
+     Adamawa state, Nigeria: implication for food self-sufficiency, International Journal of
+     Advanced Studies in Economics and Public Sector Management, 3.1, 2015.
+4.​ Saleh, M. & Mustafa, A. Food Security and productivity among urban farmers in Kaduna
+     State, Nigeria, Journal of Agricultural Extension, 22.1, 2018.
+5.​ Thomas, S. Umar, S. & Yahaya, M., Food Security Status of Farming Household in Kano
+     State Nigeria, Savannah Journal of Agriculture, 11.1, 2016
+6.​ Sani, I. An assessment of the role of road transport in the movement of agricultural
+     produce in Makarfi local government area of Kaduna State, Nigeria, Masters’
+     Dissertation, 2018.
+7.​ Garba, S. Impact of modern transport systems in Maiduguri stockyard cattle market and
+     the emergence of new border cattle markets c. 1964-1993, 2019
+8.​ Salawu, R. & Shamsuddin, A. Theoretical and conceptual frameworks in research:
+     conceptual clarification, European Chemical Bulletin, 12.12, 2023.
+9.​ Porramazani, H. & Miralles-Garcia, J. Concept of Accessibility in Sustainable Transport:
+     Criteria and Perspectives. Urban and Maritime Transport, 2022
+10.​ Vulevic, A. Accessibility concepts and indicators in transportation strategic planning
+     issues: theoretical framework and literature review, Logistics & Sustainable Transport,
+     2016
+11.​ Dabagh, S., Miristice, L. & Gentile, G. Accessibility via public transport through gravity
+     models based on open data. Transport and Telecommunication, 25.4, 2024
+12.​ Meeteren, M. & Poorthuis, A. Christaller and big data: recalibrating central place theory
+     via the geoweb. Urban Geography, 39.1, 2018
+13.​ Ibrahim, A. & Mohammed, M. Road network: the silent treasures of Kano metropolis.
+     Bayero Journal of Pure and Applied Sciences, 9.1, 2016
+14.​ Gummi, U., Abdullahi, M. & Marafa, M. The changing nature of intra-city transportation
+     in Sokoto metropolis: a case study of motorcycle (Kabu-Kabu) Hire Purchase.
+     International Journal of Research and innovation in Social Sciences, 6.2, 2022
+15.​ Onokala, P. & Olajide, C. Problems and challenges facing the Nigerian trasnsportation
+     system which affect their contribution to the economic development of the century in the
+     21st century. Transportation Research Procedia, 48.42, 2020.
+16.​ Gambo, B. Catchment location of buyers for Agricultural food-product wholesale
+     markets in Kano metropolis, Nigeria, Dutse Journal of Pure and Applied Sciences, 2.2,
+     2016
+17.​ Ibrahim, U., Tahi, A., Abdullahi, B. & Abdu, A. Socio-economic factors influencing
+     marketing efficiency of fresh tomato marketers in Yankaba market of Nasarawa local
+     government area, Kano state, Nigeria, Journal of Agricultural Economics and Social
+     Sciences, 6.2, 2021.
+18.​ Usman, A. et al. Spatial analysis of major markets in Kano metropolis. The Exploration
+     Development and Management of Environmental Resources for a Sustainable
+     Environment (Conference: Kaduna, Nigeria), 2022
+19.​ Otuoze, S. et al. Phenomena in developing countries’ cities a case stud of Kano –
+     Nigeria. Sustainability, 13.1, 2021
+20.​ Abubakar, A. et al. Spatial distribution of abattoirs in Kano State, Nigeria, Pakistan
+     Journal of Multidisciplinary Innovation, 2.2, 2023
+21.​ Ogunleye, O. et al. Influence of road transport infrastructure on agricultural sector
+     development in Nigeria. Logistics & Sustainable transport, 9.1, 2018.
+22.​ Kawu, A. & Adebayo, G. Bus rapid transit and the opportunities and challenges of
+     sustainable urban transportation in metropolitan Kano, Nigeria. Journal of Inclusive
+     Cities and Built Environment, 2.3, 2022
+23.​ Usman, H. & Obafemi, O. Enhancing transportation efficiency in Sokoto state metropolis
+     through vehicle routing problem optimization. International Journal of Science for Global
+     Sustainability, 10.3, 2024.
+24.​ Odudu, C. Land accessibility among urban crop farmers kin the informal sector, Lagos,
+     Nigeria. Ethiopian Journal of Environmental Studies & Management, 8.2, 2015
+25.​ Artman, M. & Sartison, K. The role of urban agriculture as a nature-based solution: a
+     review for developing a systematic assessment framework. Sustainability. 10.6, 2018
+26.​ Martellozzo, F. et al. Urban agriculture: a global analysis of the space constraint to meet
+     urban vegetable demand. Environmental Research Letters. 9.6, 2014
+27.​ Mijinyawa, A. & Akuanda, I. Effect of rural-urban migration on rural areas: a case of
+     north-east zone – Nigeria. Lapai International Journal of Administration. 2019
+28.​ Akpoghelie, E., Chiadika, E. et al. Malnutrition and food insecurity in northern Nigeria:
+     an insight into the United Nations World Food Program (WFP) in Nigeria. Discover
+     Food. 4.1, 2024.
+29.​ Orsini, F. And ‘Ostuni, M. The Important Roles of Urban Agriculture. Frontiers for
+     Young Minds. 2022. Doi: http://dx.doi.org/10.3389/frym.2022.701688
+30.​ Ahmed, J. et al. The Role and Potential of Urban Agriculture: Exploratory Research.
+     International Growth Centre. 2024. Available at:
+     https://www.theigc.org/sites/default/files/2024-10/Ahmed%20et%20al.%20Final%20Rep
+     ort%20October%202024.pdf
+31.​ Delbridge, V. And Ngoga, T. Urban Agriculture: a Productive Land-use for Cities.
+     International Growth Centre. 2021. Available at:
+     https://www.theigc.org/sites/default/files/2021/10/urban-agriculture_web.pdf
+32.​ Anberbir, A. The role of Urban Agriculture Towards Livelihood and Food Security.
+     Master Thesis, Swedish University of Agricultural Sciences. 2022. Available at:
+     https://stud.epsilon.slu.se/18540/1/anberbir-a-g-20221222.pdf
+33.​ Ozden, O. et al. The Impact of Rural-urban Migration and its Effect on Urbanisation in
+     Kano State, Nigeria. International Journal of Global Environmental Issues. 1.1, 2021.
+34.​ Unah, O. Urbanization and Sustainable Growth of Urban Kano, Nigeria. International
+     Conference on Energy and Sustainable Environment. 2021.
+35.​ City Population. Kaduna: State in Nigeria. 2022. Available at:
+     https://citypopulation.de/en/nigeria/admin/NGA019__kaduna/
+36.​ City Population. Sokoto: state in Nigeria. 2022. Available at:
+     https://citypopulation.de/en/nigeria/admin/NGA034__sokoto/
+37.​ Bell, M. and Card, K. Maiduguri: City Scoping Study. African Cities Research
+     Consortium. 2021. Available at:
+     https://www.african-cities.org/wp-content/uploads/2021/12/ACRC_Maiduguri_City-Scop
+     ing-Study.pdf
+38.​ Ibrahim, A. & Mohammed, M. Road Network: The Silent Treasures of Kano Metropolis.
+     Bayero Journal of Pure and Applied Sciences. 9.1, 2016
+39.​ Yakubu, H. An Assessment of Road Transport Infrastructure Development in Kaduna
+     State, Nigeria. 2016. Available at: http://hdl.handle.net/123456789/9568
+40.​ Yanguruza, S. The Need for Safe Transportation in Maiduguri. Blueprint. 2024. Available
+     at: https://blueprint.ng/the-need-for-safe-transportation-in-maiduguri/
+41.​ Hamza, A. Transport Infrastructure Development in Nigeria: A Case Study of Kebbi,
+     Sokoto and Zamfara States. Journal of Arts & Science. 12.2, 2019.
+42.​ Iderawumi, A. et al. Impact of Transportation on Agricultural Practices and Production in
+     Rural Areas: Implication for Sustainable Food Security. Biomedical Journal of Scientific
+     & Technical Research. 35.2, 2021
+43.​ Hsu, K. et al. Combining Transit-oriented Development and Urban Agriculture Strategy
+     on Constructing Urban Environment Sustainability, the Case of Taiyuan Railway Station,
+     Taichung, Taiwan. IOP Conference Series: Earth and Environmental Science. Available
+     at: https://iopscience.iop.org/article/10.1088/1755-1315/581/1/012039/pdf
+44.​ OECD/SWAC. Africa’s Urbanisation Dynamics 2020: Africapolis, Mapping a New
+     Urban Geography, West African Studies, OECD Publishing, Paris. 2020.
+45.​ Agbo, M. Urban Farming: A Sustainable Pathway Out of Nigeria’s Unfolding Food
+     Crisis. Common Edge. 2024
+46.​ Akpata, J. Nigeria’s Food System Challenged by Conflicts, Climate Change and
+     Economic Headwinds. Prevention Web. 2022. Available at:
+     https://www.preventionweb.net/news/nigerias-food-system-challenged-conflicts-climate-
+     change-and-economic-headwinds
+47.​ Daud, S. et al. Perceived Effect of Different transportation Means on Food Crop
+     Production in Oyo State, Nigeria. International Journal of Agricultural Economics and
+     Rural Development. 6.5, 2020.
+48.​ Junction. How Do Logistics Cost Affect Nigeria Agricultural Sector Productivity? 2023.
+     Available at:
+     https://thejunction.ng/logistics-costs-affect-nigeria-agricultural-sector-productivity/
+49.​ Limi, A. Agricultural Production and Transport Connectivity. Policy Research Working
+     Paper: World Bank. 2021. Available at:
+     https://documents1.worldbank.org/curated/en/554861625229930353/pdf/Agricultural-Pro
+     duction-and-Transport-Connectivity-Evidence-from-Mozambique.pdf
+50.​ Utpal, K. Road Infrastructure and Agricultural Development: A Policy Intervention in a
+     Backward Rural Economy. SSRN Electronic Journal. 22.2, 2018
+51.​ Fungo, E. et al. The Role of Road Infrastructure in Agricultural Production. Semantics
+     Scholar. 2017. Available at:
+     https://www.semanticscholar.org/paper/The-role-of-road-infrastructure-in-agricultural-Fu
+     ngo-Krygsman/759aae8964c3e4dac3d569ca4666ccbaff07248c
+

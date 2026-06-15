@@ -1,0 +1,426 @@
+Spatial-Morphological Modeling for Multi-Attribute Imputation of Urban Blocks
+
+                                                       Anonymous submission
+
+
+
+
+                            Abstract                                 urban data—have demonstrated capability in capturing fun-
+  Accurate reconstruction of missing morphological indicators        damental patterns across macro-level city systems, meso-
+  of a city is crucial for urban planning and data-driven anal-      level urban structure, and micro-level neighborhood dynam-
+  ysis. This study presents the spatial-morphological (SM) im-       ics (Chen et al. 2025) (Zhang et al. 2025a). Recent ap-
+  puter tool, which combines data-driven morphological clus-         plications have extended LLMs to urban geospatial intel-
+  tering with neighborhood-based methods to reconstruct miss-        ligence through zero-shot analysis, enabling natural lan-
+  ing values of the floor space index (FSI) and ground space in-     guage interactions with geographic databases and support-
+  dex (GSI) at the city block level, inspired by the SpaceMatrix     ing complex spatial queries without domain-specific train-
+  framework. This approach combines city-scale morphologi-           ing. Generative AI approaches have been applied to auto-
+  cal patterns as global priors with local spatial information for   mated land-use configuration, learning optimal spatial ar-
+  context-dependent interpolation. The evaluation shows that
+  while SM alone captures meaningful morphological struc-
+                                                                     rangements from heterogeneous datasets including mobil-
+  ture, its combination with inverse distance weighting (IDW)        ity patterns, POI distributions, and environmental factors
+  or spatial k-nearest neighbor (sKNN) methods provides supe-        (Wang et al. 2025). However, while these foundation mod-
+  rior performance compared to existing SOTA models. Com-            els excel at reproducing abstract theoretical forms and gen-
+  posite methods demonstrate the complementary advantages            erating plausible urban patterns, they face significant limita-
+  of combining morphological and spatial approaches.                 tions in capturing statistical complexity and parametric ac-
+                                                                     curacy of real-world urban systems (Zhang et al. 2025b).
+                        Introduction                                 Moreover, their application to fine-grained morphological
+Today’s world is developing rapidly, changing its appear-            reconstruction tasks—such as imputing specific built-form
+ance under the influence of new technologies. Cities are             attributes at the block level—remains underexplored, par-
+changing physically and socially under the influence of new          ticularly regarding the integration of local spatial context
+technologies, offering new social and economic models of             with global morphological knowledge. This gap motivates
+behavior, which leads to the emergence of new ways of using          approaches that combine morphological clustering with lo-
+land resources (Xia et al. 2025). Advances in telecommuni-           cal features to achieve context-aware, spatially coherent pre-
+cations allow people to work remotely, potentially reducing          dictions grounded in empirical urban form patterns
+the need for traditional office space. Autonomous vehicles              Urban data are often incomplete or inconsistent, particu-
+eliminate the need for parking spaces, opening up opportu-           larly for built-form attributes such as floor space, footprint
+nities for the creation of recreational areas and other public       area, and land-use composition. Accurate reconstruction of
+facilities (Nourinejad, Bahrami, and Roorda 2018).                   these features is critical for practical urban planning and ter-
+   AI is influencing the functional spaces of cities, providing      ritorial management. For example when new development
+new spatial representations of (de)centralization processes          areas are introduced or existing urban zones are modified ac-
+and assessing the implementation of new forms of urban mo-           cording to a master plan, planners need quantitative predic-
+bility on spatial equality. The results of such changes can be       tions of likely building density and coverage. This informa-
+seen at the neighborhood level: changes in the structure of          tion supports decision-making by bridging the gap between
+the layout and recombination of urban space functions can            zoning regulations and expected morphological outcomes.
+lead to the modular organization of small neighborhoods and
+                                                                       This work investigates whether incorporating global mor-
+the flattening of the street system (Villegas et al. 2025), (Yu,
+                                                                     phological knowledge of an urban area can enhance the ac-
+Hu, and Zhou 2025).
+                                                                     curacy and spatial coherence of imputed local built-form pa-
+   The emergence of foundation models and large language
+                                                                     rameters for individual urban blocks.
+models (LLMs) represents a transformative shift in ur-
+ban data science, offering new paradigms for addressing                This study introduces a method that combines morpho-
+data incompleteness and spatial analysis challenges. Ur-             logical clustering with local spatial features to impute miss-
+ban Foundation Models (UFMs)—large-scale models pre-                 ing built-form attributes, supporting accurate, context-aware
+trained on vast amounts of multi-source, multi-granularity           urban modeling and planning.
+                      Related Work                                Data-driven approaches and digital twins; the role
+The problem of incomplete and uneven urban data                   of OSM
+When working with digital twins and urban models, it is crit-     Data-driven approaches based on digital twins (2D/3D mod-
+ical to have a complete set of semantic and geometric at-         els, OpenStreetMap, etc.) provide a reproducible and scal-
+tributes (height, number of floors, type of use, density, land-   able basis for attribute recovery. It has been shown that
+use indicators, etc.). In practice, data is often fragmented:     OpenStreetMap (OSM) data combined with geometric and
+some features are only available locally, while others are        contextual features can successfully predict building types
+completely absent, making the task of automatic restora-          and enrich OSM tags (Atwal et al. 2022; Schwarz et al.
+tion (imputation/inpainting/prediction) crucial for applica-      2023). These approaches are advantageous in terms of data
+tions in planning, energy, traffic flow modeling, etc. Three      availability and experiment replicability.
+main approaches to this problem are emerging in the lit-
+erature: image-based methods, methods using mobile and            Digital twins of cities
+behavioral data, and data-driven methods based on digital
+twins and graph representations.                                  The concept of digital twins is becoming a key technology
+                                                                  for creating smart and sustainable cities. A digital twin of a
+Image-based methods                                               city is a virtual replica of a physical city that integrates data
+One of the dominant approaches is the use of satellite            from various sources to support planning, management, and
+and street-level images to reconstruct the morphology and         decision-making (Batty 2018; Dembski et al. 2020).
+semantic attributes of buildings (contours, roofs, facades,          Cities around the world are developing their digital twins.
+number of floors, height) using classical methods (shadow         For example, the city of Zurich has created a digital twin
+dependencies, stereo, LiDAR) and modern neural network            to support urban planning, including 3D models of build-
+architectures (Li and Goodchild 2012; Klonus and Ehlers           ings, street networks, mobility simulations, and urban cli-
+2011; Srivastava, Volpi, and Tuia 2018; Lienhard et al.           mate analysis (Schrotter and Hürzeler 2020). The city of
+2020).                                                            Herrenberg in Germany uses a digital twin for participatory
+   The integration of images and spatial context through          urban planning, integrating BIM and GIS data with sensor
+graph models has shown an improvement in prediction qual-         networks and volunteered geographic information (Demb-
+ity: combining street images with graph neural networks           ski et al. 2020).
+(GraphSAGE) improves the accuracy of building attribute              It has been highlighted that integrating GIS and BIM is
+predictions compared to purely visual approaches (Lei et al.      important for creating effective digital twins of cities (Xia
+2024). However, image-based methods are limited by cover-         et al. 2022). GIS provides geospatial data and spatial analy-
+age (not all areas have street-view or high-quality images),      sis at the city level, while BIM provides detailed information
+are sensitive to weather and temporal factors, and require        about buildings at the micro level. The ontological approach
+costly preprocessing (Zhang et al. 2021).                         to data integration is recognized as the most promising for
+                                                                  achieving system interoperability.
+Methods based on mobile and behavioral data                          Digital twins enable predictive modeling and simulation
+Another large group of studies uses mobile operator data,         of city development scenarios. (Schrotter and Hürzeler
+GPS tracks, check-ins, and POIs to assess the functional          2020) describe the use of Zurich’s digital twin to analyze
+purpose of areas and identify temporal patterns of activity.      the urban climate and heat islands, assess the energy effi-
+Studies show that mobility data correlates well with land use     ciency of buildings, plan high-rise buildings, manage the ur-
+and allows for effective classification of areas according to     ban cadastre, and conduct architectural competitions using
+their functionality (Lenormand et al. 2015; Frias-Martinez,       AR/VR technologies.
+Frias-Martinez, and Oliver 2013). However, these sources             An important aspect is data openness. Zurich publishes its
+are often closed and subject to legal and privacy restrictions,   3D geodata under an Open Government Data license, which
+which hinders their large-scale use in open digital twins.        promotes the development of innovative applications and
+                                                                  the democratization of urban data (Schrotter and Hürzeler
+The role of land use and causal approaches                        2020).
+Research on land use (Lenormand et al. 2015) emphasizes              The social aspects of digital twins have been emphasized,
+that the spatial organization of land use types is closely re-    showing that their use in virtual reality can significantly
+lated to the morphology and dynamics of a city—the dis-           improve citizen participation in urban planning (Dembski
+tribution of land use correlates with density, transport con-     et al. 2020). A survey of 39 participants indicated that digital
+nectivity, and the shape of neighborhoods. Moreover, causal       twins are perceived as interesting (2.54 out of 3.00), under-
+machine learning methods have shown that the influence of         standable (2.37), and concrete (2.14).
+land use on building height is heterogeneous and spatially           Digital twins are also used to manage historical heritage,
+non-uniform: the same type of land use can have different         simulate floods and emergencies, optimize construction pro-
+effects in the city center and on the periphery (Chen et al.      cesses, and manage infrastructure (Xia et al. 2022). The in-
+2024). This reinforces the idea that land use is not just a       tegration of real-time IoT sensors transforms static models
+useful correlate, but also a causal factor to consider when       into dynamic systems capable of responding to changes in
+modeling and restoring morphological features.                    the urban environment.
+Graph Neural Networks (GNN) for Urban Tasks                       Morphological Clustering and SpaceMatrix
+Graph representations (nodes — buildings, blocks; edges           SpaceMatrix is a framework for classifying urban blocks
+— adjacency, transport links, spatial proximity) and GNNs         into morphological types based on built-form indices such as
+proved particularly effective for accounting for neighbor-        FSI (Floor Space Index) and GSI (Ground Space Index) (Wu
+hood influences when restoring features. Classic architec-        et al. 2024; Berghauser Pont and Olsson 2018). It uses unsu-
+tures — ChebNet, GraphSAGE, GAT, Graph U-Nets, etc.               pervised clustering (e.g., KMeans) on normalized morpho-
+— have proven their ability to aggregate neighbor features        logical features to derive characteristic urban forms, which
+and extract structural patterns (Defferrard, Bresson, and         can then guide analysis of urban patterns, functional zoning,
+Vandergheynst 2016; Hamilton, Ying, and Leskovec 2017;            or reconstruction of missing data. This approach has been
+Veličković et al. 2018; Gao and Ji 2019).                       applied successfully for morphological assessment and com-
+   In applied research, GraphSAGE has been used to predict        parative studies of urban neighborhoods, providing a scal-
+building characteristics on a city-wide scale, while Cheb-        able and interpretable representation of city structure.
+Net, Graph U-Nets, and attention-based mechanisms similar
+to GAT have been applied for hierarchical aggregation and         Conclusion
+weighting neighbor contributions (Lei et al. 2024; Liu et al.     A comparison of approaches shows that image-based meth-
+2025). These techniques have demonstrated high effective-         ods provide visual cues but suffer from coverage and prepro-
+ness for classifying street network morphological patterns        cessing issues; mobile data offer dynamic information but
+and predicting neighborhood attributes, justifying the use of     have limited availability. Tabular imputation methods, such
+GNNs as the main architecture for multi-attribute imputation      as SMV-NMF, are effective for multi-view urban data but
+at the neighborhood level.                                        may overlook morphological regularities.
+                                                                     Morphological clustering methods, such as SpaceMa-
+Multi-view imputation of urban data                               trix, classify urban blocks into characteristic types based
+A specific subgroup of methods focuses on restoring tabular       on built-form indices (e.g., FSI, GSI) (Wu et al. 2024;
+urban characteristics collected region-by-region. The SMV-        Berghauser Pont and Olsson 2018). These clusters capture
+NMF/SMKC-AWNMF approach combines spatial multi-                   meaningful patterns in urban morphology and can serve as
+kernel clustering and adaptive-weight non-negative matrix         a basis for imputing missing block-level attributes. While
+factorization to recover multi-species statistical data; the      prior studies typically apply clustering alone, it is plausible
+method showed high accuracy on several real-world datasets        that combining morphological clusters with spatially aware
+and good transferability between cities (Gong et al. 2022).       techniques (e.g., neighborhood averaging or SKNN) could
+   A follow-up study formalized Spatial Correlation Learn-        enhance reconstruction accuracy, providing both local and
+ing by combining spatial multi-kernel clustering and              global context in urban data recovery.
+adaptive-weight NMF within SMV-NMF and demonstrated
+superiority over KNN, Bayesian PCA, and similar baseline                             Problem Formulation
+methods on six real-world datasets (Gong et al. 2023). The        Urban blocks exhibit complex relationships between land-
+key conclusion is that spatial structure and multi-view inter-    use composition and built-form intensity. In this study, each
+actions are critical for successful imputation of urban tables;   block bi is represented by a feature vector
+this complements and partially overlaps with the idea of
+                                                                   Xi = {x(r) , x(rec) , x(bus) , x(ind) , x(tr) , x(sp) , x(agr) , si },
+graph methods, which explicitly use neighborhood through
+graph topology.                                                   where x(k) ∈ [0, 1] denote fractional land-use shares for res-
+                                                                  idential, recreational, business, industrial, transport, special,
+Comparison of levels: building vs neighborhood;                   and agricultural functions, and si is the total site area (m2 ).
+multi-attribute imputation                                           The target built-form attributes are expressed in normal-
+Most studies focus on predicting individual attributes of in-     ized form as
+dividual buildings (height, number of floors, type). However,                           Yi = {FSIi , GSIi },
+many planning tasks require aggregated and simultaneously         where the floor space index (FSI) and the ground space in-
+multi-parameter information at the neighborhood (block)           dex (GSI) represent the ratio of total floor and footprint area
+level. Our approach deliberately shifts the focus to neigh-       to site area, respectively. These indicators capture the inten-
+borhoods as graph nodes and solves the problem of simulta-        sity and compactness of development, making them invari-
+neous restoration of multiple attributes (multi-output impu-      ant to block size and more consistent across different land-
+tation), taking into account neighborhood geometry, neigh-        use types.
+borhood connections, and land-use characteristics.                   The imputation task is formulated as learning a mapping
+   Ideas on multi-view spatial imputation (Gong et al. 2022,
+                                                                                              Ŷi = f (Xi ),
+2023) and the causal influence of land use (Chen et al. 2024)
+reinforce the justification for including both spatial corre-     which predicts the built-form indicators of block i based on
+lation and functional purpose features in the model; Other        its land-use composition and spatial characteristics. Unlike
+works (Lei et al. 2024; Liu et al. 2025) show that GNN            conventional imputers that rely on spatial proximity or local
+architectures provide a practical tool for implementing this      averaging, the proposed approach introduces a morpholog-
+idea.                                                             ical regularization step: each block is first associated with
+a probabilistic morphological cluster (or urban form type)           Model Overview and Workflow
+inferred from the joint FSI–GSI distribution. Then, the char-        Figure 1 illustrates the workflow of the Spatial-
+acteristic built-form profile of the most probable cluster is        Morphological (SM) imputation model. The process
+used to reconstruct the missing values. This design captures         consists of four stages:
+global regularities of urban morphology, enabling consis-
+tent and interpretable recovery of built-form indicators even        1. Input: compilation of block-level data, including:
+without explicit neighborhood information.                              • site area — total block area;
+                                                                        • land-use proportions — shares of residential, business,
+Empirical motivation. Preliminary statistical analysis
+                                                                          recreational, industrial, transport, special, and agricul-
+confirmed both land-use–dependent variation and spatial au-
+                                                                          tural uses;
+tocorrelation in the studied data. Each urban block was as-
+signed to a dominant land-use group corresponding to the                • unknown FSI and GSI values to be imputed.
+category with the highest proportional share among resi-             2. Spacematrix (Morphological clustering): using only
+dential, recreational, business, industrial, transport, special,        blocks with known FSI and GSI:
+and agricultural uses. A one-way ANOVA revealed statis-                 • cluster blocks in the standardized (FSI, GSI) space us-
+tically significant differences in built-form intensity across            ing K-means;
+these groups (F = 288.1, p < 0.001 for FSI; F = 392.0,                  • assign cluster IDs to known blocks;
+p < 0.001 for GSI), indicating that functional composition
+strongly influences the compactness and density of develop-             • compute median FSI and GSI for each cluster.
+ment. Moran’s I statistics further demonstrated pronounced           3. Prediction (Cluster assignment for unknown blocks):
+spatial autocorrelation (I = 0.53, p = 0.001 for FSI;                   • train a CatBoost classifier on known blocks to predict
+I = 0.57, p = 0.001 for GSI), suggesting that similar mor-                cluster probabilities based on land-use shares and site
+phological patterns cluster spatially across the city. Finally,           area;
+Pearson’s correlations (r = 0.77 between FSI and GSI, and               • for each unknown block, compute predicted cluster ID,
+r = −0.06 to −0.10 with site area) indicate a strong in-                  probability, and probability-weighted FSI/GSI values.
+ternal coupling between built-form indicators but minimal
+dependence on block size. Together, these findings support           4. Output (Imputed values): generate a table of blocks
+the need for an imputation strategy that incorporates both              with missing FSI and GSI, now imputed using
+morphological structure and spatial regularity of urban form.           probability-weighted cluster medians.
+formed imputation strategy that accounts for both morpho-
+logical and locational dependencies.                                                                Data
+                                                                     Urban block geometries and topological relationships were
+                       Methodology                                   initially generated using the BlocksNet framework1 , which
+Spatial-morphological Imputation Model                               provides tools for urban blocks layer generation, spatial ag-
+The proposed model estimates built-form indicators (FSI              gregation, and morphometric analysis. The generated layer
+and GSI) for urban blocks with missing values. The method            was subsequently reviewed and manually refined to cor-
+relies on the idea that each block can be associated with a          rect topological inconsistencies. Building-level and land-
+morphological type defined by the joint distribution of FSI          use-level attributes were then aggregated to the block scale
+and GSI.                                                             using BlocksNet’s tools.
+   First, blocks with valid data are standardized and clus-             For each urban block, the following features were ex-
+tered in the (FSI, GSI) space using K-means. Each cluster ck         tracted and aggregated:
+represents a characteristic morphological pattern (e.g., com-          • Land-use composition: fractional shares of residential,
+pact mid-rise, low-density), and its centroid provides typical           business, recreational, industrial, transport, special, and
+FSI and GSI values.                                                      agricultural functions;
+   Next, a CatBoost classifier predicts the probability distri-        • Geometric attributes: site area (m2 );
+bution over these clusters for each block based on its land-           • Built-form indices: floor space index (FSI) and ground
+use composition and site area:                                           space index (GSI), defined as:
+                P (ck | Xi ) = CatBoost(Xi ),                                              Total floor area of buildings
+                                                                                    FSI =                                ,
+where Xi includes the shares of residential, recreational,                                           Site area
+business, industrial, transport, special, and agricultural uses,                           Total building footprint area
+                                                                                   GSI =                                  .
+as well as total site area. The final FSI and GSI estimates are                                      Site area
+obtained as probability-weighted averages of cluster-level              A descriptive summary of these features is presented in
+medians:                                                             Table 1. To evaluate imputation methods, missing values in
+        X                                   X
+ ˆ i=
+FSI          P (ck | Xi ) FSIk , GSI ˆ i=      P (ck | Xi ) GSIk .   FSI and GSI were introduced synthetically, allowing con-
+         k                                  k                        trolled comparisons of SM, SKNN, IDW, SMV-NMF, and
+                                                                     their hybrid combinations.
+This formulation captures city-wide morphological regular-
+                                                                        1
+ities while remaining interpretable and spatially coherent.                 https://github.com/aimclub/blocksnet
+Figure 1: Workflow of the Spatial-morphological (SM) imputation model. The model derives morphological clusters from
+observed data and predicts missing built-form indicators based on land-use composition and site area.
+
+
+Table 1: Descriptive statistics of urban block features (Saint   block dataset. To systematically assess imputation perfor-
+Petersburg).                                                     mance, we introduced synthetic missing values in FSI and
+                                                                 GSI at varying missing rates from 10% to 70%. For each
+ Feature               Mean        Std           Range           missing rate, a common mask was applied across all impu-
+                                                                 tation methods to ensure fair comparison. Each experiment
+ Residential share     0.478     0.435            [0, 1]
+                                                                 was repeated with 100 independent random masks, and the
+ Business share        0.031     0.146          [0, 1.00]
+                                                                 resulting metrics were averaged.
+ Recreation share      0.198     0.340          [0, 1.08]
+ Industrial share      0.048     0.188          [0, 1.00]
+ Transport share       0.190     0.301          [0, 1.00]        Baseline Methods
+ Special share         0.013     0.103          [0, 1.00]        The baselines are described concisely as follows (Gong et al.
+ Agricultural share    0.014     0.107          [0, 1.00]        2022):
+ Site area (m2 )       1.46e5    3.67e5    [2.71e-20, 1.40e7]
+ FSI                   0.377     0.631          [0, 9.15]         • IDW (Inverse Distance Weighting): Distance-weighted
+ GSI                   0.110     0.134          [0, 1.10]           average of neighboring observations. IDW is a standard
+                                                                    spatial interpolation method widely used in urban analyt-
+                                                                    ics and geographic applications, providing a simple refer-
+   Some blocks exhibit extreme values due to data inconsis-         ence for local spatial dependence in built-form attributes.
+tencies or overlapping functional zones, resulting in GSI or      • sKNN: Spatial k-nearest neighbors using block cen-
+land-use shares slightly exceeding 1. These outliers are re-        troids. sKNN captures the influence of nearby blocks
+tained for completeness but do not significantly affect over-       while allowing multi-feature imputation, making it di-
+all imputation results.                                             rectly relevant for urban block-level data where neigh-
+                                                                    borhood similarity is expected.
+                      Experiments                                 • SMV-NMF: Spatially-informed multi-view non-
+We evaluate the proposed Spatial-morphological Imputer              negative matrix factorization. SMV-NMF is a recent
+(SM-Imputer, hereafter SM) on the Saint Petersburg urban            multi-view imputation method designed for tabular
+Table 2: Imputation performance on Saint Petersburg urban         moderate accuracy, its combination with neighborhood-
+blocks (averaged over 100 masks per missing rate).                based imputers (IDW or sKNN) leads to substantial im-
+                                                                  provement, achieving the lowest MAE and RMSE across
+ Method                   MAE       RMSE        R2       2
+                                                        Rrobust   all missing rates. This suggests that local spatial informa-
+                                                                  tion and global morphological priors are complementary:
+ IDW                      0.1713    0.3085     0.3583   0.8859
+                                                                  one tends to slightly underestimate (or overestimate) values
+ sKNN                     0.1731    0.2991     0.4002   0.8603
+                                                                  while the other compensates, yielding more balanced pre-
+ SM                       0.1837    0.3142     0.3409   0.8556
+                                                                  dictions.
+ SM + IDW                 0.1629    0.2733     0.5038   0.8461
+                                                                     The strongest relative gains are observed at higher miss-
+ SM + sKNN                0.1647    0.2715     0.5120   0.8285
+                                                                  ing rates, when purely local methods suffer from sparse
+ SM + SMV-NMF             0.2203    0.3291     0.2708   0.5987
+                                                                  information. In such scenarios, SM-derived morphological
+ SMV-NMF                  0.2718    0.3769     0.0264   0.1668
+                                                                  priors offer a robust global structure, enabling more accu-
+                                                                  rate and spatially coherent imputation. These findings high-
+                                                                  light the practical value of integrating morphological knowl-
+   urban data, combining spatial correlations with mul-           edge with traditional spatial imputation techniques for urban
+   tiple attribute types, which aligns closely with the           datasets with incomplete or noisy measurements.
+   multi-attribute nature of the dataset.                            Unlike methods relying on predefined morphological ty-
+   Our method, SM, estimates missing FSI and GSI by pre-          pologies, SM dynamically derives morphological clusters
+dicting the most likely morphological cluster for each block,     from available data, allowing adaptation to the specific ur-
+as described in the methodology section. In addition, we ex-      ban fabric of the city under study. Future work could explore
+plore hybrid approaches, where SM predictions are com-            end-to-end learning of morphological representations, or ex-
+bined with outputs from IDW, sKNN, or SMV-NMF, which              tend the framework with additional sources of spatial con-
+often provide complementary improvements by balancing             nectivity (e.g., transport networks or functional adjacency)
+local spatial effects and global morphological patterns.          to further improve imputation robustness and interpretabil-
+                                                                  ity.
+Evaluation Metrics
+Imputation performance was quantified using mean abso-                                  Conclusions
+lute error (MAE), root mean squared error (RMSE), coef-
+ficient of determination (R2 ), and robust R2 (Rrobust
+                                                2
+                                                       ). Met-    This study introduced the Spatial-morphological (SM) im-
+rics were averaged over the 100 masks for each missing rate.      puter, a framework that leverages data-driven morpholog-
+The following section presents the results, highlighting the      ical clustering to reconstruct missing FSI and GSI values
+advantages of SM and its hybrid combinations relative to          at the urban-block level. Evaluation on the Saint Peters-
+baseline methods.                                                 burg dataset demonstrated that SM alone captures mean-
+                                                                  ingful morphological structure, while its combination with
+Results                                                           neighborhood-based methods (IDW or sKNN) consistently
+                                                                  achieves the highest accuracy, highlighting the complemen-
+Table 2 reports the averaged imputation performance across
+                                                                  tarity of global morphological priors and local spatial infor-
+all missing rates for both individual and composite methods.
+                                                                  mation.
+The base SM method, which predicts missing FSI and GSI
+                                                                     The results underscore the value of integrating city-
+using morphological clusters alone, shows moderate accu-
+                                                                  scale morphological patterns with spatial context for robust,
+racy, outperforming SMV-NMF but not IDW or sKNN on
+                                                                  context-aware urban data reconstruction. Future work will
+its own. However, combining SM with local neighborhood-
+                                                                  focus on extending the approach to multi-city datasets, ex-
+based imputers yields a significant improvement: both SM +
+                                                                  ploring transferability across different urban morphologies,
+IDW and SM + sKNN achieve the lowest MAE and RMSE,
+                                                                  and integrating SM into broader pipelines for generative ur-
+with the highest R2 values.
+                                                                  ban modeling, simulation, and planning applications.
+   Figure 2 visualizes the performance trends across miss-
+ing rates for each reconstructed feature. Composite methods
+(SM + IDW and SM + sKNN) consistently outperform in-                                     References
+dividual imputers, highlighting the complementary strengths       Atwal, K. S.; Anderson, T.; Pfoser, D.; and Züfle, A. 2022.
+of morphological and local neighborhood information.              Predicting building types using OpenStreetMap. Interna-
+   The dataset and code used in these experiments are pub-        tional Journal of Geographical Information Science, 36(6):
+licly available2 .                                                1183–1206.
+                           Discussion                             Batty, M. 2018. Digital twins. Environment and Planning
+                                                                  B: Urban Analytics and City Science, 45(5): 817–820.
+The experimental results indicate that the Spatial-
+morphological imputer captures meaningful morphologi-             Berghauser Pont, M.; and Olsson, J. 2018. Typology based
+cal patterns in urban blocks, even without explicit use of lo-    on three density variables central to Spacematrix using clus-
+cal neighbors. While the base SM method alone provides            ter analysis. In 24th ISUF International Conference. Book
+                                                                  of Papers, 1337–1348. Editorial Universitat Politècnica de
+   2
+       https://anonymous.4open.science/r/smi                      València.
+Figure 2: Performance of SM, baseline methods, and composite imputers across missing rates for each reconstructed feature.
+Composite methods (SM + IDW, SM + sKNN) achieve the best results.
+
+
+Chen, J.; Wang, H.; Li, J.; Liu, Y.; Dong, Z.; and Yang,         Lei, B.; Liu, P.; Milojevic-Dupont, N.; and Biljecki, F. 2024.
+B. 2025. SpatialLLM: From Multi-modality Data to Urban           Predicting building characteristics at urban scale using graph
+Spatial Intelligence. arXiv preprint arXiv:2505.12703.           neural networks and street-level context. Computers, Envi-
+Chen, Y.; Chen, J.; Zhao, S.; Xu, X.; Liu, X.; Zhang, X.; and    ronment and Urban Systems, 112: 102083.
+Zhang, H. 2024. Inferring the heterogeneous effect of urban      Lenormand, M.; Picornell, M.; Cantú-Ros, O.; Louail, T.;
+land use on building height with causal machine learning.        Herranz, R.; Frı́as-Martı́nez, E.; and Ramasco, J. J. 2015.
+GIScience & Remote Sensing, 61(1): 2321695.                      Comparing and modeling land use organization in cities.
+                                                                 Royal Society Open Science, 2(12): 150449.
+Defferrard, M.; Bresson, X.; and Vandergheynst, P. 2016.
+Convolutional Neural Networks on Graphs with Fast Local-         Li, W.; and Goodchild, M. 2012. An optimisation model for
+ized Spectral Filtering. In NeurIPS.                             building height estimation from shadows in high-resolution
+                                                                 satellite images. International Journal of Applied Earth Ob-
+Dembski, F.; Wössner, U.; Letzgus, M.; Ruddat, M.; and          servation and Geoinformation.
+Yamu, C. 2020. Urban Digital Twins for Smart Cities and
+Citizens: The Case Study of Herrenberg, Germany. Sustain-        Lienhard, J.; et al. 2020. Automatic building height estima-
+ability, 12: 2307.                                               tion using Mask R-CNN and optical imagery. ISPRS Journal
+                                                                 of Photogrammetry and Remote Sensing.
+Frias-Martinez, V.; Frias-Martinez, E.; and Oliver, N. 2013.     Liu, Y.; et al. 2025. Urban street network morphology clas-
+Urban dynamics and land use classification using mobile          sification through street-block based graph neural networks
+phone data. In Ubicomp.                                          and multi-model fusion. International Journal of Digital
+Gao, H.; and Ji, S. 2019. Graph U-Nets. In ICML.                 Earth.
+Gong, Y.; Li, Z.; Zhang, J.; Liu, W.; Chen, B.; and Dong,        Nourinejad, M.; Bahrami, S.; and Roorda, M. J. 2018. De-
+X. 2022. A Spatial Missing Value Imputation Method for           signing parking facilities for autonomous vehicles. Trans-
+Multi-View Urban Statistical Data. IEEE Transactions on          portation Research Part B: Methodological, 109: 110–127.
+Knowledge and Data Engineering.                                  Schrotter, G.; and Hürzeler, C. 2020. The Digital Twin of
+Gong, Y.; Li, Z.; Zhang, J.; Liu, W.; Yin, Y.; and Zheng, Y.     the City of Zurich for Urban Planning. PFG, 88: 99–112.
+2023. Missing Value Imputation for Multi-View Urban Sta-         Schwarz, N.; Riedl, M.; Dammann, I.; and Degen, M. 2023.
+tistical Data via Spatial Correlation Learning. IEEE Trans-      Classification of Building Types in Germany: A Data-Driven
+actions on Knowledge and Data Engineering, 35(1): 686–           Modeling Approach. Urban Informatics, 2(1): 1–14.
+701.                                                             Srivastava, S.; Volpi, M.; and Tuia, D. 2018. Deep learning
+Hamilton, W.; Ying, Z.; and Leskovec, J. 2017. Inductive         for urban morphology extraction from aerial imagery. Re-
+representation learning on large graphs. In NeurIPS.             mote Sensing Letters.
+Klonus, S.; and Ehlers, M. 2011. Image fusion using the          Veličković, P.; et al. 2018. Graph Attention Networks. In
+Ehlers spectral characteristics. International Archives of the   ICLR.
+Photogrammetry, Remote Sensing and Spatial Information           Villegas, W.; Gutierrez, R.; Govea, J.; and Palacios, P.
+Sciences.                                                        2025. Design and evaluation of a decentralized urban gov-
+ernance system with embedded AI and blockchain-enabled
+IoT. Frontiers in Sustainable Cities, 7: 1623412.
+Wang, D.; Lu, C.-T.; Ye, X.; Yigitcanlar, T.; and Fu, Y. 2025.
+Generative AI Meets Future Cities: Towards an Era of Au-
+tonomous Urban Intelligence. arXiv:2304.03892.
+Wu, C.; Wang, J.; Wang, M.; and Kraak, M.-J. 2024. A
+spacematrix and clustering approach to understanding the
+morphology of Singapore’s Housing Development Board
+(HDB) Estates. AGILE: GIScience Series, 5: 54.
+Xia, H.; Liu, R.; Li, L.; and Zhang, Y. 2025. The Funda-
+mental Issues and Development Trends of AI-Driven Trans-
+formations in Urban Transit and Urban Space. Sustainable
+Cities and Society, 106422.
+Xia, H.; Liu, Z.; Efremochkina, M.; Liu, X.; and Lin, C.
+2022. Study on city digital twin technologies for sustain-
+able smart city design: A review and bibliometric analysis
+of geographic information system and building information
+modeling integration. Sustainable Cities and Society, 84:
+104009.
+Yu, B.; Hu, Y.; and Zhou, X. 2025. Can administrative di-
+vision adjustment improve urban land use efficiency? Ev-
+idence from “Revoke County to Urban District” in China.
+Environment and Planning B: Urban Analytics and City Sci-
+ence, 23998083251325638.
+Zhang, C.; et al. 2021. Cross-city transferability of deep
+models for building attribute estimation. Remote Sensing.
+Zhang, W.; Han, J.; Xu, Z.; Ni, H.; Lyu, T.; Liu, H.;
+and Xiong, H. 2025a. Towards Urban General Intelli-
+gence: A Review and Outlook of Urban Foundation Models.
+arXiv:2402.01749.
+Zhang, Y.; Zhao, R.; Huang, Z.; Wang, X.; Ma, Y.; and Long,
+Y. 2025b. GenAI Models Capture Urban Science but Over-
+simplify Complexity. arXiv:2505.13803.
+

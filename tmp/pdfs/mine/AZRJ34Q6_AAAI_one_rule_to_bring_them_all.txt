@@ -1,0 +1,255 @@
+     One Rule to Bring Them All: Investigating Transport Connectivity in Public
+                 Transport Route Generation for Equitable Access
+
+                                                     Anonymous submission
+
+
+
+
+                           Abstract                                ally optimal structure (Borndörfer et al. 2017). An effec-
+                                                                   tive system must meet the functional requirements of both
+  Designing a city-wide public transport network poses a dual      passengers and operators, while ensuring accessibility and
+  challenge: achieving computational efficiency while ensuring
+                                                                   comfort for all residents (Borndörfer et al. 2017). Automat-
+  spatial equity for different population groups. We investigate
+  whether AI-based optimization — hybrid neuroevolutionary         ing the planning process without using additional parame-
+  methods combining graph neural networks with evolution-          ters (such as transport frequency schedules or taking into
+  ary algorithms — can scale Transit Network Design Prob-          account the synergy of several modes of transport in a single
+  lem (TNDP) solutions from synthetic tests to real urban net-     network) can be considered as a TNDP (transport network
+  works while preserving social fairness. Our contribution is to   design problem). This task is computationally complex due
+  introduce a transport connectivity-aware accessibility metric    to the extensive search space and list of domain constraints
+  that bases optimization on principles of equitable accessibil-   (Mumford 2013). Given the complexity of the problem, re-
+  ity rather than traditional trade-offs between passenger and     searchers have applied various heuristic methods and agent-
+  operator costs. The results show a noticeable improvement        based modeling to find the optimal network configuration
+  in network resilience by improving algebraic connectivity on
+                                                                   (Holliday and Dudek 2024).
+  synthetic datasets, and highlight the ambiguity of applying
+  network generation to real data.                                    Being in the field of mathematical problems, many works
+                                                                   exploring TNDP solutions have been applied to synthetic
+                                                                   graphs, with a few practical examples for different cities.
+                       Introduction                                   However, the transition from synthetic to real networks
+To build more equitable and sustainable cities, we need to         reveals serious problems that go beyond accelerating com-
+recognize the new demands posed by new urban science.              putations. From an urban planning perspective, a number
+Both new methods of studying and modeling the urban en-            of methodological questions arise regarding mathematically
+vironment and the emergence of new forms of cities open            optimal solutions (Da et al. 2025). While AI reduces the time
+up new perspectives for studying existing cities and assess-       needed to find solutions for real cities (Holliday and Dudek
+ing the consequences of new urban phenomena (Ye et al.             2024), synthetic tests (Mandl, Mumford) do not take into
+2025). Artificial intelligence and new technologies are caus-      account the spatial heterogeneity of POI distribution and
+ing rapid changes in urban planning, creating new functional       demographic complexity characteristic of real urban condi-
+urban spaces and changing the purpose of existing ones.            tions (Rodrı́guez, Delgado-Lindeman, and dell’Olio 2025)
+Changes in the structure of locations and the recombination        to ensure a socially acceptable result.
+of functions are occurring under the spatial influence of in-         Such solutions typically do not provide sufficient service
+novations in ICT (Jacques et al. 2024). Such digital inno-         to nodes with lower demand, while the balance between op-
+vations in the field of transport, for example, are leading to     erator and customer costs can lead to noticeable shortcom-
+the emergence of driverless transport/autonomous vehicles          ings in customer service. Existing studies have shown that
+(AVs), which is leading to the repurposing of public parking       an algorithm priority aimed at complete customer satisfac-
+spaces due to the reduction in the use of private cars (Batty      tion using the average travel time indicator lead to a huge
+2024). However, as spatial interventions follow the applica-       increase in operating costs, making such solutions unfeasi-
+tion of new technologies, the algorithms that tell us how to       ble in real-world conditions.
+optimally design cities need to be studied in more detail to          This paper answers the question of whether attempting to
+ensure spatial equity for different groups of residents (Soy-      provide equitable access to facilities for a a bigger number
+dan and Oran 2025). In the field of transportation, this may       of residents can be sustainable in terms of operator and cus-
+mean citizens’ right to equitable access to any important fa-      tomer costs, and whether there are any advantages to such
+cilities, such as hospitals, business centers, or kindergartens    an approach.
+(Hook et al. 2025).                                                   The contribution of this work is the introduction of an ac-
+   Planning a public transport system involves several opti-       cessibility metric as a target optimization function based on
+mization criteria, which makes it difficult to select a glob-      the principle of fair accessibility. This approach has three
+significant advantages. First, it provides a near-optimal so-      erate graph-based solutions that account for spatial interde-
+lution, avoiding the search for the optimal balance of cus-        pendencies (Khalil et al. 2017; Wu et al. 2021). Building
+tomer and operator weights. Second, the generated net-             upon these advances, Holliday and Dudek (2024) proposed
+work demonstrates better resilience to disruptions. Third,         integrating a GNN model trained in the RL paradigm with
+although continuous accessibility itself remains close to the      an evolutionary algorithm for the construction and improve-
+original solution, a more reliable transport network promises      ment of public transport networks, showing that such hy-
+better spatial equality.                                           brid approaches can effectively combine structural reason-
+                                                                   ing with adaptive optimization.
+                      Related Work                                    Despite notable progress in algorithmic methods for solv-
+                                                                   ing the TNDP, most studies remain primarily focused on
+The planning process in the field of public transport is con-
+                                                                   improving computational efficiency and enhancing network-
+ceptually divided into several stages, the results of which
+                                                                   level or passenger performance metrics. Comparatively few
+serve as input for the subsequent stage. Schmidt and Schöbel
+                                                                   works have addressed the question of how generated tran-
+(2024) decompose this process into three major subprob-
+                                                                   sit networks influence spatial accessibility and equity across
+lems:
+                                                                   urban territories.
+ • Line generation,                                                   Wang, Chau, and Araldo (2024) highlight the importance
+ • Line selection,                                                 of incorporating spatial accessibility and geographic equity
+                                                                   metrics into network optimization frameworks. Their model,
+ • Frequency setting.
+                                                                   based on Message Passing Neural Networks (MPNN) and
+   In this work, we focus on the stages of line genera-            reinforcement learning, aims to minimize disparities in ac-
+tion and selection, formally known as the line planning or         cess to urban opportunities, demonstrating that aligning net-
+Transit Network Design Problem (TNDP) (Mandl 1980;                 work topology with the spatial and functional structure of
+Durán-Micco and Vansteenwegen 2022; Şahin, Lindner, and          the city can support the design of more equitable transport
+Schlechte 2023). The objective of this stage is to determine a     systems. However, such approaches remain limited, and the
+feasible set of transit lines that ensures convenient travel for   comprehensive evaluation of generated networks in terms of
+passengers while minimizing operational costs. The infras-         equal access to spatial units within the city is still an under-
+tructure network is represented as a graph, where nodes cor-       explored research direction.
+respond to stops and edges denote the physical or temporal
+connections between them, weighted by distance or travel                                 Methodology
+time. Each transit line is represented as an ordered sequence
+of stops. The inputs to this problem typically include the un-     Our methodological framework is designed to compare dif-
+derlying infrastructure network and a travel demand matrix,        ferent route generation strategies under a unified formulation
+which is generally assumed to be static over the analysis pe-      of the Transit Network Design Problem. All candidate solu-
+riod (Schmidt and Schöbel 2024). Extensions of this prob-         tions are represented as feasible sets of routes on the same
+lem often include temporal or multimodal dimensions, such          underlying city graph, subject to identical route length and
+as frequency optimization (Jha, Jha, and Tiwari 2019) or re-       connectivity constraints.
+routing strategies aimed at improving gravity-based accessi-          Each solution is evaluated using a composite objective
+bility without increasing operational costs (Rumpf and Kaul        that combines three components: passenger cost (Cp ), oper-
+2021).                                                             ator cost (Co ), and a demand-weighted transport connectiv-
+   A substantial body of research on TNDP relies on meta-          ity metric (Cw ), complemented by penalty terms for infeasi-
+heuristic methods, which are well suited to handling its com-      bility. By varying the weights assigned to these components,
+binatorial nature and flexible objective formulations. Among       we emulate different planning perspectives (user-oriented,
+these, evolutionary algorithms have gained particular promi-       operator-oriented, and connectivity-oriented) while preserv-
+nence, including genetic algorithms designed with special-         ing a consistent evaluation scheme.
+ized operators for TNDP (Bagloee and Ceder 2011; Pternea,             Within this common setting, we benchmark three al-
+Kepaptsoglou, and Karlaftis 2015), and their multi-objective       gorithms, developed by Holliday and Dudek (2024): a
+variants, such as NSGA-II (Liu et al. 2020), which balance         learned constructive baseline (LC100), a metaheuristic base-
+passenger convenience and operator costs.                          line (BCO), and a neuro-evolutionary variant (NeuroBCO)
+   Recent research has increasingly explored the use of ma-        that integrates a learned policy into the search process. All
+chine learning and neural network architectures capable            methods are run on the same benchmark instances with iden-
+of capturing the topological dependencies within transport         tical parameters, enabling a controlled assessment of how
+graphs. In particular, graph neural networks (GNNs) and            the choice of objective and optimization strategy affects net-
+reinforcement learning (RL) methods enable modeling the            work efficiency, connectivity, and the equity of access.
+process of route construction as a sequence of actions in a
+Markov decision environment. Several studies have demon-           Problem Formulation
+strated the potential of deep neural architectures in combina-     The Transit Network Design Problem is formulated on an
+torial optimization tasks structurally similar to TNDP, such       augmented city graph
+as the Traveling Salesman Problem (TSP) and Vehicle Rout-
+ing Problem (VRP), where GNN models are trained to gen-                                  C = (N; Es ; D);
+where N denotes the set of n potential transit stops (nodes),        The operator cost quantifies total route traversal time:
+Es = f(i; j; ij )g is the set of street edges with associated                   X                  X              X
+                                                                    Co (C; R) =       r;    r =           uv +            vu : (3)
+travel times ij > 0, and D 2 Rn 0 n is a symmetric demand
+                                                                                  r2R             (u;v)2r        (v;u)2r
+matrix (D = D> ) specifying the number of trips between
+each origin–destination pair (Mandl 1980).                         The penalty term Cc accounts for disconnected node pairs
+   A route r is a sequence of distinct nodes connected by          and violations of route length constraints.
+edges in Es . The objective is to determine a set of routes           During evolutionary optimization, a population of candi-
+R = fr1 ; : : : ; rS g that collectively form a feasible transit   date networks undergoes iterative mutation and selection.
+network, satisfying                                                In addition to standard random mutations, NEA employs a
+                                                                   neural mutation, where the GNN policy        generates a new
+                      MIN jrj MAX;                                 route to replace an existing one in the current solution. This
+for all r 2 R, such that all nodes are mutually reachable          hybridization combines the exploratory power of evolution-
+via transit, and a multi-objective cost function is minimized.     ary search with the problem-specific knowledge embedded
+This cost typically balances passenger travel efficiency, op-      in the learned policy. The resulting framework achieves im-
+erational expenditure, and network feasibility constraints.        proved convergence and solution quality compared to clas-
+The TNDP is NP-hard due to the combinatorial nature of             sical EAs and standalone learned models, performing effec-
+route selection and the interdependence of demand coverage         tively on standard TNDP benchmarks.
+and transfer penalties.
+   In this paper, we carry out experiments with generating         Transport connectivity
+sets of routes for several benchmark graphs with different         The transport connectivity metric is based on the principle
+configurations. The input consists of graphs where the ver-        of mutual accessibility of urban areas and reflects how effec-
+tices are public transport stops and the edges are paths be-       tively the transport network enables movement between all
+tween stops with weights in times (minutes). LC-100, EA,           pairs of spatial units (e.g., urban blocks). It is computed by
+and NEA algorithms are used for generation (description            determining the minimum travel time between all nodes in
+of the algorithms is provided below). For each experiment,         the intermodal transport network, normalized by the corre-
+the following optimization functions were selected: Average        sponding straight-line (Euclidean) distances (Morozov et al.
+Travel Time, Route Travel Time, and Weighted Transport             2023).
+Connectivity.                                                         To account for the spatial distribution of demand, a
+                                                                   demand-weighted component is introduced. Let T R 2
+Neuro-evolutionary algorithm                                       Rn n denote the matrix of all-pairs shortest transit times.
+The Neural-Evolutionary Algorithm (NEA) (Holliday and              The weighted median connectivity is then defined as:
+Dudek 2024) is a hybrid optimization method for the TNDP                             n
+                                                                                  1X                         Dij
+that integrates a reinforcement learning-based graph neural        Cw (C; R) =           median TijR                    TijR < 1 :
+network (GNN) policy with an evolutionary algorithm (EA).                         n i=1                   maxk Dik
+The learned policy acts as a heuristic mutation operator, al-                                                                  (4)
+lowing the algorithm to explore the solution space more ef-           This formulation emphasizes accessibility to high-
+ficiently than purely random search strategies.                    demand destinations and complements traditional cost-
+   At the core of NEA lies a GNN policy (ajs), referred to         based optimization criteria by linking the structure of the
+as the Learned Constructor. It constructs a complete set of        transport network with the spatial distribution of travel
+transit routes by interacting with an environment represented      needs, allowing for a more comprehensive evaluation of ur-
+as a Markov Decision Process (MDP), where the city graph           ban connectivity.
+C = (N; Es ; D) defines the state space. At each step, the
+policy decides whether to extend or terminate a route based                      Experiments and Results
+on node and edge embeddings produced by a graph attention          Data
+network. The cumulative reward corresponds to the negative
+                                                                   All experiments1 were conducted on the standard public
+of the overall cost function:
+                                                                   transit benchmarks (Mumford, C. L. 2014): the Mandl net-
+         C(C; R) = wp Cp + (1            )wo Co + Cc ;    (1)      work (15 nodes, 6 routes) and the four larger Mumford in-
+where Cp is the passenger cost, Co the operator cost, and Cc       stances (ranging from 30 to 127 nodes and 12 to 60 routes),
+a constraint penalty term. The parameters , wp , wo , and          as detailed in Table 1. These synthetic cities vary signifi-
+balance the influence of each component.                           cantly in scale, demand distribution, and spatial structure,
+   The passenger cost represents the average in-vehicle            providing a robust testbed for evaluating transit network
+travel time across all demand pairs:                               generation algorithms under diverse conditions. The algo-
+                                P           R                      rithms under comparison - LC-100, BCO, and the hybrid
+                                   i;j Dij ij                      NeuroBCO - were executed with a fixed random seed and
+                  Cp (C; R) = P               ;           (2)
+                                     i;j Dij                       identical route length constraints to ensure reproducibility
+          R                                                        and fair performance assessment.
+where ij    denotes the shortest travel time between i and j
+along the transit network R, including a fixed penalty pT per        1
+                                                                       https://anonymous.4open.science/r/TNDP learning-
+transfer.                                                          EC76/experiments.ipynb
+Table 1: Statistics of the five synthetic benchmark cities used      When optimization prioritizes passenger convenience
+in our experiments.                                               (high Cp weight), networks achieve the lowest average travel
+                                                                  times by constructing dense, overlapping routes around
+ City             n    jEs j   S    min/max      Area (km2 )      high-demand corridors. While this minimizes in-vehicle
+                                                                  time and transfer penalties, it comes at a steep opera-
+ Mandl           15     20      6       2/8            352.7
+                                                                  tional cost: Co often increases by 2-3 times compared to
+ Mumford0        30     90     12      2 / 15          354.2
+                                                                  cost-focused solutions. For example, on the Mandl bench-
+ Mumford1        70    210     15     10 / 30          858.5
+                                                                  mark, passenger-optimized configurations reduce Cp to ap-
+ Mumford2       110    385     56     10 / 22         1394.3
+                                                                  proximately 10.4 minutes but inflate Co beyond 350 min-
+ Mumford3       127    425     60     12 / 25         1703.2
+                                                                  utes of total route traversal. This pattern scales with net-
+                                                                  work size-on Mumford3, Co exceeds 8700 under passenger-
+                                                                  focused settings-highlighting the economic unsustainability
+Assessment                                                        of purely user-centric designs.
+Following the framework proposed by Šfiligoj, Peperko, and          In contrast, minimizing operator cost generates compact,
+Cats (2025), we adopt a set of indicators derived from the        tree-like structures with minimal route mileage. These net-
+temporal evolution of the access graph, a representation in       works are highly efficient from an operational standpoint,
+which two public transport stops are connected if the gener-      achieving the lowest Co across all instances, but at the ex-
+alized travel time between them is below a certain threshold.     pense of passenger experience. Direct-trip shares (d0 ) plum-
+These indicators capture both the dynamics and the equity of      met - often below 15% in larger networks - and multi-
+accessibility in a network as the travel time budget increases.   transfer journeys dominate, with over 30% of trips requir-
+Specifically, the parameters tM , tM , DM , D30 , GM , and        ing two or more changes in Mumford3. Such configurations
+G30 quantify the characteristic time at which the network         create accessibility bottlenecks, particularly in low-demand
+becomes substantially connected, the relative efficiency of       peripheral areas, resulting in spatially inequitable service.
+this process, the corresponding reachability levels, and the         The introduction of Cw as a primary or balanced ob-
+distributional equity of access. This set of metrics allows for   jective fundamentally alters this dynamic. Networks opti-
+a consistent, comparative evaluation of public transport net-     mized with significant Cw weighting exhibit substantially
+work performance in terms of accessibility and robustness:        improved transfer profiles: direct trips rise sharply (up to
+ • tmax : the maximum travel time considered on the net-          70% in balanced settings on smaller graphs), and long trans-
+   work.                                                          fer chains are nearly eliminated (see Figure 3 in additional
+                                                                  materials). On Mumford0, for instance, d0 increases from
+ • tM : characteristic median travel time at which network        just 15.5% under operator minimization to nearly 70% in
+   connectivity rapidly increases.                                connectivity-aware configurations, with two-transfer trips
+ • tM : variability in travel time around tM , capturing net-     dropping to under 1%. This enhancement in direct connec-
+   work temporal heterogeneity.                                   tivity occurs without fully sacrificing efficiency - Co re-
+ • DM and D30 : average degrees of the access graph at me-        mains within 20-50% of the operator-optimal baseline in
+   dian travel time and at 30 minutes, reflecting reachability.   most cases.
+ • GM and G30 : Gini coefficients at the respective times,           Balanced weight combinations (e.g., equal or moderate
+   measuring inequality of access across nodes.                   emphasis on Cp , Co , and Cw ) consistently produce solutions
+                                                                  near the Pareto front, achieving near-minimal Cw while pre-
+ • Algebraic Connectivity: spectral measure of network ro-
+                                                                  serving competitive values in both Cp and Co . These con-
+   bustness and connectivity linked to overall accessibility
+                                                                  figurations demonstrate the complementary nature of the
+   equity.
+                                                                  three objectives: connectivity-driven routing naturally in-
+  In all experiments, we fix the average waiting time to 5        duces redundancy that benefits passengers (shorter paths,
+minutes, the waiting-time weight to 1 minute, and the time-       fewer transfers) while avoiding the excessive sprawl of pure
+budget discretization step to 2 minutes.                          passenger optimization. Figure 1 and 2 in additional materi-
+                                                                  als illustrates this synergy, showing normalized metric trade-
+Experiments on Benchmark Data                                     offs across weight settings for NeuroBCO on Mumford3.
+The core of our analysis revolves around the demand-                 Among the tested algorithms, NeuroBCO demonstrates
+weighted connectivity metric Cw , which integrates spatial        superior performance when Cw is included in the objec-
+accessibility, travel efficiency, and demand responsiveness       tive. It consistently achieves the lowest Cw values - often
+into a single objective. Unlike traditional metrics that fo-      by margins of 5–8% on larger instances - while maintain-
+cus solely on average travel time (Cp ) or total route length     ing strong Cp scores. This advantage stems from its hybrid
+(Co ), Cw captures how effectively the network connects ur-       architecture, which combines learned graph-aware construc-
+ban areas in proportion to real travel needs. Results across      tion with evolutionary refinement, enabling more nuanced
+all benchmarks (Tables 1–5 in additional materials, consoli-      exploration of demand-structured connectivity patterns than
+dated in Table 6 in additional materials) reveal that Cw acts     purely heuristic or evolutionary baselines.
+as a natural mediator between passenger and operator ob-             Despite these benefits, over-emphasizing Cw reveals im-
+jectives, preventing extreme trade-offs and promoting more        portant limitations. Exclusive connectivity optimization in-
+balanced, equitable transit systems.                              creases Co by 20–40% relative to balanced settings, as the
+
