@@ -1,0 +1,77 @@
+\chapter{Программный комплекс подготовки данных и вычислительного эксперимента для оценки доступности городских сервисов}
+\label{ch:software-pipeline}
+
+\section{Архитектура программного комплекса}
+\label{sec:pipeline-architecture}
+
+\subsection{Общая схема пайплайна пространственной подготовки данных}
+\label{subsec:pipeline-overview}
+
+\subsection{Интерфейсы между модулями и формат промежуточных артефактов}
+\label{subsec:pipeline-artifacts}
+
+\subsection{Принципы воспроизводимости вычислительных экспериментов}
+\label{subsec:reproducibility}
+
+\section{Компонент сбора и нормализации пространственных слоев}
+\label{sec:data-collection-component}
+
+\subsection{Слои жилой застройки, населения и спроса}
+\label{subsec:population-demand-layers}
+
+\subsection{Слои сервисных объектов}
+\label{subsec:service-layers}
+
+\subsection{Слои уличной сети и остановок общественного транспорта}
+\label{subsec:street-pt-layers}
+
+\section{Компонент построения интермодального графа}
+\label{sec:intermodal-graph-component}
+
+\subsection{Связь локальных остановочных слоев с iduedu}
+\label{subsec:iduedu-stops}
+
+\subsection{Построение stop-to-stop и pedestrian bridge связей}
+\label{subsec:stop-bridge-links}
+
+\subsection{Контроль качества графа и проверка достижимости}
+\label{subsec:graph-quality-control}
+
+\section{Компонент расчета матриц доступности и обеспеченности}
+\label{sec:accessibility-provision-component}
+
+\subsection{Расчет travel-time матриц}
+\label{subsec:travel-time-matrices}
+
+\subsection{Подготовка solver inputs для сервисных сценариев}
+\label{subsec:solver-inputs}
+
+\subsection{Пересчет обеспеченности после сервисных и транспортных изменений}
+\label{subsec:provision-recompute}
+
+\section{Компонент морфологической диагностики}
+\label{sec:morphology-diagnostics-component}
+
+\subsection{Агрегация street pattern на кварталы и зоны доступности}
+\label{subsec:street-pattern-aggregation}
+
+\subsection{Разделение first-mile, last-mile и PT-path провалов}
+\label{subsec:failure-component-split}
+
+\subsection{Формирование таблиц и карт диагностических результатов}
+\label{subsec:diagnostic-outputs}
+
+\section{Компонент визуализации и проверки результатов}
+\label{sec:visualization-verification-component}
+
+\subsection{Финальные PNG-превью пространственных слоев}
+\label{subsec:png-previews}
+
+\subsection{Манифесты запусков и контрольные показатели}
+\label{subsec:run-manifests}
+
+\subsection{Санити-проверки покрытий, счетчиков и вероятностей}
+\label{subsec:sanity-checks}
+
+\section{Выводы по главе}
+\label{sec:chapter3-conclusions}

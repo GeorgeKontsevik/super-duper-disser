@@ -62,6 +62,35 @@ def _run_command(cmd: list[str], *, cwd: Path, env: dict[str, str]) -> None:
     subprocess.run(cmd, cwd=str(cwd), env=env, check=True)
 
 
+def _cap_thread_env(env: dict[str, str], max_threads: int) -> dict[str, str]:
+    capped = dict(env)
+    max_threads = max(1, int(max_threads))
+    thread_env_vars = (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+    )
+    requested = capped.get("CONNECTPT_MAX_THREADS")
+    if requested:
+        try:
+            max_threads = max(1, min(max_threads, int(requested)))
+        except ValueError:
+            pass
+    for name in thread_env_vars:
+        value = capped.get(name)
+        if value:
+            try:
+                max_threads = max(1, min(max_threads, int(value)))
+            except ValueError:
+                pass
+    for name in thread_env_vars:
+        capped[name] = str(max_threads)
+    capped["CONNECTPT_MAX_THREADS"] = str(max_threads)
+    return capped
+
+
 def _service_matrix_path(city_dir: Path, service: str) -> Path:
     return city_dir / "pipeline_2" / "solver_inputs" / service / "adj_matrix_time_min.parquet"
 
@@ -105,6 +134,9 @@ def _run_accessibility_first(
             cmd.extend(["--placement-root-name", placement_root_name])
     if street_pattern_aware:
         cmd.append("--street-pattern-aware-route-target")
+    max_threads = env.get("CONNECTPT_MAX_THREADS")
+    if max_threads:
+        cmd.extend(["--connectpt-max-threads", str(max_threads)])
     _run_command(cmd, cwd=repo_root, env=env)
     manifest_path = city_dir / "pipeline_2" / "accessibility_first" / "manifest_accessibility_first.json"
     if not manifest_path.exists():
@@ -269,6 +301,7 @@ def main() -> None:
     parser.add_argument("--capacity", type=float, default=800.0)
     parser.add_argument("--placement-root-name", default="placement_exact_target90_cap800")
     parser.add_argument("--street-pattern-aware-route-target", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--connectpt-max-threads", type=int, default=4)
     parser.add_argument("--out-root", type=Path, default=DEFAULT_OUT_ROOT)
     parser.add_argument("--no-cache", action="store_true")
     args = parser.parse_args()
@@ -278,7 +311,7 @@ def main() -> None:
     service = str(args.service)
     out_root = (args.out_root / city_dir.name).resolve()
     out_root.mkdir(parents=True, exist_ok=True)
-    env = os.environ.copy()
+    env = _cap_thread_env(os.environ, int(args.connectpt_max_threads))
     env["PYTHONPATH"] = str(repo_root) + os.pathsep + env.get("PYTHONPATH", "")
 
     rows: list[dict] = []

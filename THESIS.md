@@ -6,8 +6,9 @@ The ITMO PhD thesis template is tracked as a submodule:
 git submodule update --init itmo-phd-thesis-template-en
 ```
 
-Edit text in `itmo-phd-thesis-template-en/Dissertation/*.tex`, bibliography in
-`itmo-phd-thesis-template-en/biblio/*.bib`, then render:
+Edit thesis text in `thesis/Dissertation/*.tex`. These files are copied over
+the upstream template during render, so the submodule stays clean. Bibliography
+can still live in `itmo-phd-thesis-template-en/biblio/*.bib`, then render:
 
 ```bash
 make thesis-pdf

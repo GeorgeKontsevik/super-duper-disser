@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEMPLATE_DIR="${ROOT_DIR}/itmo-phd-thesis-template-en"
+OVERLAY_DIR="${ROOT_DIR}/thesis"
 BUILD_DIR="${ROOT_DIR}/outputs/thesis/build"
 OUT_DIR="${ROOT_DIR}/outputs/thesis"
 PDF_NAME="thesis-itmo.pdf"
@@ -33,12 +34,20 @@ rsync -a --delete \
   --exclude "${PDF_NAME}" \
   "${TEMPLATE_DIR}/" "${BUILD_DIR}/"
 
+if [[ -d "${OVERLAY_DIR}" ]]; then
+  rsync -a "${OVERLAY_DIR}/" "${BUILD_DIR}/"
+fi
+
 # Current polyglossia rejects babelshorthands for english; keep the upstream
 # submodule untouched and patch only the disposable build copy.
 perl -0pi -e 's/\\setmainlanguage\[babelshorthands=true\]\{english\}/\\setmainlanguage{english}/' \
   "${BUILD_DIR}/common/fonts.tex"
 perl -0pi -e 's/\\cyrdash/---/g' \
   "${BUILD_DIR}/common/setupsimple.tex" \
+  "${BUILD_DIR}/common/styles.tex"
+perl -0pi -e 's/\\renewcommand\*\{\\cftchaptername\}\{\\chaptername\\space\}/\\renewcommand*{\\cftchaptername}{Глава\\space}/' \
+  "${BUILD_DIR}/common/styles.tex"
+perl -0pi -e 's/\\renewcommand\*\{\\cftappendixname\}\{\\appendixname\\space\}/\\renewcommand*{\\cftappendixname}{Приложение\\space}/' \
   "${BUILD_DIR}/common/styles.tex"
 
 if [[ "${THESIS_FULL_BIB:-0}" != "1" ]]; then

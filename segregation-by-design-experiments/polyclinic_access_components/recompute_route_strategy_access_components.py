@@ -61,6 +61,7 @@ def _run_accessibility_first(
     n_routes: int,
     placement_root_name: str,
     street_pattern_aware: bool,
+    connectpt_max_threads: int,
     env: dict[str, str],
 ) -> None:
     cmd = [
@@ -79,6 +80,8 @@ def _run_accessibility_first(
         strategy,
         "--recompute-provision",
         "--no-recompute-provision-only-access-problem-services",
+        "--connectpt-max-threads",
+        str(int(connectpt_max_threads)),
     ]
     if strategy == "placement_assignment":
         cmd.extend(["--use-placement-outputs", "--placement-root-name", placement_root_name])
@@ -180,6 +183,7 @@ def main() -> None:
     parser.add_argument("--strategies", nargs="+", default=DEFAULT_STRATEGIES)
     parser.add_argument("--placement-root-name", default="placement_exact_target90_cap800")
     parser.add_argument("--street-pattern-aware-route-target", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--connectpt-max-threads", type=int, default=4)
     args = parser.parse_args()
 
     city_dir = args.city_dir.resolve()
@@ -204,6 +208,7 @@ def main() -> None:
             n_routes=int(args.n_routes),
             placement_root_name=str(args.placement_root_name),
             street_pattern_aware=bool(args.street_pattern_aware_route_target),
+            connectpt_max_threads=int(args.connectpt_max_threads),
             env=env,
         )
         copied = _snapshot_after_route_outputs(city_dir, strategy_dir, str(args.modality))

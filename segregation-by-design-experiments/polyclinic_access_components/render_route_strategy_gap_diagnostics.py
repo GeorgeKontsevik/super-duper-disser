@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,7 +19,9 @@ import geopandas as gpd
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
+from shapely.geometry import LineString
 
 
 DEFAULT_CITY = "brno_czechia"
@@ -27,6 +30,12 @@ DEFAULT_JOINT_ROOT = Path("aggregated_spatial_pipeline/outputs/active_19_good_ci
 DEFAULT_DIAGNOSTICS_ROOT = Path(
     "aggregated_spatial_pipeline/outputs/experiments_active19_20260412/service_access_diagnostics"
 )
+DIAGNOSTICS_ROOTS = [
+    DEFAULT_DIAGNOSTICS_ROOT,
+    Path("aggregated_spatial_pipeline/outputs/experiments_new5_access_20260609/service_access_diagnostics"),
+    Path("aggregated_spatial_pipeline/outputs/experiments_old23_access_20260609/service_access_diagnostics"),
+    Path("aggregated_spatial_pipeline/outputs/experiments_old23_access_20260609_pilot/service_access_diagnostics"),
+]
 DEFAULT_PATTERN_ROOT = Path(
     "aggregated_spatial_pipeline/outputs/experiments_active19_20260412/service_accessibility_street_pattern"
 )
@@ -103,6 +112,85 @@ def _read_strategy_blocks(city_root: Path, service: str, strategy: StrategyInput
     blocks["strategy"] = strategy.name
     blocks["service_name"] = service
     return blocks
+
+
+def _strategy_blocks_path(
+    *,
+    city_root: Path,
+    experiment_city_dir: Path,
+    service: str,
+    strategy: StrategyInput,
+) -> Path:
+    summary_path = experiment_city_dir / "route_count_selection_summary.csv"
+    if summary_path.exists():
+        summary = pd.read_csv(summary_path)
+        sub = summary[summary["strategy"].astype(str).eq(strategy.name)].copy()
+        if sub.empty:
+            raise FileNotFoundError(f"Missing strategy={strategy.name} in {summary_path}")
+        sub["requested_routes"] = pd.to_numeric(sub.get("requested_routes", 0), errors="coerce").fillna(0)
+        sub["actual_routes"] = pd.to_numeric(sub.get("actual_routes", 0), errors="coerce").fillna(0)
+        row = sub.sort_values(["requested_routes", "actual_routes"], ascending=[False, False]).iloc[0]
+        candidate_dir = Path(str(row["candidate_dir"]))
+        path = candidate_dir / "placement" / "blocks_solver_after.parquet"
+        if not path.exists():
+            raise FileNotFoundError(path)
+        return path
+    return city_root / strategy.blocks_relpath.format(service=service)
+
+
+def _read_strategy_blocks_from_experiment(
+    *,
+    city_root: Path,
+    experiment_city_dir: Path,
+    service: str,
+    strategy: StrategyInput,
+) -> gpd.GeoDataFrame:
+    path = _strategy_blocks_path(
+        city_root=city_root,
+        experiment_city_dir=experiment_city_dir,
+        service=service,
+        strategy=strategy,
+    )
+    if not path.exists():
+        raise FileNotFoundError(path)
+    blocks = gpd.read_parquet(path).copy()
+    blocks["block_id"] = blocks.index.astype(str)
+    blocks["strategy"] = strategy.name
+    blocks["service_name"] = service
+    return blocks
+
+
+def _resolve_diagnostics_root(requested_root: Path, city: str) -> Path:
+    requested_path = requested_root / city / "home_to_service_access_diagnostics.parquet"
+    if requested_path.exists():
+        return requested_root
+    for root in DIAGNOSTICS_ROOTS:
+        if (root / city / "home_to_service_access_diagnostics.parquet").exists():
+            return root
+    raise FileNotFoundError(requested_path)
+
+
+def _resolve_city_root(requested_city_root: Path, experiment_city_dir: Path) -> Path:
+    if requested_city_root.exists():
+        return requested_city_root
+    manifest_path = experiment_city_dir / "route_count_selection_manifest.json"
+    if manifest_path.exists():
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        best = payload.get("best") or payload.get("best_result") or {}
+        summary_path = best.get("snapshot_connectpt_summary")
+        if summary_path and not pd.isna(summary_path):
+            summary_file = Path(str(summary_path))
+            if summary_file.exists():
+                summary = json.loads(summary_file.read_text(encoding="utf-8"))
+                city_dir = summary.get("city_dir")
+                if city_dir and Path(city_dir).exists():
+                    return Path(city_dir)
+    for summary_file in sorted(experiment_city_dir.glob("*/routes_*/connectpt_bus_summary.json")):
+        summary = json.loads(summary_file.read_text(encoding="utf-8"))
+        city_dir = summary.get("city_dir")
+        if city_dir and Path(city_dir).exists():
+            return Path(city_dir)
+    return requested_city_root
 
 
 def _prepare_gap_layer(blocks: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
@@ -348,7 +436,10 @@ def _read_route_stage_summaries(experiment_city_dir: Path) -> pd.DataFrame:
     for strategy in [s.name for s in STRATEGIES if s.name != "baseline_no_routes"]:
         path = experiment_city_dir / strategy / "polyclinic_summary_after_routes.json"
         if not path.exists():
-            fallback = fallback_summary[fallback_summary["strategy"].eq(strategy)]
+            if "strategy" not in fallback_summary.columns:
+                fallback = pd.DataFrame()
+            else:
+                fallback = fallback_summary[fallback_summary["strategy"].eq(strategy)]
             if not fallback.empty:
                 row = fallback.iloc[0]
                 before = float(row.get("access_before", np.nan))
@@ -1024,19 +1115,19 @@ def _render_combined_service_access_triage(
 def _full_solution_after_layer(
     gaps: gpd.GeoDataFrame,
     city_root: Path,
+    experiment_city_dir: Path,
     service: str,
     strategy: str = "candidate_service",
 ) -> gpd.GeoDataFrame:
-    strategy_root = "placement_exact_target90_cap800_after_routes_A"
-    if strategy == "candidate_service":
-        strategy_root = "placement_exact_target90_cap800_after_routes_candidate_service"
-    elif strategy == "candidate_or_existing_service":
-        strategy_root = "placement_exact_target90_cap800_after_routes_candidate_or_existing_service"
-    elif strategy == "existing_service":
-        strategy_root = "placement_exact_target90_cap800_after_routes_existing_service"
-    elif strategy == "general_connectivity":
-        strategy_root = "placement_exact_target90_cap800_after_routes_general_connectivity"
-    path = city_root / "pipeline_2" / strategy_root / service / "blocks_solver_after.parquet"
+    strategy_input = next((item for item in STRATEGIES if item.name == strategy), None)
+    if strategy_input is None:
+        raise ValueError(f"Unknown strategy: {strategy}")
+    path = _strategy_blocks_path(
+        city_root=city_root,
+        experiment_city_dir=experiment_city_dir,
+        service=service,
+        strategy=strategy_input,
+    )
     if not path.exists():
         raise FileNotFoundError(path)
     blocks = gpd.read_parquet(path).copy()
@@ -1097,7 +1188,15 @@ def _render_before_after_access_components(
 ) -> None:
     residential_points = _build_residential_points_for_plot(city_root, gaps)
     before = _filter_populated(gaps[gaps["strategy"].eq("baseline_no_routes")])
-    after = _filter_populated(_full_solution_after_layer(gaps, city_root, service, strategy="placement_assignment"))
+    after = _filter_populated(
+        _full_solution_after_layer(
+            gaps,
+            city_root,
+            experiment_city_dir,
+            service,
+            strategy="placement_assignment",
+        )
+    )
     fig, axes = plt.subplots(2, 2, figsize=(10, 9.2), facecolor="#6f6f6c")
     _oldstyle_plot_points_by_label(
         axes[0, 0],
@@ -1185,6 +1284,416 @@ def _render_before_after_access_components(
     fig.tight_layout(rect=(0.02, 0.12, 0.98, 0.94))
     fig.savefig(out_path, dpi=180, facecolor=fig.get_facecolor(), bbox_inches="tight", pad_inches=0.2)
     plt.close(fig)
+
+
+def _read_selection_summary(experiment_city_dir: Path) -> pd.DataFrame:
+    path = experiment_city_dir / "route_count_selection_summary.csv"
+    if not path.exists():
+        return pd.DataFrame()
+    summary = pd.read_csv(path)
+    if "candidate_dir" in summary.columns:
+        summary["candidate_dir"] = summary["candidate_dir"].astype(str)
+    for col in ["requested_routes", "actual_routes", "new_count", "selected_count"]:
+        if col in summary.columns:
+            summary[col] = pd.to_numeric(summary[col], errors="coerce")
+    return summary
+
+
+def _read_best_selection(experiment_city_dir: Path, selection_summary: pd.DataFrame) -> dict[str, object]:
+    manifest_path = experiment_city_dir / "route_count_selection_manifest.json"
+    if manifest_path.exists():
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        best = payload.get("best") or payload.get("best_result")
+        if isinstance(best, dict):
+            return best
+    if selection_summary.empty:
+        return {"strategy": "placement_assignment", "candidate_dir": str(experiment_city_dir)}
+    work = selection_summary.copy()
+    for col in ["new_count", "actual_routes", "requested_routes"]:
+        if col not in work.columns:
+            work[col] = np.nan
+    work["_new_sort"] = work["new_count"].fillna(np.inf)
+    work["_actual_sort"] = work["actual_routes"].fillna(np.inf)
+    work["_requested_sort"] = work["requested_routes"].fillna(np.inf)
+    return work.sort_values(["_new_sort", "_actual_sort", "_requested_sort", "strategy"]).iloc[0].to_dict()
+
+
+def _candidate_dir_for_strategy(experiment_city_dir: Path, selection_summary: pd.DataFrame, strategy: str) -> Path | None:
+    if selection_summary.empty or "strategy" not in selection_summary.columns:
+        return None
+    sub = selection_summary[selection_summary["strategy"].astype(str).eq(strategy)].copy()
+    if sub.empty:
+        return None
+    for col in ["requested_routes", "actual_routes"]:
+        if col not in sub.columns:
+            sub[col] = 0
+    row = sub.sort_values(["requested_routes", "actual_routes"], ascending=[False, False]).iloc[0]
+    candidate_dir = row.get("candidate_dir")
+    if pd.isna(candidate_dir):
+        return None
+    return Path(str(candidate_dir))
+
+
+def _read_blocks_from_candidate(candidate_dir: Path | None) -> gpd.GeoDataFrame | None:
+    if candidate_dir is None:
+        return None
+    path = candidate_dir / "placement" / "blocks_solver_after.parquet"
+    if not path.exists():
+        return None
+    blocks = gpd.read_parquet(path).copy()
+    blocks["block_id"] = blocks.index.astype(str)
+    return blocks
+
+
+def _candidate_route_snapshot_dir(candidate_dir: Path | None) -> Path | None:
+    if candidate_dir is None:
+        return None
+    path = candidate_dir / "snapshots" / "intermodal_replaced"
+    if path.exists():
+        return path
+    path = candidate_dir / "gap_diagnostics" / "recomputed_access_components" / "snapshots" / "intermodal_replaced"
+    if path.exists():
+        return path
+    return None
+
+
+def _read_generated_route_lines(candidate_dir: Path | None, crs) -> gpd.GeoDataFrame:
+    snapshot = _candidate_route_snapshot_dir(candidate_dir)
+    if snapshot is None:
+        return gpd.GeoDataFrame(columns=["route_name", "geometry"], geometry="geometry", crs=crs)
+    gen_path = snapshot / "bus_generated_route_edges.parquet"
+    nodes_path = snapshot / "graph_nodes.parquet"
+    if not gen_path.exists() or not nodes_path.exists():
+        return gpd.GeoDataFrame(columns=["route_name", "geometry"], geometry="geometry", crs=crs)
+    gen = pd.read_parquet(gen_path)
+    nodes = gpd.read_parquet(nodes_path)
+    if gen.empty or nodes.empty:
+        return gpd.GeoDataFrame(columns=["route_name", "geometry"], geometry="geometry", crs=nodes.crs if hasattr(nodes, "crs") else crs)
+    node_key = "index" if "index" in nodes.columns else nodes.index.name
+    if node_key is None:
+        nodes = nodes.reset_index().rename(columns={"index": "_node_index"})
+        node_key = "_node_index"
+    node_geom = nodes.set_index(node_key).geometry.to_dict()
+    rows: list[dict[str, object]] = []
+    for row in gen.itertuples(index=False):
+        u = getattr(row, "intermodal_u")
+        v = getattr(row, "intermodal_v")
+        if u not in node_geom or v not in node_geom:
+            continue
+        a = node_geom[u]
+        b = node_geom[v]
+        if a is None or b is None or a.is_empty or b.is_empty:
+            continue
+        rows.append(
+            {
+                "route_name": str(getattr(row, "route_name", "generated_bus")),
+                "geometry": LineString([a, b]),
+            }
+        )
+    return gpd.GeoDataFrame(rows, geometry="geometry", crs=nodes.crs or crs)
+
+
+def _read_existing_route_lines(candidate_dir: Path | None, crs) -> gpd.GeoDataFrame:
+    snapshot = _candidate_route_snapshot_dir(candidate_dir)
+    if snapshot is None:
+        return gpd.GeoDataFrame(columns=["geometry"], geometry="geometry", crs=crs)
+    path = snapshot / "graph_edges_source.parquet"
+    if not path.exists():
+        return gpd.GeoDataFrame(columns=["geometry"], geometry="geometry", crs=crs)
+    edges = gpd.read_parquet(path)
+    if "type" not in edges.columns:
+        return gpd.GeoDataFrame(columns=["geometry"], geometry="geometry", crs=edges.crs or crs)
+    route_types = {"bus", "tram", "subway"}
+    out = edges[edges["type"].astype(str).isin(route_types)].copy()
+    if "route" in out.columns:
+        out = out[out["route"].notna()].copy()
+    return gpd.GeoDataFrame(out, geometry="geometry", crs=edges.crs or crs)
+
+
+def _target_unmet_column(blocks: gpd.GeoDataFrame) -> pd.Series:
+    if "target_unmet_demand" in blocks.columns:
+        return pd.to_numeric(blocks["target_unmet_demand"], errors="coerce").fillna(0.0)
+    return pd.to_numeric(blocks.get("demand_without", 0.0), errors="coerce").fillna(0.0)
+
+
+def _plot_route_strategy_map(
+    ax: plt.Axes,
+    blocks: gpd.GeoDataFrame,
+    candidate_dir: Path | None,
+    title: str,
+    *,
+    highlight: bool = False,
+    show_existing_routes: bool = False,
+    show_services: bool = True,
+    show_generated_routes: bool = True,
+    detail_roads: bool = False,
+    vmax: float | None = None,
+) -> None:
+    ax.set_facecolor("#f8f5eb")
+    plot_blocks = _filter_populated(blocks)
+    if plot_blocks.empty:
+        plot_blocks = blocks.copy()
+    target = _target_unmet_column(plot_blocks)
+    plot_blocks = plot_blocks.assign(_target_unmet=target)
+    base = plot_blocks[plot_blocks["_target_unmet"].le(0)]
+    if len(base):
+        base.plot(ax=ax, color="#f5f1e8", edgecolor="#d7d0c2", linewidth=0.15, zorder=1)
+    unmet = plot_blocks[plot_blocks["_target_unmet"].gt(0)]
+    if len(unmet):
+        unmet.plot(
+            ax=ax,
+            column="_target_unmet",
+            cmap="YlOrRd",
+            vmin=0,
+            vmax=vmax or float(unmet["_target_unmet"].quantile(0.98)) or 1.0,
+            linewidth=0.12,
+            edgecolor="#ffffff",
+            alpha=0.86,
+            zorder=2,
+        )
+    if detail_roads:
+        existing = _read_existing_route_lines(candidate_dir, blocks.crs)
+        if not existing.empty:
+            existing.plot(ax=ax, color="#9aa7b8", linewidth=0.55, alpha=0.45, zorder=3)
+    elif show_existing_routes:
+        existing = _read_existing_route_lines(candidate_dir, blocks.crs)
+        if not existing.empty:
+            existing.plot(ax=ax, color="#7d99bf", linewidth=0.7, alpha=0.38, zorder=3)
+
+    if show_generated_routes:
+        gen = _read_generated_route_lines(candidate_dir, blocks.crs)
+        if not gen.empty:
+            colors = ["#2f80ed", "#f97316", "#16a34a", "#7c3aed", "#db2777"]
+            for idx, (route_name, route) in enumerate(gen.groupby("route_name", sort=True)):
+                color = colors[idx % len(colors)]
+                route.plot(ax=ax, color="white", linewidth=4.2, alpha=0.9, zorder=7)
+                route.plot(ax=ax, color=color, linewidth=2.4, alpha=0.72, zorder=8)
+
+    if show_services:
+        existing_services = plot_blocks[pd.to_numeric(plot_blocks.get("capacity", 0.0), errors="coerce").fillna(0.0) > 0]
+        new_services = plot_blocks[pd.to_numeric(plot_blocks.get("optimized_capacity_added", 0.0), errors="coerce").fillna(0.0) > 0]
+        if len(existing_services):
+            existing_services.geometry.representative_point().plot(
+                ax=ax,
+                color="#111827",
+                marker="s",
+                markersize=12,
+                alpha=0.82,
+                zorder=9,
+            )
+        if len(new_services):
+            new_services.geometry.representative_point().plot(
+                ax=ax,
+                color="#10b981",
+                marker="*",
+                edgecolor="white",
+                linewidth=0.35,
+                markersize=32,
+                alpha=0.9,
+                zorder=10,
+            )
+    if highlight:
+        circle = plt.Circle(
+            (0.5, 0.5),
+            0.485,
+            transform=ax.transAxes,
+            fill=False,
+            color="#19b36a",
+            linewidth=2.3,
+            zorder=20,
+            clip_on=False,
+        )
+        ax.add_patch(circle)
+    bounds = plot_blocks.total_bounds
+    if np.isfinite(bounds).all():
+        pad_x = max((bounds[2] - bounds[0]) * 0.04, 1.0)
+        pad_y = max((bounds[3] - bounds[1]) * 0.04, 1.0)
+        ax.set_xlim(bounds[0] - pad_x, bounds[2] + pad_x)
+        ax.set_ylim(bounds[1] - pad_y, bounds[3] + pad_y)
+    ax.set_title(title, fontsize=8.5, fontweight="bold", color="#263238", pad=5)
+    ax.set_axis_off()
+
+
+def _render_strategy_overview_maps(
+    gaps: gpd.GeoDataFrame,
+    experiment_city_dir: Path,
+    selection_summary: pd.DataFrame,
+    out_path: Path,
+    city_label: str,
+    service: str,
+) -> None:
+    selected = [
+        "placement_assignment",
+        "general_connectivity",
+        "existing_service",
+        "candidate_service",
+        "candidate_or_existing_service",
+    ]
+    rows: list[dict[str, object]] = []
+    for strategy in selected:
+        candidate_dir = _candidate_dir_for_strategy(experiment_city_dir, selection_summary, strategy)
+        blocks = _read_blocks_from_candidate(candidate_dir)
+        if blocks is None:
+            sub = gaps[gaps["strategy"].eq(strategy)].copy()
+            blocks = sub if not sub.empty else gaps[gaps["strategy"].eq("baseline_no_routes")].copy()
+        summary_row = selection_summary[selection_summary["strategy"].astype(str).eq(strategy)]
+        new_count = int(pd.to_numeric(blocks.get("optimized_capacity_added", 0.0), errors="coerce").fillna(0.0).gt(0).sum())
+        actual_routes = np.nan
+        if not summary_row.empty:
+            row = summary_row.iloc[0]
+            new_count = int(row["new_count"]) if pd.notna(row.get("new_count")) else new_count
+            actual_routes = row.get("actual_routes", np.nan)
+        rows.append({"strategy": strategy, "candidate_dir": candidate_dir, "blocks": blocks, "new_count": new_count, "actual_routes": actual_routes})
+    min_new = min(row["new_count"] for row in rows) if rows else None
+    vmax_parts = []
+    for row in rows:
+        vals = _target_unmet_column(row["blocks"])
+        if len(vals):
+            vmax_parts.append(float(vals.quantile(0.98)))
+    vmax = max(vmax_parts) if vmax_parts else 1.0
+    fig, axes = plt.subplots(2, 3, figsize=(12.5, 8.0), facecolor="#f7f3ea")
+    axes_flat = axes.ravel()
+    for ax, row in zip(axes_flat, rows):
+        routes_text = "routes=n/a" if pd.isna(row["actual_routes"]) else f"routes={int(row['actual_routes'])}"
+        title = f"{row['strategy']}\nnew sites: {row['new_count']} | {routes_text}"
+        _plot_route_strategy_map(
+            ax,
+            row["blocks"],
+            row["candidate_dir"],
+            title,
+            highlight=(min_new is not None and row["new_count"] == min_new),
+            show_existing_routes=False,
+            show_services=True,
+            show_generated_routes=True,
+            vmax=vmax,
+        )
+    axes_flat[-1].set_axis_off()
+    handles = [
+        Line2D([0], [0], color="#2f80ed", lw=2.4, label="generated route 1"),
+        Line2D([0], [0], color="#f97316", lw=2.4, label="generated route 2"),
+        Line2D([0], [0], color="#16a34a", lw=2.4, label="generated route 3"),
+        Line2D([0], [0], marker="s", color="none", markerfacecolor="#111827", markersize=6, label="existing service block"),
+        Line2D([0], [0], marker="*", color="none", markerfacecolor="#10b981", markeredgecolor="white", markersize=10, label="proposed new service block"),
+        Line2D([0], [0], color="#19b36a", lw=2.4, label="minimum new-sites option"),
+    ]
+    fig.legend(handles=handles, loc="lower center", ncol=3, frameon=False, fontsize=8)
+    fig.suptitle(
+        f"{city_label}: {service} route strategies and minimum-service options",
+        fontsize=13,
+        fontweight="bold",
+        y=0.98,
+    )
+    fig.tight_layout(rect=(0.02, 0.07, 0.98, 0.94))
+    fig.savefig(out_path, dpi=180, facecolor=fig.get_facecolor(), bbox_inches="tight", pad_inches=0.15)
+    plt.close(fig)
+
+
+def _render_best_option_routes_services(
+    gaps: gpd.GeoDataFrame,
+    experiment_city_dir: Path,
+    selection_summary: pd.DataFrame,
+    out_path: Path,
+    city_label: str,
+    service: str,
+) -> None:
+    best = _read_best_selection(experiment_city_dir, selection_summary)
+    strategy = str(best.get("strategy", "baseline_no_routes"))
+    candidate_dir_value = best.get("candidate_dir")
+    candidate_dir = Path(str(candidate_dir_value)) if candidate_dir_value is not None and not pd.isna(candidate_dir_value) else None
+    blocks = _read_blocks_from_candidate(candidate_dir)
+    if blocks is None:
+        blocks = gaps[gaps["strategy"].eq(strategy)].copy()
+    if blocks.empty:
+        blocks = gaps[gaps["strategy"].eq("baseline_no_routes")].copy()
+    new_count = int(best.get("new_count", pd.to_numeric(blocks.get("optimized_capacity_added", 0.0), errors="coerce").fillna(0.0).gt(0).sum()))
+    actual_routes = best.get("actual_routes", np.nan)
+    routes_text = "routes=n/a" if pd.isna(actual_routes) else f"{int(actual_routes)} generated routes"
+    fig, axes = plt.subplots(1, 2, figsize=(12.5, 6.2), facecolor="#f7f3ea")
+    _plot_route_strategy_map(
+        axes[0],
+        blocks,
+        candidate_dir,
+        f"Best option: routes\n{strategy} | {routes_text} | new sites: {new_count}",
+        highlight=True,
+        show_existing_routes=True,
+        show_services=False,
+        show_generated_routes=True,
+        detail_roads=False,
+    )
+    _plot_route_strategy_map(
+        axes[1],
+        blocks,
+        candidate_dir,
+        f"Best option: services\nexisting services + proposed new sites: {new_count}",
+        highlight=True,
+        show_existing_routes=False,
+        show_services=True,
+        show_generated_routes=False,
+    )
+    handles = [
+        Line2D([0], [0], color="#7d99bf", lw=1.2, alpha=0.7, label="existing PT route edges"),
+        Line2D([0], [0], color="#2f80ed", lw=2.4, label="generated route 1"),
+        Line2D([0], [0], color="#f97316", lw=2.4, label="generated route 2"),
+        Line2D([0], [0], color="#16a34a", lw=2.4, label="generated route 3"),
+        Line2D([0], [0], marker="s", color="none", markerfacecolor="#111827", markersize=6, label="existing service block"),
+        Line2D([0], [0], marker="*", color="none", markerfacecolor="#10b981", markeredgecolor="white", markersize=10, label="proposed new service block"),
+    ]
+    fig.legend(handles=handles, loc="lower center", ncol=3, frameon=False, fontsize=8)
+    fig.suptitle(f"{city_label}: best route-improvement option with routes and services", fontsize=13, fontweight="bold", y=0.98)
+    fig.tight_layout(rect=(0.02, 0.09, 0.98, 0.91))
+    fig.savefig(out_path, dpi=180, facecolor=fig.get_facecolor(), bbox_inches="tight", pad_inches=0.15)
+    plt.close(fig)
+
+
+def _merge_vertical_pngs(title: str, inputs: list[Path], out_path: Path) -> None:
+    from PIL import Image, ImageDraw, ImageFont
+
+    images = [Image.open(path).convert("RGB") for path in inputs if path.exists()]
+    if not images:
+        raise FileNotFoundError("No rendered panels to merge")
+    width = max(image.width for image in images)
+    title_h = 92
+    gap = 18
+    margin = 22
+    height = title_h + margin + sum(image.height for image in images) + gap * (len(images) - 1) + margin
+    canvas = Image.new("RGB", (width + 2 * margin, height), "#f7f3ea")
+    draw = ImageDraw.Draw(canvas)
+    try:
+        font = ImageFont.truetype("Arial Bold.ttf", 34)
+        sub_font = ImageFont.truetype("Arial.ttf", 16)
+    except OSError:
+        font = ImageFont.load_default()
+        sub_font = ImageFont.load_default()
+    draw.text((margin, 22), title, fill="#1f2937", font=font)
+    draw.text((margin, 62), "Diagnostics + route-strategy overview + best option routes/services", fill="#4b5563", font=sub_font)
+    y = title_h + margin
+    for image in images:
+        x = margin + (width - image.width) // 2
+        canvas.paste(image, (x, y))
+        y += image.height + gap
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    canvas.save(out_path)
+
+
+def _render_full_final_canvas(
+    gaps: gpd.GeoDataFrame,
+    city_root: Path,
+    experiment_city_dir: Path,
+    service: str,
+    city: str,
+    out_path: Path,
+) -> None:
+    selection_summary = _read_selection_summary(experiment_city_dir)
+    tmp_dir = out_path.parent / f".{out_path.stem}_parts"
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    diagnostics = tmp_dir / "01_access_diagnostics.png"
+    overview = tmp_dir / "02_strategy_overview.png"
+    best = tmp_dir / "03_best_routes_services.png"
+    _render_before_after_access_components(gaps, city_root, experiment_city_dir, service, diagnostics)
+    _render_strategy_overview_maps(gaps, experiment_city_dir, selection_summary, overview, city, service)
+    _render_best_option_routes_services(gaps, experiment_city_dir, selection_summary, best, city, service)
+    _merge_vertical_pngs(f"{city}: {service} full route-strategy canvas", [diagnostics, overview, best], out_path)
+    shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def _render_oldstyle_before_after_contact_sheet(
@@ -1436,16 +1945,24 @@ def main() -> None:
     parser.add_argument("--diagnostics-root", type=Path, default=DEFAULT_DIAGNOSTICS_ROOT)
     parser.add_argument("--pattern-root", type=Path, default=DEFAULT_PATTERN_ROOT)
     parser.add_argument("--experiment-root", type=Path, default=DEFAULT_EXPERIMENT_ROOT)
+    parser.add_argument("--only-final-canvas", action="store_true")
+    parser.add_argument("--final-canvas-out", type=Path, default=None)
     args = parser.parse_args()
 
-    city_root = args.joint_root / args.city
     experiment_city_dir = args.experiment_root / args.city
+    city_root = _resolve_city_root(args.joint_root / args.city, experiment_city_dir)
+    diagnostics_root = _resolve_diagnostics_root(args.diagnostics_root, args.city)
     out_dir = experiment_city_dir / "gap_diagnostics"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     layers: list[gpd.GeoDataFrame] = []
     for strategy in STRATEGIES:
-        blocks = _read_strategy_blocks(city_root, args.service, strategy)
+        blocks = _read_strategy_blocks_from_experiment(
+            city_root=city_root,
+            experiment_city_dir=experiment_city_dir,
+            service=args.service,
+            strategy=strategy,
+        )
         layers.append(_prepare_gap_layer(blocks))
     gaps = gpd.GeoDataFrame(pd.concat(layers, ignore_index=True), crs=layers[0].crs)
     gaps = _attach_street_patterns(gaps, args.pattern_root, args.city)
@@ -1453,7 +1970,7 @@ def main() -> None:
 
     components = _read_strategy_component_diagnostics(
         city_root=city_root,
-        diagnostics_root=args.diagnostics_root,
+        diagnostics_root=diagnostics_root,
         experiment_city_dir=experiment_city_dir,
         city=args.city,
         service=args.service,
@@ -1511,6 +2028,41 @@ def main() -> None:
     components.round(6).to_csv(out_dir / "block_route_solvability_diagnostics.csv", index=False)
     if not pattern_summary.empty:
         pattern_summary.round(6).to_csv(out_dir / "strategy_gap_by_street_pattern.csv", index=False)
+
+    if args.only_final_canvas:
+        final_canvas_out = args.final_canvas_out or out_dir / "oldstyle_before_only_service_gap_access_components.png"
+        final_canvas_out.parent.mkdir(parents=True, exist_ok=True)
+        _render_full_final_canvas(
+            gaps,
+            city_root,
+            experiment_city_dir,
+            args.service,
+            args.city,
+            final_canvas_out,
+        )
+        manifest = {
+            "city": args.city,
+            "service": args.service,
+            "output_dir": str(out_dir),
+            "final_canvas": str(final_canvas_out),
+            "strategies": [s.name for s in STRATEGIES],
+            "block_rows": int(len(gaps)),
+            "component_blocks": int(len(components)),
+            "png_count_in_city_output": 0,
+            "notes": [
+                "Only the final full route-strategy canvas was rendered.",
+                "The final canvas combines access diagnostics, route-strategy overview maps, and best-option route/service maps.",
+                "Strategy-specific route-stage before/after totals are read from route-count experiment outputs when available.",
+            ],
+        }
+        (out_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(
+            json.dumps(
+                {"output_dir": str(out_dir), "final_canvas": str(final_canvas_out), "block_rows": int(len(gaps))},
+                ensure_ascii=False,
+            )
+        )
+        return
 
     _render_summary_bars(summary, out_dir / "strategy_gap_summary_bars.png")
     _render_route_solvable_scatter(gaps, out_dir / "baseline_route_solvable_vs_unmet_scatter.png")
