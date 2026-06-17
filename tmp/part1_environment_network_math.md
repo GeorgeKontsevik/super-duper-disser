@@ -226,9 +226,14 @@ G_{\omega}(t) =
 $$
 
 where:
-- `X_E` are edge attributes;
-- `\omega` denotes the rule set or scenario;
-- `G_{\omega}(t)` is the realized network at time `t`.
+
+$$
+\begin{array}{lcl}
+X_E & = & \text{edge attributes},\\
+\omega & = & \text{rule set or scenario},\\
+G_{\omega}(t) & = & \text{realized network at time } t.
+\end{array}
+$$
 
 Accessibility is then not computed on the static network, but on the realized network:
 
@@ -237,21 +242,28 @@ A_{od}^{\omega}(t) =
 f(o, d, G_{\omega}(t)).
 $$
 
-For service systems, this becomes a provider-access condition:
+For both service accessibility and supply-chain accessibility, the KPI can be written as reaching at least one admissible destination within a time threshold:
 
 $$
-A_{ij}^{\omega}(t)=1
-\quad \Longleftrightarrow \quad
-\tau_{ij}^{\omega}(t) \le D.
+A_i^{h,\omega}(t)=
+\begin{cases}
+1, & \text{if } \min_{j\in \mathcal{D}_i^h} \tau_{ij}^{\omega}(t) \le S_i^h,\\
+0, & \text{otherwise}.
+\end{cases}
 $$
 
-For supply chains, this becomes a travel-time or cost deterioration condition:
+where:
 
 $$
-\Delta \tau_{od}^{\omega}(t)
-=
-\tau_{od}^{\omega}(t) - \tau_{od}^{0}.
+\begin{array}{lcl}
+h & = & \text{accessibility task type},\\
+i & = & \text{origin / demand node},\\
+\mathcal{D}_i^h & = & \text{admissible destination set for } i,\\
+S_i^h & = & \text{maximum admissible travel time / cost}.
+\end{array}
 $$
+
+For service accessibility, origins are all demand nodes and destinations are fixed service providers. For supply chains, origins are spatially distributed production / demand nodes and destinations are any admissible destination of the required type.
 
 The shared idea for Part 1:
 
@@ -266,3 +278,215 @@ $$
 The difference between 1.1 and 1.2 is the realization function:
 - 1.1 uses a temperature-dependent edge-feasibility model;
 - 1.2 uses climate-stressor road-status rules and speed penalties.
+
+---
+
+## Обобщенная постановка для части 1
+
+$$
+G_0 = (V, E_0).
+$$
+
+$$
+z(t) = (z_1(t), z_2(t), \ldots, z_q(t)).
+$$
+
+$$
+G_{\omega}(t) =
+\Phi(G_0, X_E, z(t), \omega),
+$$
+
+$$
+\begin{array}{lcl}
+X_E & = & \text{атрибуты ребер},\\
+\omega & = & \text{набор правил или сценарий воздействия},\\
+G_{\omega}(t) & = & \text{реализованное состояние сети в момент } t.
+\end{array}
+$$
+
+$$
+A_{od}^{\omega}(t) =
+f(o, d, G_{\omega}(t)).
+$$
+
+$$
+A_i^{h,\omega}(t)=
+\begin{cases}
+1, & \text{если } \min_{j\in \mathcal{D}_i^h} \tau_{ij}^{\omega}(t) \le S_i^h,\\
+0, & \text{иначе}.
+\end{cases}
+$$
+
+$$
+\begin{array}{lcl}
+h & = & \text{тип задачи доступности},\\
+i & = & \text{узел-источник / узел спроса},\\
+\mathcal{D}_i^h & = & \text{множество допустимых destination для } i,\\
+S_i^h & = & \text{максимально допустимое время / стоимость пути}.
+\end{array}
+$$
+
+$$
+\text{внешняя среда}
+\rightarrow
+\text{состояние сети}
+\rightarrow
+\text{доступность / сервисный или supply-chain результат}.
+$$
+
+Пояснения:
+
+$$
+\begin{array}{lcl}
+G_0 & = & \text{исходная сеть},\\
+z(t) & = & \text{внешние условия среды в момент } t,\\
+G_{\omega}(t) & = & \text{состояние сети после применения сценария } \omega,\\
+A_{od}^{\omega}(t) & = & \text{доступность, рассчитанная по } G_{\omega}(t),\\
+A_i^{h,\omega}(t)=1 & \Longleftrightarrow & \text{узел } i \text{ достигает допустимый destination за время } S_i^h,\\
+O^h & = & \text{множество узлов-источников для задачи } h.
+\end{array}
+$$
+
+---
+
+## Обобщение по линкам
+
+$$
+e=(i,j)\in E_0
+$$
+
+$$
+x_e=(\kappa_e,\rho_e,l_e)
+$$
+
+$$
+z(t)=(z_1(t),z_2(t),\ldots,z_q(t))
+$$
+
+$$
+a_e^{\omega}(t)=A_e(x_e,z(t),\omega)
+$$
+
+$$
+c_e^{\omega}(t)=C_e(x_e,z(t),\omega)
+$$
+
+$$
+E_{\omega}(t)=\{e\in E_0\mid a_e^{\omega}(t)=1\}
+$$
+
+$$
+\tau_{ij}^{\omega}(t)=
+\min_{p:i\to j}
+\sum_{e\in p} c_e^{\omega}(t),
+\qquad
+e\in E_{\omega}(t)
+$$
+
+$$
+\begin{array}{lcl}
+e & = & \text{линк между узлами } i \text{ и } j,\\
+x_e & = & \text{атрибуты линка},\\
+\kappa_e & = & \text{класс / тип линка},\\
+\rho_e & = & \text{качество / поверхность / режим линка},\\
+l_e & = & \text{длина линка},\\
+z(t) & = & \text{внешние факторы в момент } t,\\
+a_e^{\omega}(t) & = & \text{доступность линка},\\
+c_e^{\omega}(t) & = & \text{время / стоимость прохождения линка}.
+\end{array}
+$$
+
+Общий смысл: в части 1 сеть не проектируется заново. Меняется только состояние уже существующих линков: они могут стать недоступными или получить другую стоимость прохождения под внешними факторами.
+
+---
+
+## Допустимые вмешательства для устойчивости
+
+$$
+\text{логистическая задача:}\qquad
+\rho_e \rightarrow \rho'_e
+$$
+
+$$
+c_e^{\omega}(t)=C_e(\kappa_e,\rho'_e,l_e,z(t),\omega),
+\qquad
+a_e^{\omega}(t)=A_e(\kappa_e,\rho'_e,l_e,z(t),\omega)
+$$
+
+$$
+\text{сервисно-транспортная задача:}\qquad
+E_{\omega}^{\tau}(t)=E_{\omega}^{\tau,0}(t)\cup Y
+$$
+
+$$
+Y\subseteq \mathcal{Y},
+\qquad
+y=(i,j,\kappa)\in\mathcal{Y}
+$$
+
+$$
+\begin{array}{lcl}
+\rho'_e & = & \text{улучшенный тип / качество существующего дорожного ребра},\\
+\mathcal{Y} & = & \text{заранее допустимое множество новых транспортных связей},\\
+y=(i,j,\kappa) & = & \text{новая транспортная связь типа } \kappa \text{ между } i \text{ и } j,\\
+Y & = & \text{выбранные транспортные связи}.
+\end{array}
+$$
+
+---
+
+## Различия постановок
+
+### Сервисно-транспортная задача
+
+$$
+\begin{array}{ll}
+\text{origin} &
+O^h=\text{все узлы спроса},\\
+\text{destination} &
+\mathcal{D}_i^h=\text{сервисы нужного типа},\\[4pt]
+\text{сеть} &
+E_{\omega}^{\tau}(t)=E_{\omega}^{\tau,0}(t)\cup Y,\\
+\text{ребра} &
+\kappa_e=\text{класс транспортной связи},\\
+&
+A_e,C_e=A_e,C_e(\kappa_e,z(t),\omega),\\[4pt]
+\text{вмешательство} &
+Y\subseteq\mathcal{Y},\\
+&
+y=(i,j,\kappa)\in\mathcal{Y}.
+\end{array}
+$$
+
+### Логистическая задача
+
+$$
+\begin{array}{ll}
+\text{origin} &
+O^h=\text{destination нужного типа},\\
+\text{destination} &
+\mathcal{D}_i^h=\text{demand-узлы},\\[4pt]
+\text{сеть} &
+E_{\omega}(t)=\{e\in E_0\mid a_e^{\omega}(t)=1\},\\
+\text{ребра} &
+\rho_e=\text{класс дороги},\\
+&
+A_e,C_e=A_e,C_e(\rho_e,z(t),\omega),\\[4pt]
+\text{вмешательство} &
+\rho_e\rightarrow\rho'_e.
+\end{array}
+$$
+
+---
+
+## Слайдовая версия
+
+![Общая математическая постановка задачи 1](./part1_environment_network_slide.png)
+
+---
+
+## Мультиуровневая интерпретация сети
+
+![Мультиуровневая сеть: дороги, транспорт, состояние среды](./part1_multilayer_stack_schema.png)
+
+![Мультиуровневость в двух постановках](./part1_multilayer_task_comparison.png)
