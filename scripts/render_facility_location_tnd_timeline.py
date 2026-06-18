@@ -23,8 +23,8 @@ F_TITLE = font(42, True)
 F_SUB = font(27)
 F_YEAR = font(30)
 F_LANE = font(30, True)
-F_BOX = font(25, True)
-F_SMALL = font(20)
+F_BOX = font(32, True)
+F_SMALL = font(24)
 F_NOTE = font(22)
 
 black = (24, 24, 24)
@@ -88,7 +88,7 @@ def arrow(x1, y1, x2, y2, color=black, width=4):
 def box(x: int, y: int, w: int, title: str, body: str, refs: str = "", accent=False):
     fill = "white"
     d.rectangle((x, y, x + w, y + 120), fill=fill, outline=(70, 70, 70), width=2)
-    draw_wrapped(title, x + 18, y + 18, w - 36, F_BOX, black, 5)
+    draw_wrapped(title, x + 18, y + 15, w - 36, F_BOX, black, 5)
     if refs:
         d.text((x + 18, y + 88), refs, font=F_SMALL, fill=(70, 70, 70))
 
@@ -118,21 +118,21 @@ lane_label(lane_y["flp"], "Размещение сервисов", "что и г
 lane_label(lane_y["network"], "Изменение сети", "какие связи изменить")
 lane_label(lane_y["multi"], "Слои сети", "как связаны дороги, транспорт и среда")
 
-box(470, 364, 300, "Классические FLP", "где открыть склад / сервис, если сеть уже задана", "[1][2]")
-box(830, 364, 310, "Покрытие спроса", "объект нужен там, где спрос попадает в допустимое время", "[3][4]")
-box(1460, 364, 340, "Сеть влияет на FLP", "топология сети меняет результат location-allocation", "[12]-[15]")
-box(1900, 364, 350, "FL + network design", "выбираем не только объекты, но и связи сети", "[22]", True)
-box(2580, 364, 470, "Прикладные FLNDP", "healthcare, equity, accessibility, heterogeneous demand, road topology", "[23][24][26]", True)
+box(470, 364, 300, "Классические FLP", "где открыть склад / сервис, если сеть уже задана", "[20][21]")
+box(830, 364, 310, "Покрытие спроса", "объект нужен там, где спрос попадает в допустимое время", "[22][23]")
+box(1460, 364, 340, "Сеть влияет на FLP", "топология сети меняет результат location-allocation", "[31]-[34]")
+box(1900, 364, 350, "FL + network design", "выбираем не только объекты, но и связи сети", "[41]", True)
+box(2580, 364, 470, "Прикладные FLNDP", "healthcare, equity, accessibility, heterogeneous demand, road topology", "[42][43][45]", True)
 
-box(1080, 689, 330, "Transport NDP", "как построить / изменить links в транспортной сети", "[5]-[7]")
-box(1460, 689, 330, "Routing + time", "размещение связывается с маршрутами и временем пути", "[8]-[11]")
-box(1900, 689, 350, "Network modification", "изменение links становится альтернативой новым объектам", "[22]", True)
-box(2310, 689, 340, "Disruption", "сеть может деградировать; параметры links неопределенны", "[23]")
-box(2730, 689, 320, "Transit + fares", "сеть ОТ и тарифы входят в задачу сервисов", "[25]", True)
+box(1080, 689, 330, "Transport NDP", "как построить / изменить links в транспортной сети", "[24]-[26]")
+box(1460, 689, 330, "Routing + time", "размещение связывается с маршрутами и временем пути", "[27]-[30]")
+box(1900, 689, 350, "Network modification", "изменение links становится альтернативой новым объектам", "[41]", True)
+box(2310, 689, 340, "Disruption", "сеть может деградировать; параметры links неопределенны", "[42]")
+box(2730, 689, 320, "Transit + fares", "сеть ОТ и тарифы входят в задачу сервисов", "[44]", True)
 
-box(2275, 1014, 330, "Multimodal mobility", "городская мобильность складывается из разных видов транспорта", "[30]")
-box(2660, 1014, 330, "Multilayer mobility", "виды транспорта описываются как связанные слои", "[29]", True)
-box(3100, 1014, 330, "Multilayer science", "важна созависимость и динамика слоев сети", "[31]", True)
+box(2275, 1014, 330, "Multimodal mobility", "городская мобильность складывается из разных видов транспорта", "[49]")
+box(2660, 1014, 330, "Multilayer mobility", "виды транспорта описываются как связанные слои", "[48]", True)
+box(3100, 1014, 330, "Multilayer science", "важна созависимость и динамика слоев сети", "[50]", True)
 
 # Horizontal arrows by lane.
 for y, pairs in [
@@ -147,7 +147,7 @@ for y, pairs in [
 final_x, final_y, final_w, final_h = 2700, 1210, 720, 105
 d.rounded_rectangle((final_x, final_y, final_x + final_w, final_y + final_h), radius=8, fill=light_gray, outline=black, width=3)
 d.text((final_x + 24, final_y + 18), "Интегрированная постановка", font=F_BOX, fill=black)
-d.text((final_x + 24, final_y + 66), "[23][24][25][29][31]", font=F_SMALL, fill=(70, 70, 70))
+d.text((final_x + 24, final_y + 66), "[42][43][44][48][50]", font=F_SMALL, fill=(70, 70, 70))
 
 
 OUT.parent.mkdir(parents=True, exist_ok=True)
