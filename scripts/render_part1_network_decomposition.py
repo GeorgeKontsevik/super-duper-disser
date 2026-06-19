@@ -7,7 +7,7 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "tmp" / "part1_network_decomposition.png"
 
-W, H = 2850, 980
+W, H = 2580, 980
 img = Image.new("RGB", (W, H), "white")
 d = ImageDraw.Draw(img)
 
@@ -331,8 +331,9 @@ d.line((1505, 900, 1580, 900), fill=purple, width=9)
 d.text((1600, 880), "water transport", font=F_LEGEND, fill=black)
 d.line((1930, 900, 2005, 900), fill=teal, width=9)
 d.text((2025, 880), "winter road", font=F_LEGEND, fill=black)
-arrow((2340, 900), (2420, 900), black, 7)
-d.text((2440, 880), "flow", font=F_LEGEND, fill=black)
+d.line((2315, 900, 2415, 900), fill=black, width=10)
+d.polygon([(2440, 900), (2410, 886), (2410, 914)], fill=black)
+d.text((2460, 880), "flow", font=F_LEGEND, fill=black)
 
 OUT.parent.mkdir(parents=True, exist_ok=True)
 img.save(OUT)

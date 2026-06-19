@@ -1,0 +1,49 @@
+{
+  "matrix": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_telmana_connector_clean_4x2_20260620/visual_scenario_maps_square_connector_v2/telmana_connector_clean_visual_matrix_v2.png",
+  "layout": {
+    "row_0": [
+      "road + block grid",
+      "existing PT routes",
+      "existing polyclinics",
+      "baseline unmet demand"
+    ],
+    "scenario_rows": [
+      "placement-only new services",
+      "one generated route",
+      "route + placement new services",
+      "final unmet demand"
+    ]
+  },
+  "unmet_scale": {
+    "column": "demand_without_after",
+    "vmin": 0,
+    "vmax": 276.0,
+    "cmap": "RdYlGn_r"
+  },
+  "scenarios": [
+    {
+      "id": "01_current",
+      "label": "current",
+      "project": false,
+      "connector": false
+    },
+    {
+      "id": "02_current_plus_project",
+      "label": "current + redevelopment",
+      "project": true,
+      "connector": false
+    },
+    {
+      "id": "03_current_plus_project_plus_connector",
+      "label": "redevelopment + connector",
+      "project": true,
+      "connector": true
+    },
+    {
+      "id": "04_current_plus_connector",
+      "label": "current + connector",
+      "project": false,
+      "connector": true
+    }
+  ]
+}

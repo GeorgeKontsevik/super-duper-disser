@@ -901,7 +901,7 @@ def _build_street_pattern_target_distribution(
 
 
 def _compute_od_matrix(blocks: gpd.GeoDataFrame, stops: gpd.GeoDataFrame, graph) -> pd.DataFrame:
-    demand_blocks = blocks[["population", "density", "diversity", "land_use", "geometry"]].copy()
+    demand_blocks = blocks[["population", "density", "diversity", "land_use", "geometry"]].copy().reset_index(drop=True)
     _ensure_length_m_edges(graph)
     return get_OD(demand_blocks, stops.copy(), graph.to_directed(), blocks.crs)
 

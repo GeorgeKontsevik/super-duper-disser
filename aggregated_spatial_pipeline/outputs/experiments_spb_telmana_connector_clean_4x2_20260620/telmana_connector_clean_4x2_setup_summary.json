@@ -1,0 +1,239 @@
+{
+  "source_bundle": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_oktyabrskaya_large/baseline_bundle",
+  "output_root": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_telmana_connector_clean_4x2_20260620",
+  "selected_connector_source": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_telmana_clean_4x2_20260620/visual_scenario_maps_square_telmana_corrected/telmana_connector_touching_block29_selected.parquet",
+  "selected_connector_rows": 2,
+  "selected_connector_length_projected_m": 1730.4639741184699,
+  "scenarios": {
+    "01_current": {
+      "project": false,
+      "connector": false,
+      "removed_connector": {
+        "derived_layers/roads_drive_osmnx.parquet": {
+          "before": 906,
+          "after": 904,
+          "removed": 2,
+          "removed_length_sum": 1727.4158168835802
+        },
+        "blocksnet_raw_osm/roads.parquet": {
+          "before": 906,
+          "after": 904,
+          "removed": 2,
+          "removed_length_sum": 1727.4158168835802
+        },
+        "blocksnet/roads.parquet": {
+          "before": 906,
+          "after": 902,
+          "removed": 4,
+          "removed_length_sum": 1746.2332777460715
+        },
+        "intermodal_graph_iduedu/graph_edges.parquet": {
+          "before": 53019,
+          "after": 52987,
+          "removed": 32,
+          "removed_length_sum": 1733.34
+        },
+        "intermodal_graph_iduedu/graph.pkl": {
+          "removed_edges": 32,
+          "nodes_after": 19194,
+          "edges_after": 52987
+        }
+      },
+      "post_counts": {
+        "derived_layers/roads_drive_osmnx.parquet": {
+          "rows": 0,
+          "length_sum": 0.0
+        },
+        "blocksnet_raw_osm/roads.parquet": {
+          "rows": 0,
+          "length_sum": 0.0
+        },
+        "blocksnet/roads.parquet": {
+          "rows": 0,
+          "length_sum": 0.0
+        },
+        "intermodal_graph_iduedu/graph_edges.parquet": {
+          "rows": 0,
+          "length_sum": 0.0
+        }
+      },
+      "has_old_scenario_planned_road_dir": false
+    },
+    "02_current_plus_project": {
+      "project": true,
+      "connector": false,
+      "removed_connector": {
+        "derived_layers/roads_drive_osmnx.parquet": {
+          "before": 906,
+          "after": 904,
+          "removed": 2,
+          "removed_length_sum": 1727.4158168835802
+        },
+        "blocksnet_raw_osm/roads.parquet": {
+          "before": 906,
+          "after": 904,
+          "removed": 2,
+          "removed_length_sum": 1727.4158168835802
+        },
+        "blocksnet/roads.parquet": {
+          "before": 906,
+          "after": 902,
+          "removed": 4,
+          "removed_length_sum": 1746.2332777460715
+        },
+        "intermodal_graph_iduedu/graph_edges.parquet": {
+          "before": 53019,
+          "after": 52987,
+          "removed": 32,
+          "removed_length_sum": 1733.34
+        },
+        "intermodal_graph_iduedu/graph.pkl": {
+          "removed_edges": 32,
+          "nodes_after": 19194,
+          "edges_after": 52987
+        }
+      },
+      "project_patch": {
+        "derived_layers/blocks_clipped.parquet": {
+          "before": {
+            "population_total": 5832.557333655708,
+            "population_proxy": 5832.557333655708,
+            "living_area": 116651.14667311416,
+            "living_area_proxy": 116651.14667311416,
+            "service_capacity_total": 0.0,
+            "capacity_polyclinic": null
+          },
+          "after": {
+            "population_total": 12000.0,
+            "population_proxy": 12000.0,
+            "living_area": 240000.0,
+            "living_area_proxy": 240000.0,
+            "service_capacity_total": 800.0,
+            "capacity_polyclinic": 800.0
+          }
+        },
+        "blocksnet/blocks.parquet": {
+          "before": {
+            "population_total": 5832.557333655708,
+            "population_proxy": 5832.557333655708,
+            "living_area": 116651.14667311416,
+            "living_area_proxy": 116651.14667311416,
+            "service_capacity_total": null,
+            "capacity_polyclinic": null
+          },
+          "after": {
+            "population_total": 12000.0,
+            "population_proxy": 12000.0,
+            "living_area": 240000.0,
+            "living_area_proxy": 240000.0,
+            "service_capacity_total": null,
+            "capacity_polyclinic": 800.0
+          }
+        }
+      },
+      "post_counts": {
+        "derived_layers/roads_drive_osmnx.parquet": {
+          "rows": 0,
+          "length_sum": 0.0
+        },
+        "blocksnet_raw_osm/roads.parquet": {
+          "rows": 0,
+          "length_sum": 0.0
+        },
+        "blocksnet/roads.parquet": {
+          "rows": 0,
+          "length_sum": 0.0
+        },
+        "intermodal_graph_iduedu/graph_edges.parquet": {
+          "rows": 0,
+          "length_sum": 0.0
+        }
+      },
+      "has_old_scenario_planned_road_dir": false
+    },
+    "03_current_plus_project_plus_connector": {
+      "project": true,
+      "connector": true,
+      "project_patch": {
+        "derived_layers/blocks_clipped.parquet": {
+          "before": {
+            "population_total": 5832.557333655708,
+            "population_proxy": 5832.557333655708,
+            "living_area": 116651.14667311416,
+            "living_area_proxy": 116651.14667311416,
+            "service_capacity_total": 0.0,
+            "capacity_polyclinic": null
+          },
+          "after": {
+            "population_total": 12000.0,
+            "population_proxy": 12000.0,
+            "living_area": 240000.0,
+            "living_area_proxy": 240000.0,
+            "service_capacity_total": 800.0,
+            "capacity_polyclinic": 800.0
+          }
+        },
+        "blocksnet/blocks.parquet": {
+          "before": {
+            "population_total": 5832.557333655708,
+            "population_proxy": 5832.557333655708,
+            "living_area": 116651.14667311416,
+            "living_area_proxy": 116651.14667311416,
+            "service_capacity_total": null,
+            "capacity_polyclinic": null
+          },
+          "after": {
+            "population_total": 12000.0,
+            "population_proxy": 12000.0,
+            "living_area": 240000.0,
+            "living_area_proxy": 240000.0,
+            "service_capacity_total": null,
+            "capacity_polyclinic": 800.0
+          }
+        }
+      },
+      "post_counts": {
+        "derived_layers/roads_drive_osmnx.parquet": {
+          "rows": 2,
+          "length_sum": 1727.4158168835802
+        },
+        "blocksnet_raw_osm/roads.parquet": {
+          "rows": 2,
+          "length_sum": 1727.4158168835802
+        },
+        "blocksnet/roads.parquet": {
+          "rows": 4,
+          "length_sum": 1746.2332777460715
+        },
+        "intermodal_graph_iduedu/graph_edges.parquet": {
+          "rows": 32,
+          "length_sum": 1733.34
+        }
+      },
+      "has_old_scenario_planned_road_dir": false
+    },
+    "04_current_plus_connector": {
+      "project": false,
+      "connector": true,
+      "post_counts": {
+        "derived_layers/roads_drive_osmnx.parquet": {
+          "rows": 2,
+          "length_sum": 1727.4158168835802
+        },
+        "blocksnet_raw_osm/roads.parquet": {
+          "rows": 2,
+          "length_sum": 1727.4158168835802
+        },
+        "blocksnet/roads.parquet": {
+          "rows": 4,
+          "length_sum": 1746.2332777460715
+        },
+        "intermodal_graph_iduedu/graph_edges.parquet": {
+          "rows": 32,
+          "length_sum": 1733.34
+        }
+      },
+      "has_old_scenario_planned_road_dir": false
+    }
+  }
+}

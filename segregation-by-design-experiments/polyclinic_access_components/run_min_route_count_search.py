@@ -144,7 +144,13 @@ def _run_accessibility_first(
     return _read_json(manifest_path)
 
 
-def _snapshot_accessibility_outputs(city_dir: Path, modality: str, out_dir: Path) -> dict[str, str | None]:
+def _snapshot_accessibility_outputs(
+    city_dir: Path,
+    modality: str,
+    out_dir: Path,
+    *,
+    copy_route_outputs: bool = True,
+) -> dict[str, str | None]:
     route_root = city_dir / "connectpt_routes_generator" / modality
     intermodal_snapshot = out_dir / "snapshots" / "intermodal_replaced"
     copied = {
@@ -156,31 +162,39 @@ def _snapshot_accessibility_outputs(city_dir: Path, modality: str, out_dir: Path
             city_dir / "pipeline_2" / "accessibility_first" / "provision_after_routes",
             out_dir / "accessibility_first" / "provision_after_routes",
         ),
-        "connectpt_summary": _copy_if_exists(
+        "connectpt_summary": None,
+        "connectpt_generated_routes": None,
+        "intermodal_replaced": None,
+        "accessibility_recomputed": None,
+    }
+    if copy_route_outputs:
+        copied["connectpt_summary"] = _copy_if_exists(
             route_root / "summary.json",
             out_dir / f"connectpt_{modality}_summary.json",
-        ),
-        "connectpt_generated_routes": _copy_if_exists(
+        )
+        copied["connectpt_generated_routes"] = _copy_if_exists(
             route_root / "routes.geojson",
             out_dir / f"connectpt_{modality}_routes.geojson",
-        ),
-        "intermodal_replaced": _copy_if_exists(
+        )
+        copied["intermodal_replaced"] = _copy_if_exists(
             route_root / "intermodal_replaced",
             intermodal_snapshot,
-        ),
-        "accessibility_recomputed": _copy_if_exists(
+        )
+        copied["accessibility_recomputed"] = _copy_if_exists(
             route_root / "accessibility_recomputed",
             out_dir / "snapshots" / "accessibility_recomputed",
-        ),
-    }
-    copied["graph_nodes"] = _copy_if_exists(
-        city_dir / "intermodal_graph_iduedu" / "graph_nodes.parquet",
-        intermodal_snapshot / "graph_nodes.parquet",
-    )
-    copied["graph_edges_source"] = _copy_if_exists(
-        city_dir / "intermodal_graph_iduedu" / "graph_edges.parquet",
-        intermodal_snapshot / "graph_edges_source.parquet",
-    )
+        )
+        copied["graph_nodes"] = _copy_if_exists(
+            city_dir / "intermodal_graph_iduedu" / "graph_nodes.parquet",
+            intermodal_snapshot / "graph_nodes.parquet",
+        )
+        copied["graph_edges_source"] = _copy_if_exists(
+            city_dir / "intermodal_graph_iduedu" / "graph_edges.parquet",
+            intermodal_snapshot / "graph_edges_source.parquet",
+        )
+    else:
+        copied["graph_nodes"] = None
+        copied["graph_edges_source"] = None
     return copied
 
 
@@ -201,6 +215,8 @@ def _install_placement_root_for_route_targets(
         "summary_after.json",
         "selected_sites.parquet",
         "selected_sites.geojson",
+        "assignment_links_after.csv",
+        "provision_links_after.csv",
     ]:
         _copy_if_exists(src / name, dst / name)
 
@@ -360,9 +376,14 @@ def main() -> None:
                 repo_root=repo_root,
                 env=env,
             )
-            snapshots = _snapshot_accessibility_outputs(city_dir, str(args.modality), candidate_dir)
             route_generation = route_manifest.get("route_generation") or {}
             route_skipped = bool(route_generation.get("skipped"))
+            snapshots = _snapshot_accessibility_outputs(
+                city_dir,
+                str(args.modality),
+                candidate_dir,
+                copy_route_outputs=not route_skipped,
+            )
             actual_routes = 0 if route_skipped else int(route_generation.get("route_count") or n_routes)
             if route_skipped:
                 matrix_path = baseline_matrix_path
