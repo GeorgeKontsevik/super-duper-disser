@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import pickle
 from pathlib import Path
 
 import geopandas as gpd
@@ -10,6 +11,7 @@ from matplotlib import colors
 from matplotlib.cm import ScalarMappable
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
+from shapely.geometry import LineString
 
 
 ROOT = Path(
@@ -17,6 +19,7 @@ ROOT = Path(
     "aggregated_spatial_pipeline/outputs/experiments_spb_telmana_connector_clean_4x2_20260620"
 )
 OUT = ROOT / "visual_scenario_maps_square_connector_v2"
+PROJECT_REFERENCE_IMAGE = OUT / "telmana_project_reference.png"
 CONNECTOR = ROOT.parent / (
     "experiments_spb_telmana_clean_4x2_20260620/"
     "visual_scenario_maps_square_telmana_corrected/"
@@ -50,6 +53,21 @@ SCENARIOS = [
     },
 ]
 
+SCENARIO_LABEL_RU = {
+    "01_current": "Текущее состояние",
+    "02_current_plus_project": "Квартал добавлен",
+    "03_current_plus_project_plus_connector": "Квартал и дорога добавлены",
+    "04_current_plus_connector": "Только дорога добавлена",
+}
+
+COLUMN_LABELS_RU = [
+    "Сценарий\nи результат",
+    "Состояние\nквартала и дороги",
+    "Маршрут\nОТ",
+    "Новые\nполиклиники",
+    "Неудовлетворенный\nспрос",
+]
+
 
 def read_gdf(path: Path) -> gpd.GeoDataFrame:
     gdf = gpd.read_parquet(path)
@@ -68,17 +86,46 @@ def route_dir(scenario_id: str) -> Path:
     return ROOT / "one_route_existing_service_search" / scenario_id / "existing_service" / "routes_1"
 
 
+def orient_line_to_nodes(geometry, start, end):
+    if geometry is None or geometry.is_empty or geometry.geom_type != "LineString":
+        return geometry
+    coords = list(geometry.coords)
+    if len(coords) < 2:
+        return geometry
+    current_distance = start.distance(LineString(coords).boundary.geoms[0]) + end.distance(LineString(coords).boundary.geoms[-1])
+    reversed_distance = start.distance(LineString(coords[::-1]).boundary.geoms[0]) + end.distance(LineString(coords[::-1]).boundary.geoms[-1])
+    if reversed_distance < current_distance:
+        return LineString(coords[::-1])
+    return geometry
+
+
 def route_edges_geometry(scenario_id: str) -> gpd.GeoDataFrame:
     rdir = route_dir(scenario_id)
     generated = pd.read_parquet(rdir / "snapshots/intermodal_replaced/bus_generated_route_edges.parquet")
-    edges = read_gdf(rdir / "snapshots/intermodal_replaced/graph_edges_source.parquet")
-    merged = generated.merge(
-        edges[["u", "v", "geometry"]],
-        left_on=["intermodal_u", "intermodal_v"],
-        right_on=["u", "v"],
-        how="left",
-    )
-    return gpd.GeoDataFrame(merged, geometry="geometry", crs=edges.crs).dropna(subset=["geometry"])
+    nodes = read_gdf(rdir / "snapshots/intermodal_replaced/graph_nodes.parquet")
+    nodes_by_id = nodes.set_index("index")
+    with (rdir / "snapshots/intermodal_replaced/graph.pkl").open("rb") as fh:
+        graph = pickle.load(fh)
+
+    records = []
+    for order, row in generated.reset_index(drop=True).iterrows():
+        u = int(row["intermodal_u"])
+        v = int(row["intermodal_v"])
+        data = graph.get_edge_data(u, v) or {}
+        geometry = None
+        for attrs in data.values():
+            if attrs.get("is_generated") and attrs.get("route") == row["route_name"]:
+                geometry = attrs.get("geometry")
+                break
+        if geometry is None and u in nodes_by_id.index and v in nodes_by_id.index:
+            geometry = LineString([nodes_by_id.at[u, "geometry"], nodes_by_id.at[v, "geometry"]])
+        if geometry is None:
+            continue
+        if u in nodes_by_id.index and v in nodes_by_id.index:
+            geometry = orient_line_to_nodes(geometry, nodes_by_id.at[u, "geometry"], nodes_by_id.at[v, "geometry"])
+        records.append({**row.to_dict(), "order": order, "geometry": geometry})
+
+    return gpd.GeoDataFrame(records, geometry="geometry", crs=nodes.crs)
 
 
 def placement_path(scenario_id: str, with_route: bool) -> Path:
@@ -87,12 +134,38 @@ def placement_path(scenario_id: str, with_route: bool) -> Path:
     return scenario_dir(scenario_id) / "pipeline_2/placement_exact/polyclinic/blocks_solver_after.parquet"
 
 
+def placement_summary_path(scenario_id: str, with_route: bool) -> Path:
+    if with_route:
+        return route_dir(scenario_id) / "placement/summary_after.json"
+    return scenario_dir(scenario_id) / "pipeline_2/placement_exact/polyclinic/summary_after.json"
+
+
+def placement_summary(scenario_id: str, with_route: bool) -> dict:
+    with placement_summary_path(scenario_id, with_route).open() as fh:
+        return json.load(fh)
+
+
 def placement_blocks(scenario_id: str, with_route: bool) -> gpd.GeoDataFrame:
     return read_gdf(placement_path(scenario_id, with_route))
 
 
+def route_stop_count(scenario_id: str, with_route: bool) -> int | None:
+    if not with_route:
+        return None
+    with (route_dir(scenario_id) / "connectpt_bus_summary.json").open() as fh:
+        summary = json.load(fh)
+    lengths = summary.get("route_lengths") or []
+    if not lengths:
+        return None
+    return int(lengths[0])
+
+
 def existing_polyclinics() -> gpd.GeoDataFrame:
     return read_gdf(ROOT / "01_current/pipeline_2/services_raw/polyclinic.parquet")
+
+
+def water_layer() -> gpd.GeoDataFrame:
+    return read_gdf(ROOT / "01_current/blocksnet/water.parquet")
 
 
 def target_quarter(blocks: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
@@ -119,38 +192,120 @@ def unmet_column(blocks: gpd.GeoDataFrame) -> str:
 
 
 def plot_base(ax, blocks, roads, title: str | None = None):
+    ax.set_facecolor("#fbf5e6")
     blocks.plot(ax=ax, color="#f7f1df", edgecolor="#d8d0bd", linewidth=0.35, zorder=1)
     roads.plot(ax=ax, color="#c7cbd0", linewidth=0.45, alpha=0.75, zorder=2)
     if title:
-        ax.set_title(title, fontsize=10, loc="left", fontweight="bold")
-    ax.set_axis_off()
+        ax.set_title(title, fontsize=8, loc="center", pad=2)
+    style_panel_axis(ax)
+
+
+def style_panel_axis(ax):
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
+    for spine in ax.spines.values():
+        spine.set_visible(True)
+        spine.set_color("#111111")
+        spine.set_linewidth(0.8)
+
+
+def plot_scenario_card(ax, scenario_id: str, with_route: bool, summary: dict, stops: int | None):
+    style_panel_axis(ax)
+    ax.set_facecolor("white")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    route_label = "с новым маршрутом" if with_route else "без нового маршрута"
+    route_value = f"{stops} ост." if stops is not None else "нет"
+    unmet = float(summary.get("demand_without_after_total", 0))
+    services = int(summary.get("new_count", 0))
+    provision = float(summary.get("provision_total_after", 0)) * 100
+    ax.text(
+        0.06,
+        0.88,
+        SCENARIO_LABEL_RU[scenario_id],
+        ha="left",
+        va="top",
+        fontsize=8,
+        fontweight="bold",
+        wrap=True,
+    )
+    ax.text(0.06, 0.74, route_label, ha="left", va="top", fontsize=7.2, color="#333333")
+    ax.text(0.06, 0.57, "результат", ha="left", va="top", fontsize=7.2, fontweight="bold")
+    ax.text(0.06, 0.44, f"новых сервисов: {services}", ha="left", va="top", fontsize=7.1)
+    ax.text(0.06, 0.32, f"маршрут: {route_value}", ha="left", va="top", fontsize=7.1)
+    ax.text(0.06, 0.20, f"неудовл. спрос: {unmet:.0f}", ha="left", va="top", fontsize=7.1)
+    ax.text(0.06, 0.08, f"удовлетворено: {provision:.1f}%", ha="left", va="bottom", fontsize=6.7, color="#555555")
+
+
+def plot_reference_image(ax, image_path: Path, title: str):
+    image = plt.imread(image_path)
+    ax.imshow(image)
+    ax.set_aspect("auto")
+    ax.set_title(title, fontsize=8, loc="center", pad=2)
+    style_panel_axis(ax)
+
+
+def plot_water(ax, water):
+    if water.empty:
+        return
+    polygons = water[water.geometry.geom_type.isin(["Polygon", "MultiPolygon"])]
+    lines = water[water.geometry.geom_type.isin(["LineString", "MultiLineString"])]
+    if len(polygons):
+        polygons.plot(ax=ax, facecolor="#a9dff5", edgecolor="#63b7d8", linewidth=0.4, alpha=0.72, zorder=3)
+    if len(lines):
+        lines.plot(ax=ax, color="#54b8dc", linewidth=1.0, alpha=0.65, zorder=4)
 
 
 def plot_quarter(ax, quarter, project: bool):
     if project:
         quarter.plot(
             ax=ax,
-            facecolor="#ffe083",
-            edgecolor="#2c3742",
+            facecolor="#e6f4ea",
+            edgecolor="#0a8f49",
             linewidth=1.4,
-            hatch="////",
+            hatch="///",
             zorder=8,
         )
     else:
-        quarter.plot(ax=ax, facecolor="#fff3b3", edgecolor="#6f7780", linewidth=1.1, zorder=8)
+        quarter.plot(
+            ax=ax,
+            facecolor="#fdecec",
+            edgecolor="#d62728",
+            linewidth=1.2,
+            hatch="///",
+            zorder=8,
+        )
 
 
 def plot_connector(ax, connector, present: bool):
     connector.plot(
         ax=ax,
-        color="#ff7a00",
-        linewidth=2.5,
+        color="#0a8f49" if present else "#d62728",
+        linewidth=4.0,
         linestyle="-" if present else "--",
         zorder=10,
     )
 
 
-def plot_unmet(ax, blocks, roads, quarter, connector, project, connector_present, norm, title):
+def plot_existing_pt_routes(ax, routes):
+    if routes.empty:
+        return
+    styled = routes.reset_index(drop=True).copy()
+    styled["_route_color"] = styled.index % 20
+    styled.plot(
+        ax=ax,
+        column="_route_color",
+        categorical=True,
+        cmap="tab20",
+        linewidth=1.25,
+        alpha=0.55,
+        zorder=9,
+        legend=False,
+    )
+
+
+def plot_unmet(ax, blocks, roads, quarter, connector, project, connector_present, norm, title: str | None = None):
     col = unmet_column(blocks)
     blocks.assign(_unmet=blocks[col].fillna(0)).plot(
         ax=ax,
@@ -164,29 +319,46 @@ def plot_unmet(ax, blocks, roads, quarter, connector, project, connector_present
     roads.plot(ax=ax, color="#d5d8dc", linewidth=0.35, alpha=0.65, zorder=2)
     plot_quarter(ax, quarter, project)
     plot_connector(ax, connector, connector_present)
-    ax.set_title(title, fontsize=10, loc="left", fontweight="bold")
-    ax.set_axis_off()
+    if title:
+        ax.set_title(title, fontsize=8, loc="center", pad=2)
+    style_panel_axis(ax)
 
 
-def plot_services(ax, blocks, roads, quarter, connector, project, connector_present, title):
+def plot_services(
+    ax,
+    blocks,
+    roads,
+    quarter,
+    connector,
+    project,
+    connector_present,
+    title,
+    *,
+    show_existing: bool = False,
+    show_project_quarter_service: bool = False,
+):
     plot_base(ax, blocks, roads, title)
     plot_quarter(ax, quarter, project)
     plot_connector(ax, connector, connector_present)
     new = selected_new_services(blocks)
-    existing = selected_existing_services(blocks)
-    if len(existing):
+    existing = selected_existing_services(blocks) if show_existing else gpd.GeoDataFrame(geometry=[], crs=blocks.crs)
+    if show_existing and len(existing):
         existing.centroid.plot(ax=ax, color="#222831", markersize=11, marker="s", zorder=12)
     if len(new):
         new.centroid.plot(ax=ax, color="#00a88f", markersize=28, marker="*", zorder=13)
+    if show_project_quarter_service and len(quarter):
+        quarter.centroid.plot(ax=ax, color="#00a88f", markersize=34, marker="*", zorder=14)
 
 
 def plot_route(ax, blocks, roads, quarter, connector, project, connector_present, route, title):
     plot_base(ax, blocks, roads, title)
     plot_quarter(ax, quarter, project)
     plot_connector(ax, connector, connector_present)
-    route.plot(ax=ax, color="#00806f", linewidth=2.8, zorder=12)
-    ends = gpd.GeoSeries([route.geometry.iloc[0].boundary.geoms[0], route.geometry.iloc[-1].boundary.geoms[-1]], crs=route.crs)
-    ends.plot(ax=ax, color=["#c2185b", "#009f5d"], markersize=24, zorder=13)
+    if route is not None and len(route):
+        route.plot(ax=ax, color="#00806f", linewidth=2.8, zorder=12)
+        route = route.sort_values("order")
+        ends = gpd.GeoSeries([route.geometry.iloc[0].boundary.geoms[0], route.geometry.iloc[-1].boundary.geoms[-1]], crs=route.crs)
+        ends.plot(ax=ax, color=["#c2185b", "#009f5d"], markersize=24, zorder=13)
 
 
 def set_common_extent(axes, bounds):
@@ -201,6 +373,151 @@ def set_common_extent(axes, bounds):
         ax.set_aspect("equal", adjustable="box")
 
 
+def collect_scenario_record(scenario: dict, with_route: bool) -> dict:
+    sid = scenario["id"]
+    summary = placement_summary(sid, with_route=with_route)
+    stops = route_stop_count(sid, with_route=with_route)
+    return {
+        "scenario": scenario,
+        "with_route": with_route,
+        "summary": summary,
+        "stops": stops,
+        "new_services": int(summary.get("new_count", 0)),
+        "route_stops": stops,
+        "demand_without_after_total": float(summary.get("demand_without_after_total", 0)),
+        "provision_total_after": float(summary.get("provision_total_after", 0)),
+    }
+
+
+def render_scenario_group(
+    records: list[dict],
+    *,
+    title_letter: str,
+    title: str,
+    output_path: Path,
+    connector: gpd.GeoDataFrame,
+    combined_bounds,
+    norm,
+    legend_items,
+) -> None:
+    fig = plt.figure(figsize=(13.33, 13.0), facecolor="white")
+    fig.text(
+        0.5,
+        0.986,
+        "СПб, квартал Тельмана: сценарии размещения и связности",
+        ha="center",
+        va="top",
+        fontsize=7,
+    )
+    fig.text(
+        0.5,
+        0.965,
+        f"{title_letter}) {title}",
+        ha="center",
+        va="top",
+        fontsize=18,
+        fontfamily="serif",
+        fontweight="bold",
+    )
+    gs = fig.add_gridspec(
+        nrows=len(records),
+        ncols=5,
+        left=0.012,
+        right=0.915,
+        top=0.905,
+        bottom=0.112,
+        wspace=0.010,
+        hspace=0.065,
+    )
+
+    map_axes = []
+    first_row_axes = None
+    for row, record in enumerate(records):
+        scenario = record["scenario"]
+        with_route = record["with_route"]
+        sid = scenario["id"]
+        sdir = scenario_dir(sid)
+        blocks = read_gdf(sdir / "derived_layers/blocks_clipped.parquet")
+        roads = read_gdf(sdir / "derived_layers/roads_drive_osmnx.parquet")
+        q = target_quarter(blocks)
+        selected_blocks = placement_blocks(sid, with_route=with_route)
+        route = route_edges_geometry(sid) if with_route else None
+        row_axes = [fig.add_subplot(gs[row, i]) for i in range(5)]
+        if first_row_axes is None:
+            first_row_axes = row_axes
+            for ax, label in zip(first_row_axes, COLUMN_LABELS_RU, strict=True):
+                pos = ax.get_position()
+                fig.text(
+                    (pos.x0 + pos.x1) / 2,
+                    0.922,
+                    label,
+                    ha="center",
+                    va="bottom",
+                    fontsize=8,
+                    fontweight="bold",
+                )
+        map_axes.extend(row_axes[1:])
+
+        plot_scenario_card(row_axes[0], sid, with_route, record["summary"], record["stops"])
+
+        plot_base(row_axes[1], blocks, roads, None)
+        plot_quarter(row_axes[1], q, scenario["project"])
+        plot_connector(row_axes[1], connector, scenario["connector"])
+
+        plot_route(
+            row_axes[2],
+            blocks,
+            roads,
+            q,
+            connector,
+            scenario["project"],
+            scenario["connector"],
+            route,
+            None,
+        )
+
+        plot_services(
+            row_axes[3],
+            selected_blocks,
+            roads,
+            q,
+            connector,
+            scenario["project"],
+            scenario["connector"],
+            None,
+            show_project_quarter_service=scenario["project"],
+        )
+        plot_unmet(
+            row_axes[4],
+            selected_blocks,
+            roads,
+            q,
+            connector,
+            scenario["project"],
+            scenario["connector"],
+            norm,
+            None,
+        )
+
+    set_common_extent(map_axes, combined_bounds)
+
+    cax = fig.add_axes([0.935, 0.205, 0.012, 0.57])
+    cbar = fig.colorbar(ScalarMappable(norm=norm, cmap="RdYlGn_r"), cax=cax)
+    cbar.set_label("неудовлетворенный спрос на поликлиники по кварталам (общая шкала)", fontsize=8)
+
+    fig.legend(
+        handles=legend_items,
+        loc="lower center",
+        ncol=7,
+        frameon=False,
+        fontsize=7,
+        bbox_to_anchor=(0.49, 0.045),
+    )
+
+    fig.savefig(output_path, dpi=180)
+    plt.close(fig)
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
 
@@ -210,6 +527,7 @@ def main() -> None:
     quarter = target_quarter(blocks_context)
     polies = existing_polyclinics()
     existing_routes = read_gdf(ROOT / "01_current/connectpt_osm/bus/projected_lines.parquet")
+    water = water_layer()
 
     baseline = read_gdf(ROOT / "01_current/pipeline_2/solver_inputs/polyclinic/blocks_solver.parquet")
     baseline = baseline.rename(columns={"demand_without": "demand_without_after"})
@@ -221,37 +539,65 @@ def main() -> None:
     vmax = max(float(pd.concat(all_unmet).max()), 1.0)
     norm = colors.Normalize(vmin=0, vmax=vmax)
 
-    fig = plt.figure(figsize=(19, 23), facecolor="#f5f1e8")
-    gs = fig.add_gridspec(
-        nrows=5,
-        ncols=4,
-        left=0.035,
-        right=0.94,
-        top=0.965,
-        bottom=0.06,
-        wspace=0.08,
-        hspace=0.18,
+    legend_items = [
+        Patch(facecolor="#fdecec", edgecolor="#d62728", hatch="///", label="проектного квартала нет"),
+        Patch(facecolor="#e6f4ea", edgecolor="#0a8f49", hatch="///", label="проектный квартал есть"),
+        Line2D([0], [0], color="#d62728", lw=4.0, linestyle="--", label="дороги нет"),
+        Line2D([0], [0], color="#0a8f49", lw=4.0, linestyle="-", label="дорога есть"),
+        Line2D([0], [0], marker="o", color="w", markerfacecolor="#c2185b", markersize=8, label="существующая поликлиника"),
+        Line2D([0], [0], marker="*", color="w", markerfacecolor="#00a88f", markersize=10, label="новая поликлиника"),
+        Line2D([0], [0], color="#00806f", lw=2.8, label="сгенерированный маршрут"),
+    ]
+
+    context_fig = plt.figure(figsize=(13.33, 3.65), facecolor="white")
+    context_fig.text(
+        0.5,
+        0.955,
+        "СПб, квартал Тельмана: исходные слои",
+        ha="center",
+        va="top",
+        fontsize=7,
     )
-    axes = []
-    context_axes = [fig.add_subplot(gs[0, i]) for i in range(4)]
-    axes.extend(context_axes)
+    context_fig.text(
+        0.5,
+        0.03,
+        "а) Исходные слои",
+        ha="center",
+        va="bottom",
+        fontsize=18,
+        fontfamily="serif",
+        fontweight="bold",
+    )
+    context_gs = context_fig.add_gridspec(
+        nrows=1,
+        ncols=5,
+        left=0.012,
+        right=0.988,
+        top=0.82,
+        bottom=0.20,
+        wspace=0.006,
+    )
+    context_axes = [context_fig.add_subplot(context_gs[0, i]) for i in range(5)]
 
-    plot_base(context_axes[0], blocks_context, roads_context, "road + block grid")
-    plot_quarter(context_axes[0], quarter, False)
-    plot_connector(context_axes[0], connector, False)
+    plot_reference_image(context_axes[0], PROJECT_REFERENCE_IMAGE, "проект планировки")
 
-    plot_base(context_axes[1], blocks_context, roads_context, "existing PT routes")
-    existing_routes.plot(ax=context_axes[1], color="#2c7ecb", linewidth=1.1, alpha=0.88, zorder=9)
+    plot_base(context_axes[1], blocks_context, roads_context, "дороги и кварталы")
+    plot_water(context_axes[1], water)
     plot_quarter(context_axes[1], quarter, False)
     plot_connector(context_axes[1], connector, False)
 
-    plot_base(context_axes[2], blocks_context, roads_context, "existing polyclinics")
-    polies.plot(ax=context_axes[2], color="#c2185b", markersize=18, zorder=10)
+    plot_base(context_axes[2], blocks_context, roads_context, "существующие маршруты ОТ")
+    plot_existing_pt_routes(context_axes[2], existing_routes)
     plot_quarter(context_axes[2], quarter, False)
     plot_connector(context_axes[2], connector, False)
 
+    plot_base(context_axes[3], blocks_context, roads_context, "существующие поликлиники")
+    polies.plot(ax=context_axes[3], color="#c2185b", markersize=18, zorder=10)
+    plot_quarter(context_axes[3], quarter, False)
+    plot_connector(context_axes[3], connector, False)
+
     plot_unmet(
-        context_axes[3],
+        context_axes[4],
         baseline,
         roads_context,
         quarter,
@@ -259,111 +605,86 @@ def main() -> None:
         False,
         False,
         norm,
-        "baseline unmet demand",
+        "базовый неудовлетворенный спрос",
     )
-
-    for row, scenario in enumerate(SCENARIOS, start=1):
-        sid = scenario["id"]
-        sdir = scenario_dir(sid)
-        blocks = read_gdf(sdir / "derived_layers/blocks_clipped.parquet")
-        roads = read_gdf(sdir / "derived_layers/roads_drive_osmnx.parquet")
-        q = target_quarter(blocks)
-        no_route_blocks = placement_blocks(sid, with_route=False)
-        with_route_blocks = placement_blocks(sid, with_route=True)
-        route = route_edges_geometry(sid)
-
-        row_axes = [fig.add_subplot(gs[row, i]) for i in range(4)]
-        axes.extend(row_axes)
-        title_prefix = scenario["label"]
-
-        plot_services(
-            row_axes[0],
-            no_route_blocks,
-            roads,
-            q,
-            connector,
-            scenario["project"],
-            scenario["connector"],
-            f"{title_prefix}\nplacement only: new services",
-        )
-        plot_route(
-            row_axes[1],
-            blocks,
-            roads,
-            q,
-            connector,
-            scenario["project"],
-            scenario["connector"],
-            route,
-            f"{title_prefix}\none generated route",
-        )
-        plot_services(
-            row_axes[2],
-            with_route_blocks,
-            roads,
-            q,
-            connector,
-            scenario["project"],
-            scenario["connector"],
-            f"{title_prefix}\nroute + placement: new services",
-        )
-        plot_unmet(
-            row_axes[3],
-            with_route_blocks,
-            roads,
-            q,
-            connector,
-            scenario["project"],
-            scenario["connector"],
-            norm,
-            f"{title_prefix}\nfinal unmet demand",
-        )
 
     combined_bounds = blocks_context.total_bounds
-    set_common_extent(axes, combined_bounds)
+    set_common_extent(context_axes[1:], combined_bounds)
 
-    cax = fig.add_axes([0.955, 0.14, 0.012, 0.64])
-    cbar = fig.colorbar(ScalarMappable(norm=norm, cmap="RdYlGn_r"), cax=cax)
-    cbar.set_label("unmet polyclinic demand per block (same scale)", fontsize=9)
+    context_path = OUT / "telmana_connector_context_row.png"
+    context_fig.savefig(context_path, dpi=180)
+    plt.close(context_fig)
 
-    legend_items = [
-        Patch(facecolor="#fff3b3", edgecolor="#6f7780", label="target quarter"),
-        Patch(facecolor="#ffe083", edgecolor="#2c3742", hatch="////", label="redevelopment quarter"),
-        Line2D([0], [0], color="#ff7a00", lw=2.5, linestyle="--", label="connector absent"),
-        Line2D([0], [0], color="#ff7a00", lw=2.5, linestyle="-", label="connector present"),
-        Line2D([0], [0], marker="o", color="w", markerfacecolor="#c2185b", markersize=8, label="existing polyclinic"),
-        Line2D([0], [0], marker="*", color="w", markerfacecolor="#00a88f", markersize=10, label="new service"),
-        Line2D([0], [0], color="#00806f", lw=2.8, label="generated route"),
-    ]
-    fig.legend(
-        handles=legend_items,
-        loc="lower center",
-        ncol=7,
-        frameon=False,
-        fontsize=9,
-        bbox_to_anchor=(0.49, 0.024),
+    scenario_records = []
+    for scenario_order, scenario in enumerate(SCENARIOS):
+        for with_route in (False, True):
+            record = collect_scenario_record(scenario, with_route)
+            record["scenario_order"] = scenario_order
+            scenario_records.append(record)
+    ranked_records = sorted(
+        scenario_records,
+        key=lambda record: (
+            -record["new_services"],
+            record["with_route"],
+            -record["demand_without_after_total"],
+            record["scenario_order"],
+        ),
+    )
+    worst_records = ranked_records[:4]
+    best_records = ranked_records[4:]
+
+    worst_path = OUT / "telmana_connector_scenarios_worse_new_services.png"
+    best_path = OUT / "telmana_connector_scenarios_better_new_services.png"
+    render_scenario_group(
+        worst_records,
+        title_letter="б",
+        title="Сценарии с большим числом новых сервисов",
+        output_path=worst_path,
+        connector=connector,
+        combined_bounds=combined_bounds,
+        norm=norm,
+        legend_items=legend_items,
+    )
+    render_scenario_group(
+        best_records,
+        title_letter="в",
+        title="Сценарии с меньшим числом новых сервисов",
+        output_path=best_path,
+        connector=connector,
+        combined_bounds=combined_bounds,
+        norm=norm,
+        legend_items=legend_items,
     )
 
-    matrix_path = OUT / "telmana_connector_clean_visual_matrix_v2.png"
-    fig.savefig(matrix_path, dpi=180)
-    plt.close(fig)
-
     manifest = {
-        "matrix": str(matrix_path),
-        "layout": {
-            "row_0": [
-                "road + block grid",
-                "existing PT routes",
-                "existing polyclinics",
-                "baseline unmet demand",
-            ],
-            "scenario_rows": [
-                "placement-only new services",
-                "one generated route",
-                "route + placement new services",
-                "final unmet demand",
-            ],
+        "context_row": str(context_path),
+        "scenario_tables": {
+            "worse_new_services": str(worst_path),
+            "better_new_services": str(best_path),
         },
+        "layout": {
+            "context_row": [
+                "проект планировки",
+                "дороги и кварталы",
+                "существующие маршруты ОТ",
+                "существующие поликлиники",
+                "базовый неудовлетворенный спрос",
+            ],
+            "scenario_table_columns": COLUMN_LABELS_RU,
+            "sort": "descending by new_services; first image contains worse scenarios",
+        },
+        "scenario_metrics": [
+            {
+                "scenario": record["scenario"]["id"],
+                "with_route": record["with_route"],
+                "new_services": record["new_services"],
+                "route_stops": record["route_stops"],
+                "demand_without_after_total": record["demand_without_after_total"],
+                "provision_total_after": record["provision_total_after"],
+                "group": "worse_new_services" if record in worst_records else "better_new_services",
+            }
+            for record in ranked_records
+        ],
         "unmet_scale": {
             "column": "demand_without_after",
             "vmin": 0,
@@ -375,7 +696,9 @@ def main() -> None:
     (OUT / "telmana_connector_clean_visual_matrix_v2_manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2)
     )
-    print(matrix_path)
+    print(context_path)
+    print(worst_path)
+    print(best_path)
 
 
 if __name__ == "__main__":

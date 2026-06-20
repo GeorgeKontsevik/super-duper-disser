@@ -1,19 +1,100 @@
 {
-  "matrix": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_telmana_connector_clean_4x2_20260620/visual_scenario_maps_square_connector_v2/telmana_connector_clean_visual_matrix_v2.png",
-  "layout": {
-    "row_0": [
-      "road + block grid",
-      "existing PT routes",
-      "existing polyclinics",
-      "baseline unmet demand"
-    ],
-    "scenario_rows": [
-      "placement-only new services",
-      "one generated route",
-      "route + placement new services",
-      "final unmet demand"
-    ]
+  "context_row": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_telmana_connector_clean_4x2_20260620/visual_scenario_maps_square_connector_v2/telmana_connector_context_row.png",
+  "scenario_tables": {
+    "worse_new_services": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_telmana_connector_clean_4x2_20260620/visual_scenario_maps_square_connector_v2/telmana_connector_scenarios_worse_new_services.png",
+    "better_new_services": "/Users/gk/Code/super-duper-disser/aggregated_spatial_pipeline/outputs/experiments_spb_telmana_connector_clean_4x2_20260620/visual_scenario_maps_square_connector_v2/telmana_connector_scenarios_better_new_services.png"
   },
+  "layout": {
+    "context_row": [
+      "проект планировки",
+      "дороги и кварталы",
+      "существующие маршруты ОТ",
+      "существующие поликлиники",
+      "базовый неудовлетворенный спрос"
+    ],
+    "scenario_table_columns": [
+      "Сценарий\nи результат",
+      "Состояние\nквартала и дороги",
+      "Маршрут\nОТ",
+      "Новые\nполиклиники",
+      "Неудовлетворенный\nспрос"
+    ],
+    "sort": "descending by new_services; first image contains worse scenarios"
+  },
+  "scenario_metrics": [
+    {
+      "scenario": "02_current_plus_project",
+      "with_route": false,
+      "new_services": 14,
+      "route_stops": null,
+      "demand_without_after_total": 122.0,
+      "provision_total_after": 0.9890080187404271,
+      "group": "worse_new_services"
+    },
+    {
+      "scenario": "03_current_plus_project_plus_connector",
+      "with_route": false,
+      "new_services": 14,
+      "route_stops": null,
+      "demand_without_after_total": 122.0,
+      "provision_total_after": 0.9890080187404271,
+      "group": "worse_new_services"
+    },
+    {
+      "scenario": "01_current",
+      "with_route": false,
+      "new_services": 14,
+      "route_stops": null,
+      "demand_without_after_total": 82.0,
+      "provision_total_after": 0.9925583083764407,
+      "group": "worse_new_services"
+    },
+    {
+      "scenario": "04_current_plus_connector",
+      "with_route": false,
+      "new_services": 14,
+      "route_stops": null,
+      "demand_without_after_total": 82.0,
+      "provision_total_after": 0.9925583083764407,
+      "group": "worse_new_services"
+    },
+    {
+      "scenario": "02_current_plus_project",
+      "with_route": true,
+      "new_services": 13,
+      "route_stops": 10,
+      "demand_without_after_total": 122.0,
+      "provision_total_after": 0.9890080187404271,
+      "group": "better_new_services"
+    },
+    {
+      "scenario": "03_current_plus_project_plus_connector",
+      "with_route": true,
+      "new_services": 13,
+      "route_stops": 10,
+      "demand_without_after_total": 122.0,
+      "provision_total_after": 0.9890080187404271,
+      "group": "better_new_services"
+    },
+    {
+      "scenario": "01_current",
+      "with_route": true,
+      "new_services": 12,
+      "route_stops": 10,
+      "demand_without_after_total": 82.0,
+      "provision_total_after": 0.9925583083764407,
+      "group": "better_new_services"
+    },
+    {
+      "scenario": "04_current_plus_connector",
+      "with_route": true,
+      "new_services": 12,
+      "route_stops": 10,
+      "demand_without_after_total": 82.0,
+      "provision_total_after": 0.9925583083764407,
+      "group": "better_new_services"
+    }
+  ],
   "unmet_scale": {
     "column": "demand_without_after",
     "vmin": 0,

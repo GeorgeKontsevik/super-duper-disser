@@ -1,0 +1,16 @@
+{
+  "png": "/Users/gk/Code/super-duper-disser/segregation-by-design-experiments/polyclinic_access_components/outputs/overnight_route_strategy_batch_20260613_routes3_finalcanvas/_scenario_grid_5x3_regenerated_20260620/polyclinic_5x3_round_maps_ru_gray_biglegend.png",
+  "cities": [
+    "bologna_italy",
+    "huainan_anhui_china",
+    "krakow_poland",
+    "marseille_france",
+    "temuco_araucan_a_chile"
+  ],
+  "scenarios": [
+    "general_connectivity",
+    "existing_service",
+    "candidate_service"
+  ],
+  "style": "5x3, ru multiline labels, city country, gray blocks"
+}

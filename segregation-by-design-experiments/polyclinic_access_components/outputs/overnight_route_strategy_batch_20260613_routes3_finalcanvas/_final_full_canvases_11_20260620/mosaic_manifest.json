@@ -1,0 +1,72 @@
+{
+  "count": 11,
+  "mosaic": "/Users/gk/Code/super-duper-disser/segregation-by-design-experiments/polyclinic_access_components/outputs/overnight_route_strategy_batch_20260613_routes3_finalcanvas/_final_full_canvases_11_20260620/mosaic_11_full_canvases.png",
+  "images": [
+    {
+      "city": "arequipa_peru",
+      "path": "/Users/gk/Code/super-duper-disser/segregation-by-design-experiments/polyclinic_access_components/outputs/overnight_route_strategy_batch_20260613_routes3_finalcanvas/_final_full_canvases_11_20260620/arequipa_peru.png",
+      "width": 2113,
+      "height": 4406
+    },
+    {
+      "city": "bergen_norway",
+      "path": "/Users/gk/Code/super-duper-disser/segregation-by-design-experiments/polyclinic_access_components/outputs/overnight_route_strategy_batch_20260613_routes3_finalcanvas/_final_full_canvases_11_20260620/bergen_norway.png",
+      "width": 2111,
+      "height": 4406
+    },
+    {
+      "city": "bologna_italy",
+      "path": "/Users/gk/Code/super-duper-disser/segregation-by-design-experiments/polyclinic_access_components/outputs/overnight_route_strategy_batch_20260613_routes3_finalcanvas/_final_full_canvases_11_20260620/bologna_italy.png",
+      "width": 2114,
+      "height": 4406
+    },
+    {
+      "city": "brno_czechia",
+      "path": "/Users/gk/Code/super-duper-disser/segregation-by-design-experiments/polyclinic_access_components/outputs/overnight_route_strategy_batch_20260613_routes3_finalcanvas/_final_full_canvases_11_20260620/brno_czechia.png",
+      "width": 2112,
+      "height": 4406
+    },
+    {
+      "city": "coimbra_portugal",
+      "path": "/Users/gk/Code/super-duper-disser/segregation-by-design-experiments/polyclinic_access_components/outputs/overnight_route_strategy_batch_20260613_routes3_finalcanvas/_final_full_canvases_11_20260620/coimbra_portugal.png",
+      "width": 2114,
+      "height": 4406
+    },
+    {
+      "city": "delft_netherlands",
+      "path": "/Users/gk/Code/super-duper-disser/segregation-by-design-experiments/polyclinic_access_components/outputs/overnight_route_strategy_batch_20260613_routes3_finalcanvas/_final_full_canvases_11_20260620/delft_netherlands.png",
+      "width": 2111,
+      "height": 4406
+    },
+    {
+      "city": "huainan_anhui_china",
+      "path": "/Users/gk/Code/super-duper-disser/segregation-by-design-experiments/polyclinic_access_components/outputs/overnight_route_strategy_batch_20260613_routes3_finalcanvas/_final_full_canvases_11_20260620/huainan_anhui_china.png",
+      "width": 2204,
+      "height": 4406
+    },
+    {
+      "city": "kakogawacho_honmachi_hy_go_japan",
+      "path": "/Users/gk/Code/super-duper-disser/segregation-by-design-experiments/polyclinic_access_components/outputs/overnight_route_strategy_batch_20260613_routes3_finalcanvas/_final_full_canvases_11_20260620/kakogawacho_honmachi_hy_go_japan.png",
+      "width": 2112,
+      "height": 4406
+    },
+    {
+      "city": "krakow_poland",
+      "path": "/Users/gk/Code/super-duper-disser/segregation-by-design-experiments/polyclinic_access_components/outputs/overnight_route_strategy_batch_20260613_routes3_finalcanvas/_final_full_canvases_11_20260620/krakow_poland.png",
+      "width": 2112,
+      "height": 4406
+    },
+    {
+      "city": "marseille_france",
+      "path": "/Users/gk/Code/super-duper-disser/segregation-by-design-experiments/polyclinic_access_components/outputs/overnight_route_strategy_batch_20260613_routes3_finalcanvas/_final_full_canvases_11_20260620/marseille_france.png",
+      "width": 2112,
+      "height": 4406
+    },
+    {
+      "city": "temuco_araucan_a_chile",
+      "path": "/Users/gk/Code/super-duper-disser/segregation-by-design-experiments/polyclinic_access_components/outputs/overnight_route_strategy_batch_20260613_routes3_finalcanvas/_final_full_canvases_11_20260620/temuco_araucan_a_chile.png",
+      "width": 2169,
+      "height": 4406
+    }
+  ]
+}

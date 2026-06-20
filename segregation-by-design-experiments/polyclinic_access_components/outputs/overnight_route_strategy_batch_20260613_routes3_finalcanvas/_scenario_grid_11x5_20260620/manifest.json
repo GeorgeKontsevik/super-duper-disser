@@ -1,0 +1,25 @@
+{
+  "cities": [
+    "arequipa_peru",
+    "bergen_norway",
+    "bologna_italy",
+    "brno_czechia",
+    "coimbra_portugal",
+    "delft_netherlands",
+    "huainan_anhui_china",
+    "kakogawacho_honmachi_hy_go_japan",
+    "krakow_poland",
+    "marseille_france",
+    "temuco_araucan_a_chile"
+  ],
+  "strategies": [
+    "placement_assignment",
+    "general_connectivity",
+    "existing_service",
+    "candidate_service",
+    "candidate_or_existing_service"
+  ],
+  "png": "/Users/gk/Code/super-duper-disser/segregation-by-design-experiments/polyclinic_access_components/outputs/overnight_route_strategy_batch_20260613_routes3_finalcanvas/_scenario_grid_11x5_20260620/polyclinic_route_strategy_grid_11_cities_x_5_scenarios.png",
+  "rows": 11,
+  "cols": 5
+}
