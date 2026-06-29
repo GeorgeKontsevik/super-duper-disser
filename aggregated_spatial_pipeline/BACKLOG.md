@@ -1,5 +1,19 @@
 # Aggregated Spatial Pipeline Backlog
 
+## Deferred Thermal-Access Wind Extensions
+
+- Add spatial cold-wind exposure to `thermal_access_pilot` with UMEP URock.
+  - Target: run URock from real building and vegetation geometry, combine the spatial wind field with SOLWEIG thermal outputs, define defensible cold/wind thresholds, and repeat building-level routing without block aggregation.
+  - Required outputs: wind-speed and amplification rasters, threshold masks, edge exposure, route comparisons, building-level results, and verified maps.
+  - Important constraint: do not substitute uniform ERA5 wind or an unvalidated geometric proxy for a spatial wind simulation.
+  - Why deferred: the approved first pilot is SOLWEIG-only heat exposure; URock requires a separate installation and validation path.
+
+- Evaluate PALM-4U as the coupled high-fidelity heat-and-wind backend.
+  - Target: prepare static driver, forcing, urban surface parameters, and a minimal coupled-domain experiment for the same Kaliningrad area; compare its thermal and wind fields with the SOLWEIG/URock workflow.
+  - Required evaluation: Linux/MPI runtime, memory and storage demand, spin-up/domain sensitivity, reproducibility, and whether the extra fidelity changes route-exposure conclusions.
+  - Important constraint: label PALM outputs as analytically meaningful only after input, convergence, and field sanity checks; a successful model exit is insufficient.
+  - Why deferred: the current macOS workstation lacks the intended PALM Linux/MPI runtime, and the model is materially heavier than the minimal pilot.
+
 ## Deferred Polyclinic PT-Improvement Substitution Experiment
 
 - Test whether targeted PT improvements can reduce the number of additional `polyclinic` facilities needed to reach target coverage.
