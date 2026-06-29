@@ -64,9 +64,11 @@ These counts are orientation values, not acceptance criteria. Exact clipped coun
 For each building:
 
 1. use valid OSM `height` when present;
-2. otherwise use the existing `storey_restored * 3 m` estimate;
-3. enforce a 3 m minimum only for geometries classified as buildings;
-4. preserve the chosen source in a provenance column.
+2. otherwise use the existing numeric `storey * 3 m` estimate;
+3. if both are missing, use an explicit 3 m minimum for geometries classified as buildings;
+4. preserve `storey_source` and the final height rule in provenance columns.
+
+`storey_restored` is only a restoration-status flag and must not be used as the floor count.
 
 No new opaque height-imputation model is introduced in this pilot.
 
