@@ -63,6 +63,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--overpass-url", default=None)
     parser.add_argument("--osm-timeout-s", type=int, default=240)
+    parser.add_argument("--no-extra-stop-tags", action="store_true")
     return parser.parse_args()
 
 
@@ -120,7 +121,7 @@ def main() -> None:
             clip_by_territory=True,
             pt_kwargs={
                 "transport_types": transport_types,
-                "extra_stop_tags": CONNECTPT_COMPAT_EXTRA_STOP_TAGS,
+                "extra_stop_tags": {} if args.no_extra_stop_tags else CONNECTPT_COMPAT_EXTRA_STOP_TAGS,
             },
         )
     finally:
@@ -153,7 +154,7 @@ def main() -> None:
         "overpass_date": args.overpass_date,
         "clip_by_territory": True,
         "transport_types": transport_types,
-        "extra_stop_tags": CONNECTPT_COMPAT_EXTRA_STOP_TAGS,
+        "extra_stop_tags": {} if args.no_extra_stop_tags else CONNECTPT_COMPAT_EXTRA_STOP_TAGS,
         "extra_stop_stats": graph.graph.get("extra_stop_stats", {}),
         "boundary_source": str(boundary_path),
         "files": {
