@@ -14,6 +14,13 @@
   - Important constraint: label PALM outputs as analytically meaningful only after input, convergence, and field sanity checks; a successful model exit is insufficient.
   - Why deferred: the current macOS workstation lacks the intended PALM Linux/MPI runtime, and the model is materially heavier than the minimal pilot.
 
+- Screen additional `segregation-by-design-experiments` cities for reusable tree layers suitable for thermal-access shade routing.
+  - Candidate cities explicitly deferred for review: `Bristol`, `Debrecen`, `Dresden`, `Freiburg`, `Gothenburg`, `Graz`, `Hrodna`, `Innsbruck`, `Kaliningrad`, `Linz`, `Lyon`, `Novi Sad`, `Porto`, `Turin`, `Turku`, `Zaragoza`.
+  - Required check per city: whether there is an official or otherwise defensible open tree layer with per-tree points/polygons and usable attributes for shade proxying (`height`, `crown size`, or enough fields to derive a realistic proxy without synthetic fabrication).
+  - Desired output: a compact comparison table with source URL, geometry type, key attributes, update status, and verdict (`usable now` / `usable with proxy` / `not enough data`).
+  - Important constraint: do not mark a city as shade-ready from coarse canopy rasters alone; citywide canopy cover is not enough for building-to-stop route shading.
+  - Why deferred: current pilot already has stronger near-term candidates (`NYC`, `DC`, and several European cities with confirmed tree inventories), so this wider screening is follow-up selection work rather than a blocker.
+
 ## Deferred Polyclinic PT-Improvement Substitution Experiment
 
 - Test whether targeted PT improvements can reduce the number of additional `polyclinic` facilities needed to reach target coverage.
