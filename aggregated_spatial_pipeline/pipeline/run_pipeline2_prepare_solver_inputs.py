@@ -1533,11 +1533,11 @@ def _save_genetic_history_outputs(
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(figsize=(9.6, 5.4))
-    ax.plot(grouped["generation"], grouped["mean_fitness"], color="#0f766e", linewidth=1.8, label="mean fitness")
-    ax.plot(grouped["generation"], grouped["best_fitness"], color="#b91c1c", linewidth=2.1, label="best fitness")
-    ax.set_title(f"Genetic convergence [{service}] (lower is better)", fontsize=13, fontweight="bold")
-    ax.set_xlabel("generation")
-    ax.set_ylabel("fitness")
+    ax.plot(grouped["generation"], grouped["mean_fitness"], color="#0f766e", linewidth=1.8, label="средняя приспособленность")
+    ax.plot(grouped["generation"], grouped["best_fitness"], color="#b91c1c", linewidth=2.1, label="лучшая приспособленность")
+    ax.set_title(f"Сходимость генетического алгоритма [{service}] (меньше = лучше)", fontsize=13, fontweight="bold")
+    ax.set_xlabel("поколение")
+    ax.set_ylabel("значение функции")
     ax.grid(alpha=0.25, linewidth=0.6)
     ax.legend(loc="best", frameon=False)
     fig.tight_layout()
