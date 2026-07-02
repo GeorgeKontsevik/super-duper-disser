@@ -1,0 +1,47 @@
+<h2>Доступность как составной путь в изменяющейся среде</h2>
+<p class="subtitle">Черновая структура финальной схемы</p>
+
+<div class="mockup">
+  <div class="mockup-body" style="padding:22px;background:white">
+    <div style="border:2px dashed #d45b63;border-radius:12px;padding:10px;text-align:center;color:#a6323b;font-weight:800">
+      ВНЕШНЯЯ СРЕДА: осадки · температура · жара
+      <div style="font-weight:500;font-size:12px;margin-top:3px">изменяет проходимость дорог, стоимость движения и конфигурацию маршрутов</div>
+    </div>
+    <div style="text-align:center;color:#d45b63;font-size:24px;line-height:28px">↓↓↓</div>
+
+    <div style="display:grid;grid-template-columns:.65fr 1fr .7fr 1.25fr .7fr 1fr .65fr;gap:7px;align-items:center;text-align:center;font-size:12px">
+      <div style="border:2px solid #ef767a;border-radius:50%;padding:19px 5px"><b>A</b><br>спрос<br><small>постоянный</small></div>
+      <div style="border:2px solid #c9933c;border-radius:10px;padding:12px 5px"><b>пешком</b><br>по дороге</div>
+      <div style="border:2px solid #53b788;border-radius:50%;padding:17px 5px"><b>остановка</b></div>
+      <div style="border:2px solid #139b98;border-radius:10px;padding:12px 5px"><b>общественный транспорт</b><br>маршрут проходит по дороге</div>
+      <div style="border:2px solid #53b788;border-radius:50%;padding:17px 5px"><b>остановка</b></div>
+      <div style="border:2px solid #c9933c;border-radius:10px;padding:12px 5px"><b>пешком</b><br>по дороге</div>
+      <div style="border:2px solid #72a7dc;border-radius:50%;padding:19px 5px"><b>B</b><br>сервис</div>
+    </div>
+
+    <div style="text-align:center;font-weight:800;margin:13px 0 5px">Доступность = подход к остановке + поездка + путь до сервиса</div>
+    <div style="text-align:center;font-size:12px;color:#555">Стохастичность может определяться положением A и B в сети и/или состоянием связующего пути</div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:9px;margin-top:14px;font-size:12px">
+      <div style="border:1px solid #bbb;border-radius:10px;padding:10px"><b>Не меняем</b><br>величину спроса</div>
+      <div style="border:1px solid #bbb;border-radius:10px;padding:10px"><b>Можем менять сеть</b><br>новая дорога · новый маршрут</div>
+      <div style="border:1px solid #bbb;border-radius:10px;padding:10px"><b>Можем приблизить предложение</b><br>разместить новый сервис ближе к спросу</div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:9px;margin-top:15px;font-size:12px">
+      <div style="background:#fff3df;border-top:5px solid #e3a341;border-radius:8px;padding:10px"><b>Экватор</b><br>осадки разрушают дороги → меняется доступность</div>
+      <div style="background:#eef5ff;border-top:5px solid #5b8fc9;border-radius:8px;padding:10px"><b>Арктика</b><br>температура меняет маршруты → сеть реконфигурируется</div>
+      <div style="background:#eaf8f5;border-top:5px solid #139b98;border-radius:8px;padding:10px"><b>Тельмана · joint-кейс</b><br>реальный проект: дорога + маршрут + сервисы</div>
+      <div style="background:#fff0f0;border-top:5px solid #d45b63;border-radius:8px;padding:10px"><b>Heat · joint-кейс</b><br>реальная жара: пешеходный путь + доступность существующих сервисов</div>
+    </div>
+  </div>
+</div>
+
+<div class="options">
+  <div class="option" data-choice="approve" onclick="toggleSelect(this)">
+    <div class="letter">✓</div><div class="content"><h3>Утвердить структуру</h3><p>После этого она станет спецификацией финальной PNG-схемы.</p></div>
+  </div>
+  <div class="option" data-choice="revise" onclick="toggleSelect(this)">
+    <div class="letter">↻</div><div class="content"><h3>Нужно изменить</h3><p>Напишите в терминале, что именно переставить или переименовать.</p></div>
+  </div>
+</div>

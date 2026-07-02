@@ -1,0 +1,43 @@
+<h2>Как собрать логику доступности в одну схему?</h2>
+<p class="subtitle">Обе версии содержат один смысл; отличается направление чтения.</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:18px;background:#fff">
+      <div style="font-weight:800;margin-bottom:12px">A. Путь доступности → воздействия → эксперименты</div>
+      <div style="display:flex;align-items:center;gap:7px;font-size:13px">
+        <div style="padding:9px;border:2px solid #ef767a;border-radius:50%">A</div><b>→</b>
+        <div style="padding:8px;border:1px solid #777;border-radius:8px">пешком<br>по дороге</div><b>→</b>
+        <div style="padding:9px;border:2px solid #53b788;border-radius:50%">ост.</div><b>→</b>
+        <div style="padding:8px;border:1px solid #777;border-radius:8px">транспорт<br>по дороге</div><b>→</b>
+        <div style="padding:9px;border:2px solid #53b788;border-radius:50%">ост.</div><b>→</b>
+        <div style="padding:8px;border:1px solid #777;border-radius:8px">пешком<br>по дороге</div><b>→</b>
+        <div style="padding:9px;border:2px solid #72a7dc;border-radius:50%">B</div>
+      </div>
+      <div style="text-align:center;color:#d64b55;font-weight:700;margin:14px 0 8px">↓ внешняя среда изменяет дороги и маршруты ↓</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;font-size:12px">
+        <div style="border:1px solid #ddd;border-radius:8px;padding:8px"><b>Экватор</b><br>осадки → деградация дорог</div>
+        <div style="border:1px solid #ddd;border-radius:8px;padding:8px"><b>Арктика</b><br>температура → реконфигурация маршрутов</div>
+        <div style="border:1px solid #ddd;border-radius:8px;padding:8px"><b>Город</b><br>новая дорога / маршрут / сервис</div>
+      </div>
+    </div>
+    <div class="card-body"><h3>Линейная история</h3><p>Сначала формула пути, ниже — что меняется и какими экспериментами это проверено.</p></div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding:18px;background:#fff">
+      <div style="font-weight:800;margin-bottom:12px">B. Три уровня системы</div>
+      <div style="display:grid;grid-template-columns:1fr 2fr 1fr;gap:8px;text-align:center;font-size:12px">
+        <div style="border:2px solid #ef767a;border-radius:10px;padding:12px"><b>Спрос</b><br>точка A<br><small>константа</small></div>
+        <div style="border:2px solid #139b98;border-radius:10px;padding:12px"><b>Составной путь</b><br>пешком → транспорт → пешком<br><small>всё опирается на дорожную сеть</small></div>
+        <div style="border:2px solid #72a7dc;border-radius:10px;padding:12px"><b>Сервис</b><br>точка B<br><small>можно приблизить</small></div>
+      </div>
+      <div style="border:2px dashed #d64b55;border-radius:10px;padding:10px;margin-top:10px;text-align:center;font-size:12px"><b>Внешняя среда</b> → меняет рёбра дорог и конфигурацию маршрутов</div>
+      <div style="display:flex;gap:8px;margin-top:10px;font-size:12px">
+        <div style="flex:1;border:1px solid #ddd;border-radius:8px;padding:8px"><b>Что проверяем</b><br>важнее положение A и B или свойства связующего пути?</div>
+        <div style="flex:1;border:1px solid #ddd;border-radius:8px;padding:8px"><b>Что управляем</b><br>дорога · маршрут · размещение нового сервиса</div>
+      </div>
+    </div>
+    <div class="card-body"><h3>Системная модель</h3><p>Чётче разделяет постоянное, стохастическое и управляемое, но менее буквально показывает весь путь.</p></div>
+  </div>
+</div>

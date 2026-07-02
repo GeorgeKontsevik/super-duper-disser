@@ -68,6 +68,52 @@ LABEL_RU = {
     "failed_total_gt_threshold_no_single_component_gt_threshold": "сумма > 15 мин, без доминирующей компоненты",
 }
 SERVICE_RU = {"school": "Школы", "polyclinic": "Поликлиники"}
+CITY_RU = {
+    "bergen_norway": "Берген, Норвегия",
+    "bologna_italy": "Болонья, Италия",
+    "bristol_united_kingdom": "Бристоль, Великобритания",
+    "brno_czechia": "Брно, Чехия",
+    "coimbra_portugal": "Коимбра, Португалия",
+    "debrecen_hungary": "Дебрецен, Венгрия",
+    "dresden_germany": "Дрезден, Германия",
+    "freiburg_im_breisgau_germany": "Фрайбург, Германия",
+    "gothenburg_sweden": "Гётеборг, Швеция",
+    "graz_austria": "Грац, Австрия",
+    "hrodna_belarus": "Гродно, Беларусь",
+    "innsbruck_austria": "Инсбрук, Австрия",
+    "kaliningrad_russia": "Калининград, Россия",
+    "krakow_poland": "Краков, Польша",
+    "linz_austria": "Линц, Австрия",
+    "lyon_france": "Лион, Франция",
+    "marseille_france": "Марсель, Франция",
+    "novi_sad_serbia": "Нови-Сад, Сербия",
+    "porto_portugal": "Порту, Португалия",
+    "turin_italy": "Турин, Италия",
+    "turku_finland": "Турку, Финляндия",
+    "zaragoza_spain": "Сарагоса, Испания",
+}
+CITY_ORDER = [
+    "bergen_norway",
+    "bologna_italy",
+    "bristol_united_kingdom",
+    "brno_czechia",
+    "coimbra_portugal",
+    "debrecen_hungary",
+    "dresden_germany",
+    "freiburg_im_breisgau_germany",
+    "gothenburg_sweden",
+    "graz_austria",
+    "hrodna_belarus",
+    "innsbruck_austria",
+    "kaliningrad_russia",
+    "linz_austria",
+    "lyon_france",
+    "novi_sad_serbia",
+    "porto_portugal",
+    "turin_italy",
+    "turku_finland",
+    "zaragoza_spain",
+]
 
 
 @dataclass
@@ -180,6 +226,30 @@ def _path_to_gdf(path_nodes: list[int], graph: nx.MultiDiGraph | nx.Graph, nodes
     return gpd.GeoDataFrame({"geometry": geoms}, geometry="geometry", crs=nodes_gdf.crs)
 
 
+def _path_edge_keys(path_nodes: list[int]) -> list[tuple[int, int]]:
+    keys: list[tuple[int, int]] = []
+    for u, v in zip(path_nodes[:-1], path_nodes[1:], strict=False):
+        a = int(u)
+        b = int(v)
+        keys.append((a, b) if a <= b else (b, a))
+    return keys
+
+
+def _edge_keys_to_gdf(edge_keys: set[tuple[int, int]], graph: nx.MultiDiGraph | nx.Graph, nodes_gdf: gpd.GeoDataFrame):
+    if not edge_keys:
+        return gpd.GeoDataFrame({"geometry": []}, geometry="geometry", crs=nodes_gdf.crs)
+    geoms = []
+    for u, v in edge_keys:
+        try:
+            geoms.append(_edge_geometry(graph, nodes_gdf, int(u), int(v)))
+        except Exception:
+            try:
+                geoms.append(_edge_geometry(graph, nodes_gdf, int(v), int(u)))
+            except Exception:
+                continue
+    return gpd.GeoDataFrame({"geometry": geoms}, geometry="geometry", crs=nodes_gdf.crs)
+
+
 def _graph_edges_gdf(graph: nx.Graph, nodes_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     geoms = []
     for u, v in graph.edges():
@@ -234,7 +304,7 @@ def render_city_service_pair(
             if cur.empty:
                 continue
             ax.scatter(cur.geometry.x, cur.geometry.y, s=5, c=LABEL_COLORS[label], alpha=0.76, linewidths=0, rasterized=True)
-        ax.set_title(f"{SERVICE_RU[service]} — {city} — {title}", fontsize=13)
+        ax.set_title(f"{SERVICE_RU[service]} — {CITY_RU.get(city, city)} — {title}", fontsize=13)
     fig.legend(handles=_legend_handles(), loc="lower center", ncol=2, frameon=False, fontsize=9, bbox_to_anchor=(0.5, -0.02))
     fig.subplots_adjust(left=0.02, right=0.98, top=0.93, bottom=0.12, wspace=0.04)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -392,7 +462,7 @@ def render_city_service_routes(
         service_points.plot(ax=ax, color="#111827", markersize=22, marker="*", alpha=0.9)
         ax.set_title(title, fontsize=12)
     changed_count = len(changed_rows)
-    title = f"{city} — {SERVICE_RU[service]} — changed routes ({changed_count})"
+    title = f"{CITY_RU.get(city, city)} — {SERVICE_RU[service]} — changed routes ({changed_count})"
     if changed_rows:
         max_delta = float(max(r["delta_effective_min"] for r in changed_rows))
         title += f" (max Δ={max_delta:.2f} min)"
@@ -404,6 +474,105 @@ def render_city_service_routes(
     fig.legend(handles=handles, loc="lower center", ncol=3, frameon=False, fontsize=10, bbox_to_anchor=(0.5, -0.01))
     fig.suptitle(title, fontsize=14, y=0.98)
     fig.subplots_adjust(left=0.02, right=0.98, top=0.90, bottom=0.10, wspace=0.03)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+
+
+def render_city_service_replaced_links(
+    city: str,
+    service: str,
+    joint_inputs_root: Path,
+    heat_joint_inputs_root: Path,
+    baseline: ScenarioTables,
+    heat: ScenarioTables,
+    out_path: Path,
+    top_n: int | None = None,
+) -> None:
+    city_root = joint_inputs_root / city
+    boundary = gpd.read_parquet(city_root / "blocksnet" / "boundary.parquet")
+    metric_crs = boundary.estimate_utm_crs()
+    if metric_crs is not None:
+        boundary = boundary.to_crs(metric_crs)
+
+    base_diag = baseline.diag.loc[baseline.diag["service_name"] == service].copy()
+    heat_diag = heat.diag.loc[heat.diag["service_name"] == service].copy()
+    merged = base_diag.merge(
+        heat_diag,
+        on=["building_idx", "service_name"],
+        suffixes=("_baseline", "_heat"),
+    )
+    if merged.empty:
+        return
+    merged["effective_baseline"] = merged.apply(lambda r: min(float(r["walk_time_min_baseline"]), float(r["effective_pt_total_min_baseline"])), axis=1)
+    merged["effective_heat"] = merged.apply(lambda r: min(float(r["walk_time_min_heat"]), float(r["effective_pt_total_min_heat"])), axis=1)
+    merged["delta_effective_min"] = merged["effective_heat"] - merged["effective_baseline"]
+    merged["mode_baseline"] = merged.apply(
+        lambda r: "walk" if float(r["walk_time_min_baseline"]) <= float(r["effective_pt_total_min_baseline"]) else "pt",
+        axis=1,
+    )
+    merged["mode_heat"] = merged.apply(
+        lambda r: "walk" if float(r["walk_time_min_heat"]) <= float(r["effective_pt_total_min_heat"]) else "pt",
+        axis=1,
+    )
+
+    base_walk = baseline.walk.loc[baseline.walk["service_name"] == service]
+    heat_walk = heat.walk.loc[heat.walk["service_name"] == service]
+
+    base_graph_path = str(joint_inputs_root / city / "intermodal_graph_iduedu" / "graph.pkl")
+    heat_graph_path = str(heat_joint_inputs_root / city / "intermodal_graph_iduedu" / "graph.pkl")
+    base_nodes_path = str(joint_inputs_root / city / "intermodal_graph_iduedu" / "graph_nodes.parquet")
+    heat_nodes_path = str(heat_joint_inputs_root / city / "intermodal_graph_iduedu" / "graph_nodes.parquet")
+    base_graph = _load_graph(base_graph_path)
+    heat_graph = _load_graph(heat_graph_path)
+    base_nodes = _load_nodes(base_nodes_path)
+    heat_nodes = _load_nodes(heat_nodes_path)
+    base_walk_graph = _walk_subgraph(base_graph)
+
+    replaced_base_edges: set[tuple[int, int]] = set()
+    replaced_heat_edges: set[tuple[int, int]] = set()
+    changed_count = 0
+    for _, row in merged.sort_values("delta_effective_min", ascending=False).iterrows():
+        bidx = int(row["building_idx"])
+        walk_row_base = base_walk.loc[base_walk["building_idx"] == bidx]
+        walk_row_heat = heat_walk.loc[heat_walk["building_idx"] == bidx]
+        walk_row_base = walk_row_base.iloc[0] if not walk_row_base.empty else None
+        walk_row_heat = walk_row_heat.iloc[0] if not walk_row_heat.empty else None
+        pt_row_base = _pick_pt_row(baseline.pt, bidx, service)
+        pt_row_heat = _pick_pt_row(heat.pt, bidx, service)
+        base_path, _, _ = _reconstruct_route(str(row["mode_baseline"]), walk_row_base, pt_row_base, base_walk_graph, base_graph)
+        heat_path, _, _ = _reconstruct_route(str(row["mode_heat"]), walk_row_heat, pt_row_heat, _walk_subgraph(heat_graph), heat_graph)
+        if not base_path or not heat_path:
+            continue
+        base_keys = set(_path_edge_keys(base_path))
+        heat_keys = set(_path_edge_keys(heat_path))
+        if not (base_keys ^ heat_keys):
+            continue
+        replaced_base_edges.update(base_keys - heat_keys)
+        replaced_heat_edges.update(heat_keys - base_keys)
+        changed_count += 1
+        if top_n is not None and changed_count >= top_n:
+            break
+
+    base_diff_gdf = _edge_keys_to_gdf(replaced_base_edges, base_graph, base_nodes).to_crs(boundary.crs)
+    heat_diff_gdf = _edge_keys_to_gdf(replaced_heat_edges, heat_graph, heat_nodes).to_crs(boundary.crs)
+    base_walk_edges_gdf = _graph_edges_gdf(base_walk_graph, base_nodes).to_crs(boundary.crs)
+
+    fig, ax = plt.subplots(1, 1, figsize=(9, 9), dpi=260)
+    _plot_boundary(ax, boundary)
+    if not base_walk_edges_gdf.empty:
+        base_walk_edges_gdf.plot(ax=ax, color="#d1d5db", linewidth=0.45, alpha=0.45)
+    if not base_diff_gdf.empty:
+        base_diff_gdf.plot(ax=ax, color="#7f1734", linewidth=2.4, alpha=0.95)
+    if not heat_diff_gdf.empty:
+        heat_diff_gdf.plot(ax=ax, color="#2f9e44", linewidth=2.4, alpha=0.95)
+    ax.set_title(f"{CITY_RU.get(city, city)} — {SERVICE_RU[service]} — заменённые сегменты", fontsize=14)
+    handles = [
+        Line2D([0], [0], color="#7f1734", lw=3, label="было в baseline, исчезло в heat"),
+        Line2D([0], [0], color="#2f9e44", lw=3, label="появилось в heat"),
+    ]
+    fig.legend(handles=handles, loc="lower center", ncol=1, frameon=False, fontsize=10, bbox_to_anchor=(0.5, -0.01))
+    fig.subplots_adjust(left=0.02, right=0.98, top=0.94, bottom=0.10)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, bbox_inches="tight")
     plt.close(fig)
@@ -427,10 +596,9 @@ def main() -> None:
     parser.add_argument("--top-n-routes", type=int, default=None)
     args = parser.parse_args()
 
-    city_dirs = sorted([p for p in args.joint_inputs_root.iterdir() if p.is_dir() and not p.name.startswith("_")])
-    if args.cities:
-        wanted = set(args.cities)
-        city_dirs = [p for p in city_dirs if p.name in wanted]
+    city_map = {p.name: p for p in args.joint_inputs_root.iterdir() if p.is_dir() and not p.name.startswith("_")}
+    wanted = args.cities or CITY_ORDER
+    city_dirs = [city_map[name] for name in wanted if name in city_map]
 
     for city_dir in city_dirs:
         city = city_dir.name
@@ -453,6 +621,16 @@ def main() -> None:
                 baseline=baseline,
                 heat=heat,
                 out_path=args.out_root / "city_service_routes" / city / f"{service}_changed_routes.png",
+                top_n=args.top_n_routes,
+            )
+            render_city_service_replaced_links(
+                city=city,
+                service=service,
+                joint_inputs_root=args.joint_inputs_root,
+                heat_joint_inputs_root=args.heat_joint_inputs_root,
+                baseline=baseline,
+                heat=heat,
+                out_path=args.out_root / "city_service_route_diffs" / city / f"{service}_replaced_links_only.png",
                 top_n=args.top_n_routes,
             )
             print(f"{city} {service}: ok")
@@ -481,7 +659,7 @@ def render_png_gallery(image_paths: list[Path], out_path: Path, title: str, cols
         thumb = img.copy()
         thumb.thumbnail((thumb_w - pad, thumb_h - 36))
         canvas.paste(thumb, (x, y + 20))
-        draw.text((x + 4, y), path.parent.name, fill="#111827", font=font)
+        draw.text((x + 4, y), CITY_RU.get(path.parent.name, path.parent.name), fill="#111827", font=font)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(out_path, format="PNG")
 
