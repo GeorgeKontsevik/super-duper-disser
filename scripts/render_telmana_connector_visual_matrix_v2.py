@@ -14,6 +14,13 @@ from matplotlib.patches import Patch
 from shapely.geometry import LineString
 
 
+plt.rcParams.update({"font.family": "Arial"})
+
+TITLE_FONT_SIZE = 14
+CARD_FONT_SIZE = 15
+LEGEND_FONT_SIZE = 13
+FIGURE_TITLE_FONT_SIZE = 22
+
 ROOT = Path(
     "/Users/gk/Code/super-duper-disser/"
     "aggregated_spatial_pipeline/outputs/experiments_spb_telmana_connector_clean_4x2_20260620"
@@ -56,8 +63,8 @@ SCENARIOS = [
 SCENARIO_LABEL_RU = {
     "01_current": "Текущее состояние",
     "02_current_plus_project": "Квартал добавлен",
-    "03_current_plus_project_plus_connector": "Квартал и дорога добавлены",
-    "04_current_plus_connector": "Только дорога добавлена",
+    "03_current_plus_project_plus_connector": "Квартал и дорога\nдобавлены",
+    "04_current_plus_connector": "Только дорога\nдобавлена",
 }
 
 COLUMN_LABELS_RU = [
@@ -196,7 +203,7 @@ def plot_base(ax, blocks, roads, title: str | None = None):
     blocks.plot(ax=ax, color="#f7f1df", edgecolor="#d8d0bd", linewidth=0.35, zorder=1)
     roads.plot(ax=ax, color="#c7cbd0", linewidth=0.45, alpha=0.75, zorder=2)
     if title:
-        ax.set_title(title, fontsize=8, loc="center", pad=2)
+        ax.set_title(title, fontsize=TITLE_FONT_SIZE, loc="center", pad=4)
     style_panel_axis(ax)
 
 
@@ -226,23 +233,23 @@ def plot_scenario_card(ax, scenario_id: str, with_route: bool, summary: dict, st
         SCENARIO_LABEL_RU[scenario_id],
         ha="left",
         va="top",
-        fontsize=8,
+        fontsize=CARD_FONT_SIZE,
         fontweight="bold",
         wrap=True,
     )
-    ax.text(0.06, 0.74, route_label, ha="left", va="top", fontsize=7.2, color="#333333")
-    ax.text(0.06, 0.57, "результат", ha="left", va="top", fontsize=7.2, fontweight="bold")
-    ax.text(0.06, 0.44, f"новых сервисов: {services}", ha="left", va="top", fontsize=7.1)
-    ax.text(0.06, 0.32, f"маршрут: {route_value}", ha="left", va="top", fontsize=7.1)
-    ax.text(0.06, 0.20, f"неудовл. спрос: {unmet:.0f}", ha="left", va="top", fontsize=7.1)
-    ax.text(0.06, 0.08, f"удовлетворено: {provision:.1f}%", ha="left", va="bottom", fontsize=6.7, color="#555555")
+    ax.text(0.06, 0.66, route_label, ha="left", va="top", fontsize=13.5, color="#333333")
+    ax.text(0.06, 0.51, "результат", ha="left", va="top", fontsize=13.5, fontweight="bold")
+    ax.text(0.06, 0.38, f"новых сервисов: {services}", ha="left", va="top", fontsize=13)
+    ax.text(0.06, 0.27, f"маршрут: {route_value}", ha="left", va="top", fontsize=13)
+    ax.text(0.06, 0.20, f"неудовл. спрос: {unmet:.0f}", ha="left", va="top", fontsize=13)
+    ax.text(0.06, 0.015, f"удовлетворено: {provision:.1f}%", ha="left", va="bottom", fontsize=13, color="#555555")
 
 
 def plot_reference_image(ax, image_path: Path, title: str):
     image = plt.imread(image_path)
     ax.imshow(image)
     ax.set_aspect("auto")
-    ax.set_title(title, fontsize=8, loc="center", pad=2)
+    ax.set_title(title, fontsize=TITLE_FONT_SIZE, loc="center", pad=4)
     style_panel_axis(ax)
 
 
@@ -320,7 +327,7 @@ def plot_unmet(ax, blocks, roads, quarter, connector, project, connector_present
     plot_quarter(ax, quarter, project)
     plot_connector(ax, connector, connector_present)
     if title:
-        ax.set_title(title, fontsize=8, loc="center", pad=2)
+        ax.set_title(title, fontsize=TITLE_FONT_SIZE, loc="center", pad=4)
     style_panel_axis(ax)
 
 
@@ -392,7 +399,6 @@ def collect_scenario_record(scenario: dict, with_route: bool) -> dict:
 def render_scenario_group(
     records: list[dict],
     *,
-    title_letter: str,
     title: str,
     output_path: Path,
     connector: gpd.GeoDataFrame,
@@ -402,21 +408,12 @@ def render_scenario_group(
 ) -> None:
     fig = plt.figure(figsize=(13.33, 13.0), facecolor="white")
     fig.text(
-        0.5,
-        0.986,
-        "СПб, квартал Тельмана: сценарии размещения и связности",
-        ha="center",
+        0.012,
+        0.985,
+        title,
+        ha="left",
         va="top",
-        fontsize=7,
-    )
-    fig.text(
-        0.5,
-        0.965,
-        f"{title_letter}) {title}",
-        ha="center",
-        va="top",
-        fontsize=18,
-        fontfamily="serif",
+        fontsize=FIGURE_TITLE_FONT_SIZE,
         fontweight="bold",
     )
     gs = fig.add_gridspec(
@@ -424,8 +421,8 @@ def render_scenario_group(
         ncols=5,
         left=0.012,
         right=0.915,
-        top=0.905,
-        bottom=0.112,
+        top=0.885,
+        bottom=0.155,
         wspace=0.010,
         hspace=0.065,
     )
@@ -449,11 +446,11 @@ def render_scenario_group(
                 pos = ax.get_position()
                 fig.text(
                     (pos.x0 + pos.x1) / 2,
-                    0.922,
+                    0.902,
                     label,
                     ha="center",
                     va="bottom",
-                    fontsize=8,
+                    fontsize=TITLE_FONT_SIZE,
                     fontweight="bold",
                 )
         map_axes.extend(row_axes[1:])
@@ -503,15 +500,19 @@ def render_scenario_group(
 
     cax = fig.add_axes([0.935, 0.205, 0.012, 0.57])
     cbar = fig.colorbar(ScalarMappable(norm=norm, cmap="RdYlGn_r"), cax=cax)
-    cbar.set_label("неудовлетворенный спрос на поликлиники по кварталам (общая шкала)", fontsize=8)
+    cbar.set_label("неудовлетворенный спрос на поликлиники по кварталам (общая шкала)", fontsize=12)
+    cbar.ax.tick_params(labelsize=11)
 
     fig.legend(
         handles=legend_items,
         loc="lower center",
-        ncol=7,
+        ncol=4,
         frameon=False,
-        fontsize=7,
-        bbox_to_anchor=(0.49, 0.045),
+        fontsize=LEGEND_FONT_SIZE,
+        markerscale=1.4,
+        handlelength=2.4,
+        columnspacing=1.5,
+        bbox_to_anchor=(0.49, 0.035),
     )
 
     fig.savefig(output_path, dpi=180)
@@ -549,35 +550,26 @@ def main() -> None:
         Line2D([0], [0], color="#00806f", lw=2.8, label="сгенерированный маршрут"),
     ]
 
-    context_fig = plt.figure(figsize=(13.33, 3.65), facecolor="white")
+    context_fig = plt.figure(figsize=(4.2, 15.5), facecolor="white")
     context_fig.text(
-        0.5,
-        0.955,
-        "СПб, квартал Тельмана: исходные слои",
-        ha="center",
+        0.012,
+        0.985,
+        "Исходные слои",
+        ha="left",
         va="top",
-        fontsize=7,
-    )
-    context_fig.text(
-        0.5,
-        0.03,
-        "а) Исходные слои",
-        ha="center",
-        va="bottom",
-        fontsize=18,
-        fontfamily="serif",
+        fontsize=FIGURE_TITLE_FONT_SIZE,
         fontweight="bold",
     )
     context_gs = context_fig.add_gridspec(
-        nrows=1,
-        ncols=5,
-        left=0.012,
-        right=0.988,
-        top=0.82,
-        bottom=0.20,
-        wspace=0.006,
+        nrows=5,
+        ncols=1,
+        left=0.08,
+        right=0.92,
+        top=0.92,
+        bottom=0.02,
+        hspace=0.34,
     )
-    context_axes = [context_fig.add_subplot(context_gs[0, i]) for i in range(5)]
+    context_axes = [context_fig.add_subplot(context_gs[i, 0]) for i in range(5)]
 
     plot_reference_image(context_axes[0], PROJECT_REFERENCE_IMAGE, "проект планировки")
 
@@ -586,12 +578,12 @@ def main() -> None:
     plot_quarter(context_axes[1], quarter, False)
     plot_connector(context_axes[1], connector, False)
 
-    plot_base(context_axes[2], blocks_context, roads_context, "существующие маршруты ОТ")
+    plot_base(context_axes[2], blocks_context, roads_context, "существующие\nмаршруты ОТ")
     plot_existing_pt_routes(context_axes[2], existing_routes)
     plot_quarter(context_axes[2], quarter, False)
     plot_connector(context_axes[2], connector, False)
 
-    plot_base(context_axes[3], blocks_context, roads_context, "существующие поликлиники")
+    plot_base(context_axes[3], blocks_context, roads_context, "существующие\nполиклиники")
     polies.plot(ax=context_axes[3], color="#c2185b", markersize=18, zorder=10)
     plot_quarter(context_axes[3], quarter, False)
     plot_connector(context_axes[3], connector, False)
@@ -605,7 +597,7 @@ def main() -> None:
         False,
         False,
         norm,
-        "базовый неудовлетворенный спрос",
+        "базовый неудовлетворенный\nспрос",
     )
 
     combined_bounds = blocks_context.total_bounds
@@ -637,7 +629,6 @@ def main() -> None:
     best_path = OUT / "telmana_connector_scenarios_better_new_services.png"
     render_scenario_group(
         worst_records,
-        title_letter="б",
         title="Сценарии с большим числом новых сервисов",
         output_path=worst_path,
         connector=connector,
@@ -647,7 +638,6 @@ def main() -> None:
     )
     render_scenario_group(
         best_records,
-        title_letter="в",
         title="Сценарии с меньшим числом новых сервисов",
         output_path=best_path,
         connector=connector,

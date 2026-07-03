@@ -4,10 +4,10 @@
 
 Re-render these four Russian May–October Arctic Sankey diagrams as 4:3 landscape images:
 
-- `nao_health_may_oct_ru.png`
-- `yakut_chuk_port_may_oct_ru.png`
-- `mezen_port_may_oct_ru.png`
-- `yanao_kras_airport_may_oct_ru.png`
+- `nao_health_may_oct_ru_4x3.png`
+- `yakut_chuk_port_may_oct_ru_4x3.png`
+- `mezen_port_may_oct_ru_4x3.png`
+- `yanao_kras_airport_may_oct_ru_4x3.png`
 
 ## Design
 

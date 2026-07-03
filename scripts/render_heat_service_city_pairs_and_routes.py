@@ -14,6 +14,16 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 from matplotlib.lines import Line2D
+
+HOME_COLOR = "#16a34a"
+SERVICE_COLOR = "#2563eb"
+BASELINE_PT_COLOR = "#7f1d1d"
+HEAT_PT_COLOR = "#16a34a"
+HOME_MARKER = "o"
+SERVICE_MARKER = "*"
+HOME_MARKER_SIZE = 220
+SERVICE_MARKER_SIZE = 220
+PT_LINESTYLE = (0, (2, 1.5))
 from PIL import Image, ImageDraw, ImageFont
 from shapely.geometry import LineString
 
@@ -291,7 +301,7 @@ def render_city_service_pair(
     base = base.loc[base["service_name"] == service, ["building_idx", "access_diagnosis_label"]]
     heat = heat.loc[heat["service_name"] == service, ["building_idx", "access_diagnosis_label"]]
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 7), dpi=220)
+    fig, axes = plt.subplots(1, 2, figsize=(14, 8), dpi=220)
     for ax, title, sub in [
         (axes[0], "baseline", base),
         (axes[1], "heat", heat),
@@ -305,8 +315,18 @@ def render_city_service_pair(
                 continue
             ax.scatter(cur.geometry.x, cur.geometry.y, s=5, c=LABEL_COLORS[label], alpha=0.76, linewidths=0, rasterized=True)
         ax.set_title(f"{SERVICE_RU[service]} — {CITY_RU.get(city, city)} — {title}", fontsize=13)
-    fig.legend(handles=_legend_handles(), loc="lower center", ncol=2, frameon=False, fontsize=9, bbox_to_anchor=(0.5, -0.02))
-    fig.subplots_adjust(left=0.02, right=0.98, top=0.93, bottom=0.12, wspace=0.04)
+    fig.legend(
+        handles=_legend_handles(),
+        loc="lower center",
+        ncol=2,
+        frameon=False,
+        fontsize=14,
+        markerscale=1.35,
+        columnspacing=2.4,
+        handletextpad=0.9,
+        bbox_to_anchor=(0.5, 0.01),
+    )
+    fig.subplots_adjust(left=0.02, right=0.98, top=0.93, bottom=0.22, wspace=0.04)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, bbox_inches="tight")
     plt.close(fig)
