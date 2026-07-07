@@ -1,2 +1,22 @@
 /data_all_cities/hotosm_can_roads_lines_gpkg/
 /outputs/thesis/
+
+# --- dissertation cookie-cutter ---
+.DS_Store
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.coverage
+htmlcov/
+.venv/
+.venv-*/
+venv/
+.cache/
+*.tmp
+*.temp
+*~
+# --- /dissertation cookie-cutter ---
