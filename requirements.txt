@@ -1,10 +1,29 @@
-# Все зависимости arctic_access (полный список)
--r arctic_access/requirements.txt
-
-# Дополнительные зависимости solver_flp (не покрытые arctic_access)
-pyarrow
-
-# Дополнительные зависимости arctic_access (не в requirements submodule)
-transliterate
-plotly
-jenkspy
+blocksnet==0.1.0
+catboost==1.2.10
+geopandas==1.0.1
+iduedu==1.2.2
+loguru==0.7.3
+matplotlib==3.10.1
+momepy==0.10.0
+networkx==3.4.2
+numpy==2.2.3
+osmnx==2.0.1
+pandana==0.7
+pandas==2.2.3
+pillow==11.1.0
+preprocess==2.0.0
+pulp==3.1.1
+python_igraph==1.0.0
+rasterio==1.4.3
+rasterstats==0.20.0
+scikit_learn==1.9.0
+scipy==1.15.2
+seaborn==0.13.2
+Shapely==2.1.2
+spaghetti==1.7.6
+spopt==0.6.1
+torch==2.12.1
+torch_cluster==1.6.3
+torch_geometric==2.8.0
+tqdm==4.67.1
+transliterate>=1.10.2
