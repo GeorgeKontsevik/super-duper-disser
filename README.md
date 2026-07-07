@@ -1,5 +1,7 @@
 # super-duper-disser
 
+[![OSA-improved](https://img.shields.io/badge/improved%20by-OSA-yellow)](https://github.com/aimclub/OSA)
+
 Dissertation orchestration repo. The root stays thin: it wires submodules, bridge code, the aggregated spatial pipeline, and scripts that prepare thesis-ready outputs.
 
 ## System Map
@@ -58,3 +60,4 @@ Thesis source and publication bundle live in `itmo-phd-thesis-template-en/`; mai
 ## Next Steps / Heuristics
 
 Keep this repo as orchestration only. Domain experiments, models, and paper-specific assets should stay in submodules; root code should only bridge them into the dissertation pipeline.
+
