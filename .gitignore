@@ -20,3 +20,4 @@ venv/
 *.temp
 *~
 # --- /dissertation cookie-cutter ---
+.env
