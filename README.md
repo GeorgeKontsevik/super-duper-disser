@@ -1,14 +1,38 @@
 # super-duper-disser
 
-Orchestrates the dissertation spatial pipeline and submodules.
+Dissertation orchestration repo. The root stays thin: it wires submodules, bridge code, the aggregated spatial pipeline, and scripts that prepare thesis-ready outputs.
 
-## Scheme
+## System Map
 
 ```mermaid
 flowchart LR
-    A[Inputs] --> B[Run: aggregated_spatial_pipeline/pipeline/run_joint.py]
-    B --> C[Checked outputs]
-    C --> D[Paper / thesis use]
+    subgraph Inputs[Local inputs]
+        OSM[OSM / local layers]
+        PT[iduedu + ConnectPT stops]
+        DEM[service demand + facilities]
+    end
+    subgraph Core[root repo]
+        BR[bridge modules]
+        PIPE[aggregated_spatial_pipeline]
+        RUN[run_joint.py]
+    end
+    subgraph Modules[submodules]
+        BN[blocksnet]
+        CP[connectpt]
+        IDU[iduedu-fork]
+        FLP[solver_flp]
+        EXP[experiments]
+        TH[ITMO thesis]
+    end
+    OSM --> BR --> PIPE --> RUN
+    PT --> BR
+    DEM --> PIPE
+    BN --> PIPE
+    CP --> PIPE
+    IDU --> PIPE
+    FLP --> PIPE
+    RUN --> EXP
+    RUN --> TH
 ```
 
 ## Main Result
@@ -25,14 +49,12 @@ Human:
 PYTHONPATH=$PWD .venv/bin/python -m aggregated_spatial_pipeline.pipeline.run_joint --place "Saint Petersburg, Russia" --buffer-m 5000 --street-grid-step 500
 ```
 
-Agent:
-
-Check submodules, run one small city, inspect manifests and preview PNGs.
+Agent: update submodules first, run a small city, then inspect manifests, parquet counts, and preview PNGs directly.
 
 ## Publication
 
-See `itmo-phd-thesis-template-en/thesis-itmo.pdf` and thesis publication PDFs.
+Thesis source and publication bundle live in `itmo-phd-thesis-template-en/`; main PDF is `itmo-phd-thesis-template-en/thesis-itmo.pdf`.
 
 ## Next Steps / Heuristics
 
-Keep core here only: bridge, pipeline, pipeline scripts. Experiments live as submodules.
+Keep this repo as orchestration only. Domain experiments, models, and paper-specific assets should stay in submodules; root code should only bridge them into the dissertation pipeline.
