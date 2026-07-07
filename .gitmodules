@@ -1,6 +1,6 @@
 [submodule "agent-config"]
 	path = agent-config
-	url = /Users/gk/Code/super-duper-disser-submodules/agent-config.git
+	url = https://github.com/GeorgeKontsevik/agent-config.git
 [submodule "arctic_access"]
 	path = arctic_access
 	url = https://github.com/GeorgeKontsevik/season_framed_multilayer_arctic_network_model_disser.git
@@ -36,13 +36,13 @@
 	url = https://github.com/GeorgeKontsevik/itmo-phd-thesis-template-en.git
 [submodule "segregation-by-design-experiments"]
 	path = segregation-by-design-experiments
-	url = /Users/gk/Code/super-duper-disser-submodules/segregation-by-design-experiments.git
+	url = https://github.com/GeorgeKontsevik/segregation-by-design-experiments.git
 [submodule "thermal_access_pilot"]
 	path = thermal_access_pilot
-	url = /Users/gk/Code/super-duper-disser-submodules/thermal_access_pilot.git
+	url = https://github.com/GeorgeKontsevik/thermal_access_pilot.git
 [submodule "connectpt_dataset_prep"]
 	path = connectpt_dataset_prep
-	url = /Users/gk/Code/super-duper-disser-submodules/connectpt_dataset_prep.git
+	url = https://github.com/GeorgeKontsevik/connectpt_dataset_prep.git
 [submodule "yana_experiments"]
 	path = yana_experiments
-	url = /Users/gk/Code/super-duper-disser-submodules/yana_experiments.git
+	url = https://github.com/GeorgeKontsevik/yana_experiments.git
