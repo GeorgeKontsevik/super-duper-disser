@@ -1,3 +1,6 @@
+[submodule "agent-config"]
+	path = agent-config
+	url = /Users/gk/Code/super-duper-disser-submodules/agent-config.git
 [submodule "arctic_access"]
 	path = arctic_access
 	url = https://github.com/GeorgeKontsevik/season_framed_multilayer_arctic_network_model_disser.git
