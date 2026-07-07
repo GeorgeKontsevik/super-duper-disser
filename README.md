@@ -37,7 +37,7 @@ flowchart LR
 
 ## Main Result
 
-![Main result](itmo-phd-thesis-template-en/images/ch4/optimal_local/polyclinic_route_strategy_4x3_ru.png)
+![Main result](docs/readme_main_result.png)
 
 ## Run
 
