@@ -31,6 +31,8 @@ dependencies = [
     "fonttools==4.56.0",
     "geopandas==1.0.1",
     "giddy==2.3.6",
+    "google-api-python-client>=2.198.0",
+    "google-auth>=2.55.1",
     "h5netcdf==1.6.1",
     "h5py==3.13.0",
     "idna==3.10",
