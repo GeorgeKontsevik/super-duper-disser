@@ -21,7 +21,3 @@ venv/
 *~
 # --- /dissertation cookie-cutter ---
 .env
-.env.*
-.secrets/
-*service-account*.json
-*credentials*.json
